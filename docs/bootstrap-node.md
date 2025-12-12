@@ -32,7 +32,7 @@ Bootstrap nodes don't require special software - any debswarm instance can serve
 
 ```bash
 # Download latest release
-curl -sSL https://github.com/YOUR_ORG/debswarm/releases/latest/download/debswarm_linux_amd64.tar.gz | tar -xz
+curl -sSL https://github.com/clintcan/debswarm/releases/latest/download/debswarm_linux_amd64.tar.gz | tar -xz
 sudo mv debswarm /usr/local/bin/
 sudo chmod +x /usr/local/bin/debswarm
 ```
@@ -40,14 +40,14 @@ sudo chmod +x /usr/local/bin/debswarm
 ### Option 2: From .deb Package
 
 ```bash
-wget https://github.com/YOUR_ORG/debswarm/releases/latest/download/debswarm_*_amd64.deb
+wget https://github.com/clintcan/debswarm/releases/latest/download/debswarm_*_amd64.deb
 sudo dpkg -i debswarm_*_amd64.deb
 ```
 
 ### Option 3: Build from Source
 
 ```bash
-git clone https://github.com/YOUR_ORG/debswarm.git
+git clone https://github.com/clintcan/debswarm.git
 cd debswarm
 make build
 sudo cp build/debswarm /usr/local/bin/
