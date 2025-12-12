@@ -421,6 +421,11 @@ journalctl -u debswarm -f
 # Look for "Falling back to mirror" messages
 ```
 
+## Documentation
+
+- [Technical Comparison](docs/comparison.md) - debswarm vs apt-p2p, DebTorrent, apt-cacher-ng
+- [Bootstrap Node Setup](docs/bootstrap-node.md) - Running a dedicated seeder/bootstrap node
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
