@@ -298,10 +298,10 @@ func (d *Downloader) downloadChunked(
 		}
 	}
 
-	// Assemble file
-	assembled := make([]byte, 0, expectedSize)
+	// Assemble file - pre-allocate and copy directly to positions
+	assembled := make([]byte, expectedSize)
 	for _, c := range completedChunks {
-		assembled = append(assembled, c.Data...)
+		copy(assembled[c.Start:], c.Data)
 	}
 
 	// Verify hash

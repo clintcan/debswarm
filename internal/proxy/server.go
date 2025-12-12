@@ -53,6 +53,10 @@ type Server struct {
 	p2pTimeout     time.Duration
 	dhtLookupLimit int
 	metricsPort    int
+
+	// Announcement worker pool (bounded)
+	announceChan chan string
+	announceDone chan struct{}
 }
 
 // Config holds proxy server configuration
@@ -118,7 +122,12 @@ func NewServer(
 		p2pTimeout:     cfg.P2PTimeout,
 		dhtLookupLimit: cfg.DHTLookupLimit,
 		metricsPort:    cfg.MetricsPort,
+		announceChan:   make(chan string, 100), // Bounded buffer
+		announceDone:   make(chan struct{}),
 	}
+
+	// Start announcement worker (bounded goroutines)
+	go s.announcementWorker()
 
 	// Create downloader with all the goodies
 	s.downloader = downloader.New(&downloader.Config{
@@ -214,6 +223,13 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Stop accepting new announcements and wait for pending ones
+	close(s.announceChan)
+	select {
+	case <-s.announceDone:
+	case <-ctx.Done():
+		// Timeout waiting for announcements
+	}
 	return s.server.Shutdown(ctx)
 }
 
@@ -531,13 +547,37 @@ func (s *Server) announceAsync(hash string) {
 	if s.p2pNode == nil {
 		return
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := s.p2pNode.Provide(ctx, hash); err != nil {
-			s.logger.Debug("Failed to announce", zap.Error(err))
-		}
-	}()
+	// Non-blocking send to bounded channel
+	select {
+	case s.announceChan <- hash:
+	default:
+		// Channel full, skip this announcement (will be reannounced later)
+		s.logger.Debug("Announcement queue full, skipping", zap.String("hash", hash[:16]+"..."))
+	}
+}
+
+// announcementWorker processes announcements with bounded concurrency
+func (s *Server) announcementWorker() {
+	// Process up to 4 announcements concurrently
+	sem := make(chan struct{}, 4)
+
+	for hash := range s.announceChan {
+		sem <- struct{}{} // Acquire semaphore
+		go func(h string) {
+			defer func() { <-sem }() // Release semaphore
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := s.p2pNode.Provide(ctx, h); err != nil {
+				s.logger.Debug("Failed to announce", zap.Error(err))
+			}
+		}(hash)
+	}
+
+	// Wait for all in-flight announcements to complete
+	for i := 0; i < 4; i++ {
+		sem <- struct{}{}
+	}
+	close(s.announceDone)
 }
 
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {

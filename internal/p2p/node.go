@@ -2,6 +2,7 @@
 package p2p
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -47,17 +48,18 @@ const (
 
 // Node represents a P2P node
 type Node struct {
-	host          host.Host
-	dht           *dht.IpfsDHT
-	logger        *zap.Logger
-	ctx           context.Context
-	cancel        context.CancelFunc
-	getContent    ContentGetter
-	scorer        *peers.Scorer
-	timeouts      *timeouts.Manager
-	metrics       *metrics.Metrics
-	mdnsService   mdns.Service
-	bootstrapDone chan struct{}
+	host             host.Host
+	dht              *dht.IpfsDHT
+	routingDiscovery *drouting.RoutingDiscovery // Cached for reuse
+	logger           *zap.Logger
+	ctx              context.Context
+	cancel           context.CancelFunc
+	getContent       ContentGetter
+	scorer           *peers.Scorer
+	timeouts         *timeouts.Manager
+	metrics          *metrics.Metrics
+	mdnsService      mdns.Service
+	bootstrapDone    chan struct{}
 
 	// Upload tracking
 	uploadsMu      sync.Mutex
@@ -182,16 +184,17 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	}
 
 	node := &Node{
-		host:           h,
-		dht:            kadDHT,
-		logger:         logger,
-		ctx:            ctx,
-		cancel:         cancel,
-		scorer:         scorer,
-		timeouts:       tm,
-		metrics:        cfg.Metrics,
-		bootstrapDone:  make(chan struct{}),
-		uploadsPerPeer: make(map[peer.ID]int),
+		host:             h,
+		dht:              kadDHT,
+		routingDiscovery: drouting.NewRoutingDiscovery(kadDHT), // Reuse for all lookups
+		logger:           logger,
+		ctx:              ctx,
+		cancel:           cancel,
+		scorer:           scorer,
+		timeouts:         tm,
+		metrics:          cfg.Metrics,
+		bootstrapDone:    make(chan struct{}),
+		uploadsPerPeer:   make(map[peer.ID]int),
 	}
 
 	// Set up transfer protocol handlers
@@ -326,8 +329,7 @@ func (n *Node) Provide(ctx context.Context, sha256Hash string) error {
 		timer = metrics.NewTimer(nil)
 	}
 
-	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
-	_, err := routingDiscovery.Advertise(ctx, key)
+	_, err := n.routingDiscovery.Advertise(ctx, key)
 
 	duration := timer.ObserveDuration()
 
@@ -354,8 +356,7 @@ func (n *Node) FindProviders(ctx context.Context, sha256Hash string, limit int) 
 		timer = metrics.NewTimer(nil)
 	}
 
-	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
-	peerChan, err := routingDiscovery.FindPeers(ctx, key)
+	peerChan, err := n.routingDiscovery.FindPeers(ctx, key)
 	if err != nil {
 		n.timeouts.RecordFailure(timeouts.OpDHTLookup)
 		return nil, fmt.Errorf("failed to find providers: %w", err)
@@ -528,51 +529,40 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 		defer n.metrics.ActiveUploads.Dec()
 	}
 
-	// Read request
+	// Read request using buffered reader for efficiency
+	bufReader := bufio.NewReader(stream)
 	var sha256Hash string
 	var start, end int64 = 0, -1
 
 	if rangeSupport {
 		// Range request: hash (64) + start (8) + end (8) + newline
-		buf := make([]byte, 81)
-		idx := 0
-		for idx < 81 {
-			b := make([]byte, 1)
-			_, err := stream.Read(b)
-			if err != nil {
-				return
-			}
-			if b[0] == '\n' {
-				break
-			}
-			buf[idx] = b[0]
-			idx++
+		line, err := bufReader.ReadBytes('\n')
+		if err != nil {
+			return
+		}
+		// Remove newline
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
 		}
 
-		if idx >= 80 {
-			sha256Hash = string(buf[:64])
-			start = int64(binary.BigEndian.Uint64(buf[64:72]))
-			end = int64(binary.BigEndian.Uint64(buf[72:80]))
+		if len(line) >= 80 {
+			sha256Hash = string(line[:64])
+			start = int64(binary.BigEndian.Uint64(line[64:72]))
+			end = int64(binary.BigEndian.Uint64(line[72:80]))
 		} else {
-			sha256Hash = string(buf[:idx])
+			sha256Hash = string(line)
 		}
 	} else {
 		// Simple request: hash + newline
-		hashBuf := make([]byte, 65)
-		idx := 0
-		for idx < 65 {
-			b := make([]byte, 1)
-			_, err := stream.Read(b)
-			if err != nil {
-				return
-			}
-			if b[0] == '\n' {
-				break
-			}
-			hashBuf[idx] = b[0]
-			idx++
+		line, err := bufReader.ReadBytes('\n')
+		if err != nil {
+			return
 		}
-		sha256Hash = string(hashBuf[:idx])
+		// Remove newline
+		if len(line) > 0 && line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+		}
+		sha256Hash = string(line)
 	}
 
 	if len(sha256Hash) != 64 {
