@@ -1,0 +1,30 @@
+[Unit]
+Description=debswarm Peer-to-Peer Package Distribution
+Documentation=https://github.com/debswarm/debswarm
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/debswarm daemon
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+User=debswarm
+Group=debswarm
+DynamicUser=yes
+StateDirectory=debswarm
+CacheDirectory=debswarm
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+
+# Resource limits
+MemoryMax=512M
+TasksMax=100
+
+[Install]
+WantedBy=multi-user.target

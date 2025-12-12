@@ -1,0 +1,54 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Create default configuration if it doesn't exist
+        if [ ! -f /etc/debswarm/config.toml ]; then
+            cat > /etc/debswarm/config.toml << 'EOF'
+# debswarm configuration
+# See: https://github.com/debswarm/debswarm
+
+[network]
+listen_port = 4001
+proxy_port = 9977
+max_connections = 100
+
+# Public libp2p bootstrap nodes
+bootstrap_peers = [
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+]
+
+[cache]
+path = "/var/cache/debswarm"
+max_size = "10GB"
+min_free_space = "1GB"
+
+[transfer]
+max_upload_rate = "0"
+max_concurrent_uploads = 20
+chunk_size = "4MB"
+
+[dht]
+provider_ttl = "24h"
+announce_interval = "12h"
+
+[privacy]
+enable_mdns = true
+announce_packages = true
+
+[logging]
+level = "info"
+file = ""
+EOF
+            chmod 644 /etc/debswarm/config.toml
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

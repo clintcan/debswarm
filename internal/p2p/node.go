@@ -1,0 +1,730 @@
+// Package p2p provides peer-to-peer networking using libp2p
+package p2p
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"github.com/debswarm/debswarm/internal/metrics"
+	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/timeouts"
+	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/multiformats/go-multiaddr"
+	"go.uber.org/zap"
+)
+
+const (
+	// ProtocolTransfer is the protocol ID for file transfers
+	ProtocolTransfer = "/debswarm/transfer/1.0.0"
+
+	// ProtocolTransferRange is the protocol ID for range-based transfers
+	ProtocolTransferRange = "/debswarm/transfer-range/1.0.0"
+
+	// NamespacePackage is the DHT namespace for package providers
+	NamespacePackage = "/debswarm/pkg/"
+
+	// MaxTransferSize is the maximum file size for transfer (500MB)
+	MaxTransferSize = 500 * 1024 * 1024
+
+	// Connection limits
+	MaxConcurrentUploads = 20
+	MaxUploadsPerPeer    = 4
+)
+
+// Node represents a P2P node
+type Node struct {
+	host          host.Host
+	dht           *dht.IpfsDHT
+	logger        *zap.Logger
+	ctx           context.Context
+	cancel        context.CancelFunc
+	getContent    ContentGetter
+	scorer        *peers.Scorer
+	timeouts      *timeouts.Manager
+	metrics       *metrics.Metrics
+	mdnsService   mdns.Service
+	bootstrapDone chan struct{}
+
+	// Upload tracking
+	uploadsMu      sync.Mutex
+	activeUploads  int
+	uploadsPerPeer map[peer.ID]int
+}
+
+// ContentGetter is a function that retrieves content by hash
+type ContentGetter func(sha256Hash string) (io.ReadCloser, int64, error)
+
+// Config holds P2P node configuration
+type Config struct {
+	ListenPort     int
+	BootstrapPeers []string
+	EnableMDNS     bool
+	PrivateKey     crypto.PrivKey
+	PreferQUIC     bool // Prefer QUIC over TCP
+	Scorer         *peers.Scorer
+	Timeouts       *timeouts.Manager
+	Metrics        *metrics.Metrics
+}
+
+// New creates a new P2P node with QUIC preference
+func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Generate or use provided private key
+	privKey := cfg.PrivateKey
+	if privKey == nil {
+		var err error
+		privKey, _, err = crypto.GenerateEd25519Key(rand.Reader)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to generate key: %w", err)
+		}
+	}
+
+	// Create listen addresses - QUIC first for preference
+	var listenAddrs []multiaddr.Multiaddr
+
+	if cfg.PreferQUIC {
+		// QUIC addresses first (preferred)
+		quicAddrs := []string{
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.ListenPort),
+			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.ListenPort),
+		}
+		for _, addr := range quicAddrs {
+			if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+				listenAddrs = append(listenAddrs, ma)
+			}
+		}
+	}
+
+	// TCP addresses (fallback or primary if QUIC disabled)
+	tcpAddrs := []string{
+		fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", cfg.ListenPort),
+		fmt.Sprintf("/ip6/::/tcp/%d", cfg.ListenPort),
+	}
+	for _, addr := range tcpAddrs {
+		if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+			listenAddrs = append(listenAddrs, ma)
+		}
+	}
+
+	if !cfg.PreferQUIC {
+		// Add QUIC as fallback
+		quicAddrs := []string{
+			fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", cfg.ListenPort),
+			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.ListenPort),
+		}
+		for _, addr := range quicAddrs {
+			if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+				listenAddrs = append(listenAddrs, ma)
+			}
+		}
+	}
+
+	// Build libp2p options with QUIC preference
+	opts := []libp2p.Option{
+		libp2p.Identity(privKey),
+		libp2p.ListenAddrs(listenAddrs...),
+
+		// NAT traversal
+		libp2p.EnableNATService(),
+		libp2p.EnableRelay(),
+		libp2p.EnableHolePunching(),
+		libp2p.NATPortMap(),
+	}
+
+	// Create libp2p host
+	h, err := libp2p.New(opts...)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create host: %w", err)
+	}
+
+	logger.Info("Created P2P host",
+		zap.String("peerID", h.ID().String()),
+		zap.Any("addrs", h.Addrs()),
+		zap.Bool("quicPreferred", cfg.PreferQUIC))
+
+	// Create DHT
+	kadDHT, err := dht.New(ctx, h,
+		dht.Mode(dht.ModeAutoServer),
+		dht.ProtocolPrefix("/debswarm"),
+	)
+	if err != nil {
+		h.Close()
+		cancel()
+		return nil, fmt.Errorf("failed to create DHT: %w", err)
+	}
+
+	// Use provided or create new scorer/timeouts
+	scorer := cfg.Scorer
+	if scorer == nil {
+		scorer = peers.NewScorer()
+	}
+
+	tm := cfg.Timeouts
+	if tm == nil {
+		tm = timeouts.NewManager(nil)
+	}
+
+	node := &Node{
+		host:           h,
+		dht:            kadDHT,
+		logger:         logger,
+		ctx:            ctx,
+		cancel:         cancel,
+		scorer:         scorer,
+		timeouts:       tm,
+		metrics:        cfg.Metrics,
+		bootstrapDone:  make(chan struct{}),
+		uploadsPerPeer: make(map[peer.ID]int),
+	}
+
+	// Set up transfer protocol handlers
+	h.SetStreamHandler(protocol.ID(ProtocolTransfer), node.handleTransferStream)
+	h.SetStreamHandler(protocol.ID(ProtocolTransferRange), node.handleRangeTransferStream)
+
+	// Start mDNS discovery if enabled
+	if cfg.EnableMDNS {
+		mdnsService := mdns.NewMdnsService(h, "_debswarm._tcp", node)
+		if err := mdnsService.Start(); err != nil {
+			logger.Warn("Failed to start mDNS", zap.Error(err))
+		} else {
+			node.mdnsService = mdnsService
+			logger.Info("Started mDNS discovery")
+		}
+	}
+
+	// Bootstrap DHT
+	go node.bootstrap(cfg.BootstrapPeers)
+
+	// Start periodic tasks
+	go node.periodicTasks()
+
+	return node, nil
+}
+
+// SetContentGetter sets the function used to get content for serving to peers
+func (n *Node) SetContentGetter(getter ContentGetter) {
+	n.getContent = getter
+}
+
+// bootstrap connects to bootstrap peers and initializes the DHT
+func (n *Node) bootstrap(bootstrapPeers []string) {
+	defer close(n.bootstrapDone)
+
+	n.logger.Info("Starting DHT bootstrap", zap.Int("bootstrapPeers", len(bootstrapPeers)))
+
+	// Connect to bootstrap peers
+	var wg sync.WaitGroup
+	for _, addr := range bootstrapPeers {
+		ma, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			n.logger.Warn("Invalid bootstrap address", zap.String("addr", addr), zap.Error(err))
+			continue
+		}
+
+		peerInfo, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			n.logger.Warn("Failed to parse bootstrap peer", zap.Error(err))
+			continue
+		}
+
+		wg.Add(1)
+		go func(pi *peer.AddrInfo) {
+			defer wg.Done()
+			timeout := n.timeouts.Get(timeouts.OpPeerConnect)
+			ctx, cancel := context.WithTimeout(n.ctx, timeout)
+			defer cancel()
+
+			start := time.Now()
+			if err := n.host.Connect(ctx, *pi); err != nil {
+				n.logger.Debug("Failed to connect to bootstrap peer",
+					zap.String("peer", pi.ID.String()),
+					zap.Error(err))
+				n.timeouts.RecordFailure(timeouts.OpPeerConnect)
+			} else {
+				n.logger.Debug("Connected to bootstrap peer",
+					zap.String("peer", pi.ID.String()))
+				n.timeouts.RecordSuccess(timeouts.OpPeerConnect, time.Since(start))
+			}
+		}(peerInfo)
+	}
+	wg.Wait()
+
+	// Bootstrap the DHT
+	if err := n.dht.Bootstrap(n.ctx); err != nil {
+		n.logger.Error("DHT bootstrap failed", zap.Error(err))
+		return
+	}
+
+	n.logger.Info("DHT bootstrap complete",
+		zap.Int("routingTableSize", n.dht.RoutingTable().Size()))
+
+	// Update metrics
+	if n.metrics != nil {
+		n.metrics.RoutingTableSize.Set(float64(n.dht.RoutingTable().Size()))
+		n.metrics.ConnectedPeers.Set(float64(len(n.host.Network().Peers())))
+	}
+}
+
+// periodicTasks runs background maintenance tasks
+func (n *Node) periodicTasks() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			// Cleanup stale peers
+			removed := n.scorer.Cleanup()
+			if removed > 0 {
+				n.logger.Debug("Cleaned up stale peers", zap.Int("removed", removed))
+			}
+
+			// Decay timeouts toward base
+			n.timeouts.ResetDecay(0.1)
+
+			// Update metrics
+			if n.metrics != nil {
+				n.metrics.RoutingTableSize.Set(float64(n.dht.RoutingTable().Size()))
+				n.metrics.ConnectedPeers.Set(float64(len(n.host.Network().Peers())))
+			}
+		}
+	}
+}
+
+// WaitForBootstrap blocks until DHT bootstrap is complete
+func (n *Node) WaitForBootstrap() {
+	<-n.bootstrapDone
+}
+
+// Provide announces to the DHT that we have a package with the given hash
+func (n *Node) Provide(ctx context.Context, sha256Hash string) error {
+	key := NamespacePackage + sha256Hash
+
+	var timer *metrics.Timer
+	if n.metrics != nil {
+		timer = metrics.NewTimer(n.metrics.DHTLookupDuration)
+	} else {
+		timer = metrics.NewTimer(nil)
+	}
+
+	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
+	_, err := routingDiscovery.Advertise(ctx, key)
+
+	duration := timer.ObserveDuration()
+
+	if err != nil {
+		n.timeouts.RecordFailure(timeouts.OpDHTLookup)
+		return fmt.Errorf("failed to provide: %w", err)
+	}
+
+	n.timeouts.RecordSuccess(timeouts.OpDHTLookup, duration)
+	n.logger.Debug("Announced package to DHT",
+		zap.String("hash", sha256Hash[:16]+"..."))
+	return nil
+}
+
+// FindProviders searches the DHT for peers that have a package
+func (n *Node) FindProviders(ctx context.Context, sha256Hash string, limit int) ([]peer.AddrInfo, error) {
+	key := NamespacePackage + sha256Hash
+
+	var timer *metrics.Timer
+	if n.metrics != nil {
+		timer = metrics.NewTimer(n.metrics.DHTLookupDuration)
+		n.metrics.DHTQueries.WithLabel("find_providers").Inc()
+	} else {
+		timer = metrics.NewTimer(nil)
+	}
+
+	routingDiscovery := drouting.NewRoutingDiscovery(n.dht)
+	peerChan, err := routingDiscovery.FindPeers(ctx, key)
+	if err != nil {
+		n.timeouts.RecordFailure(timeouts.OpDHTLookup)
+		return nil, fmt.Errorf("failed to find providers: %w", err)
+	}
+
+	var providers []peer.AddrInfo
+	for p := range peerChan {
+		if p.ID == n.host.ID() {
+			continue // Skip ourselves
+		}
+		// Skip blacklisted peers
+		if n.scorer.IsBlacklisted(p.ID) {
+			continue
+		}
+		providers = append(providers, p)
+		if len(providers) >= limit {
+			break
+		}
+	}
+
+	duration := timer.ObserveDuration()
+	n.timeouts.RecordSuccess(timeouts.OpDHTLookup, duration)
+
+	return providers, nil
+}
+
+// FindProvidersRanked returns providers sorted by score
+func (n *Node) FindProvidersRanked(ctx context.Context, sha256Hash string, limit int) ([]peer.AddrInfo, error) {
+	providers, err := n.FindProviders(ctx, sha256Hash, limit*2) // Get extra for filtering
+	if err != nil {
+		return nil, err
+	}
+
+	// Use scorer to select best peers, with some diversity
+	return n.scorer.SelectDiverse(providers, limit), nil
+}
+
+// Download attempts to download a package from a peer
+func (n *Node) Download(ctx context.Context, peerInfo peer.AddrInfo, sha256Hash string) ([]byte, error) {
+	return n.DownloadRange(ctx, peerInfo, sha256Hash, 0, -1)
+}
+
+// DownloadRange downloads a range of bytes from a peer
+// If end is -1, downloads from start to end of file
+func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256Hash string, start, end int64) ([]byte, error) {
+	startTime := time.Now()
+
+	// Connect to peer if not already connected
+	if n.host.Network().Connectedness(peerInfo.ID) != network.Connected {
+		connectTimeout := n.timeouts.Get(timeouts.OpPeerConnect)
+		connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+
+		connectStart := time.Now()
+		err := n.host.Connect(connectCtx, peerInfo)
+		cancel()
+
+		if err != nil {
+			n.scorer.RecordFailure(peerInfo.ID, "connect failed")
+			n.timeouts.RecordFailure(timeouts.OpPeerConnect)
+			return nil, fmt.Errorf("failed to connect to peer: %w", err)
+		}
+		n.timeouts.RecordSuccess(timeouts.OpPeerConnect, time.Since(connectStart))
+	}
+
+	// Choose protocol based on whether we need a range
+	proto := ProtocolTransfer
+	if start > 0 || end > 0 {
+		proto = ProtocolTransferRange
+	}
+
+	// Open stream
+	stream, err := n.host.NewStream(ctx, peerInfo.ID, protocol.ID(proto))
+	if err != nil {
+		n.scorer.RecordFailure(peerInfo.ID, "stream failed")
+		return nil, fmt.Errorf("failed to open stream: %w", err)
+	}
+	defer stream.Close()
+
+	// Send request
+	var request []byte
+	if proto == ProtocolTransferRange {
+		// Range request: hash + start (8 bytes) + end (8 bytes) + newline
+		request = make([]byte, 64+16+1)
+		copy(request, sha256Hash)
+		binary.BigEndian.PutUint64(request[64:72], uint64(start))
+		binary.BigEndian.PutUint64(request[72:80], uint64(end))
+		request[80] = '\n'
+	} else {
+		// Simple request: hash + newline
+		request = []byte(sha256Hash + "\n")
+	}
+
+	if _, err := stream.Write(request); err != nil {
+		n.scorer.RecordFailure(peerInfo.ID, "write failed")
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Read response size (8 bytes)
+	sizeBuf := make([]byte, 8)
+	if _, err := io.ReadFull(stream, sizeBuf); err != nil {
+		n.scorer.RecordFailure(peerInfo.ID, "read size failed")
+		return nil, fmt.Errorf("failed to read size: %w", err)
+	}
+
+	size := int64(binary.BigEndian.Uint64(sizeBuf))
+
+	if size == 0 {
+		return nil, fmt.Errorf("peer does not have the requested content")
+	}
+
+	if size > MaxTransferSize {
+		return nil, fmt.Errorf("content too large: %d bytes", size)
+	}
+
+	// Read content
+	data := make([]byte, size)
+	if _, err := io.ReadFull(stream, data); err != nil {
+		n.scorer.RecordFailure(peerInfo.ID, "read data failed")
+		return nil, fmt.Errorf("failed to read content: %w", err)
+	}
+
+	// Record success
+	duration := time.Since(startTime)
+	latencyMs := float64(duration.Milliseconds())
+	throughput := float64(size) / duration.Seconds()
+
+	n.scorer.RecordSuccess(peerInfo.ID, size, latencyMs, throughput)
+	n.timeouts.RecordSuccess(timeouts.OpPeerTransfer, duration)
+
+	if n.metrics != nil {
+		n.metrics.BytesDownloaded.WithLabel("peer").Add(size)
+		n.metrics.DownloadsTotal.WithLabel("peer").Inc()
+		n.metrics.PeerLatency.WithLabel(peerInfo.ID.String()).Observe(latencyMs)
+	}
+
+	return data, nil
+}
+
+// handleTransferStream handles incoming transfer requests (full file)
+func (n *Node) handleTransferStream(stream network.Stream) {
+	n.handleTransferRequest(stream, false)
+}
+
+// handleRangeTransferStream handles incoming range transfer requests
+func (n *Node) handleRangeTransferStream(stream network.Stream) {
+	n.handleTransferRequest(stream, true)
+}
+
+func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
+	defer stream.Close()
+
+	peerID := stream.Conn().RemotePeer()
+
+	// Check upload limits
+	if !n.canAcceptUpload(peerID) {
+		n.writeSize(stream, 0)
+		return
+	}
+	n.trackUploadStart(peerID)
+	defer n.trackUploadEnd(peerID)
+
+	if n.metrics != nil {
+		n.metrics.ActiveUploads.Inc()
+		defer n.metrics.ActiveUploads.Dec()
+	}
+
+	// Read request
+	var sha256Hash string
+	var start, end int64 = 0, -1
+
+	if rangeSupport {
+		// Range request: hash (64) + start (8) + end (8) + newline
+		buf := make([]byte, 81)
+		idx := 0
+		for idx < 81 {
+			b := make([]byte, 1)
+			_, err := stream.Read(b)
+			if err != nil {
+				return
+			}
+			if b[0] == '\n' {
+				break
+			}
+			buf[idx] = b[0]
+			idx++
+		}
+
+		if idx >= 80 {
+			sha256Hash = string(buf[:64])
+			start = int64(binary.BigEndian.Uint64(buf[64:72]))
+			end = int64(binary.BigEndian.Uint64(buf[72:80]))
+		} else {
+			sha256Hash = string(buf[:idx])
+		}
+	} else {
+		// Simple request: hash + newline
+		hashBuf := make([]byte, 65)
+		idx := 0
+		for idx < 65 {
+			b := make([]byte, 1)
+			_, err := stream.Read(b)
+			if err != nil {
+				return
+			}
+			if b[0] == '\n' {
+				break
+			}
+			hashBuf[idx] = b[0]
+			idx++
+		}
+		sha256Hash = string(hashBuf[:idx])
+	}
+
+	if len(sha256Hash) != 64 {
+		n.logger.Debug("Invalid hash length", zap.Int("length", len(sha256Hash)))
+		n.writeSize(stream, 0)
+		return
+	}
+
+	// Validate hex
+	if _, err := hex.DecodeString(sha256Hash); err != nil {
+		n.logger.Debug("Invalid hash format", zap.Error(err))
+		n.writeSize(stream, 0)
+		return
+	}
+
+	// Get content
+	if n.getContent == nil {
+		n.writeSize(stream, 0)
+		return
+	}
+
+	reader, totalSize, err := n.getContent(sha256Hash)
+	if err != nil {
+		n.logger.Debug("Content not found", zap.String("hash", sha256Hash[:16]+"..."))
+		n.writeSize(stream, 0)
+		return
+	}
+	defer reader.Close()
+
+	// Handle range
+	if end == -1 || end > totalSize {
+		end = totalSize
+	}
+	if start < 0 {
+		start = 0
+	}
+
+	responseSize := end - start
+
+	// Skip to start position if needed
+	if start > 0 {
+		if seeker, ok := reader.(io.Seeker); ok {
+			if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+				n.writeSize(stream, 0)
+				return
+			}
+		} else {
+			// Can't seek, read and discard
+			if _, err := io.CopyN(io.Discard, reader, start); err != nil {
+				n.writeSize(stream, 0)
+				return
+			}
+		}
+	}
+
+	// Send size
+	n.writeSize(stream, responseSize)
+
+	// Send content (limited to response size)
+	written, err := io.CopyN(stream, reader, responseSize)
+	if err != nil {
+		n.logger.Debug("Failed to send content", zap.Error(err))
+		return
+	}
+
+	n.logger.Debug("Sent content to peer",
+		zap.String("peer", peerID.String()),
+		zap.String("hash", sha256Hash[:16]+"..."),
+		zap.Int64("bytes", written),
+		zap.Int64("start", start),
+		zap.Int64("end", end))
+
+	// Update metrics
+	n.scorer.RecordUpload(peerID, written)
+	if n.metrics != nil {
+		n.metrics.BytesUploaded.WithLabel(peerID.String()).Add(written)
+	}
+}
+
+func (n *Node) writeSize(stream network.Stream, size int64) {
+	sizeBuf := make([]byte, 8)
+	binary.BigEndian.PutUint64(sizeBuf, uint64(size))
+	stream.Write(sizeBuf)
+}
+
+func (n *Node) canAcceptUpload(peerID peer.ID) bool {
+	n.uploadsMu.Lock()
+	defer n.uploadsMu.Unlock()
+
+	if n.activeUploads >= MaxConcurrentUploads {
+		return false
+	}
+
+	if n.uploadsPerPeer[peerID] >= MaxUploadsPerPeer {
+		return false
+	}
+
+	return true
+}
+
+func (n *Node) trackUploadStart(peerID peer.ID) {
+	n.uploadsMu.Lock()
+	defer n.uploadsMu.Unlock()
+	n.activeUploads++
+	n.uploadsPerPeer[peerID]++
+}
+
+func (n *Node) trackUploadEnd(peerID peer.ID) {
+	n.uploadsMu.Lock()
+	defer n.uploadsMu.Unlock()
+	n.activeUploads--
+	n.uploadsPerPeer[peerID]--
+	if n.uploadsPerPeer[peerID] <= 0 {
+		delete(n.uploadsPerPeer, peerID)
+	}
+}
+
+// HandlePeerFound implements mdns.Notifee
+func (n *Node) HandlePeerFound(pi peer.AddrInfo) {
+	if pi.ID == n.host.ID() {
+		return
+	}
+
+	n.logger.Debug("Discovered peer via mDNS", zap.String("peer", pi.ID.String()))
+
+	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+	defer cancel()
+
+	if err := n.host.Connect(ctx, pi); err != nil {
+		n.logger.Debug("Failed to connect to mDNS peer", zap.Error(err))
+	}
+}
+
+// Getters for node information
+
+func (n *Node) PeerID() peer.ID              { return n.host.ID() }
+func (n *Node) Addrs() []multiaddr.Multiaddr { return n.host.Addrs() }
+func (n *Node) ConnectedPeers() int          { return len(n.host.Network().Peers()) }
+func (n *Node) RoutingTableSize() int        { return n.dht.RoutingTable().Size() }
+func (n *Node) Scorer() *peers.Scorer        { return n.scorer }
+func (n *Node) Timeouts() *timeouts.Manager  { return n.timeouts }
+
+// GetPeerStats returns statistics for all known peers
+func (n *Node) GetPeerStats() []*peers.PeerScore {
+	return n.scorer.GetAllStats()
+}
+
+// Close shuts down the P2P node
+func (n *Node) Close() error {
+	n.cancel()
+
+	if n.mdnsService != nil {
+		n.mdnsService.Close()
+	}
+
+	if err := n.dht.Close(); err != nil {
+		n.logger.Warn("Failed to close DHT", zap.Error(err))
+	}
+
+	return n.host.Close()
+}

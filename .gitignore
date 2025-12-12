@@ -1,0 +1,41 @@
+# Build artifacts
+build/
+*.exe
+debswarm
+debswarm-*
+
+# Go
+vendor/
+.gocache/
+go.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Test
+coverage.out
+coverage.html
+*.test
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debian build
+*.deb
+*.dsc
+*.changes
+*.buildinfo
+debian/.debhelper/
+debian/debswarm/
+debian/files
+debian/*.substvars
+debian/*.log
+
+# Release
+dist/
+*.tar.gz

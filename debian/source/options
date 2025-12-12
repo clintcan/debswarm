@@ -1,0 +1,6 @@
+# Exclude vendor directory from diff if present
+extend-diff-ignore = "^vendor/"
+tar-ignore = ".git"
+tar-ignore = ".github"
+tar-ignore = ".gocache"
+tar-ignore = "build"

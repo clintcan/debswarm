@@ -1,0 +1,32 @@
+Source: debswarm
+Section: net
+Priority: optional
+Maintainer: debswarm developers <debswarm@example.com>
+Build-Depends: debhelper-compat (= 13),
+               golang-go (>= 2:1.22~) | golang-1.22-go,
+               libsqlite3-dev,
+               pkg-config
+Standards-Version: 4.6.2
+Homepage: https://github.com/debswarm/debswarm
+Vcs-Git: https://github.com/debswarm/debswarm.git
+Vcs-Browser: https://github.com/debswarm/debswarm
+Rules-Requires-Root: no
+
+Package: debswarm
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Recommends: apt-transport-https
+Description: Peer-to-peer package distribution for APT
+ debswarm accelerates APT package downloads by fetching packages from
+ nearby peers while maintaining security through cryptographic verification.
+ It operates as a transparent HTTP proxy, requiring no changes to your
+ normal apt workflow.
+ .
+ Features:
+  * Transparent APT integration - just use apt install as usual
+  * P2P package sharing via libp2p and Kademlia DHT
+  * Parallel chunked downloads from multiple peers
+  * Hash verification against signed repository metadata
+  * Automatic fallback to official mirrors
+  * QUIC transport for better NAT traversal
+  * Prometheus metrics for monitoring

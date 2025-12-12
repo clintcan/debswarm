@@ -1,0 +1,97 @@
+version: 1
+
+before:
+  hooks:
+    - go mod tidy
+    - go mod download
+
+builds:
+  - id: debswarm
+    main: ./cmd/debswarm
+    binary: debswarm
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - 7
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: default
+    name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+    format: tar.gz
+    files:
+      - README.md
+      - LICENSE
+      - dist/90debswarm.conf
+      - dist/debswarm.service
+      - dist/config.example.toml
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  name_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: 'New Features'
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: 'Bug Fixes'
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: 'Performance'
+      regexp: "^.*perf[(\\w)]*:+.*$"
+      order: 2
+    - title: 'Other'
+      order: 999
+
+release:
+  github:
+    owner: debswarm
+    name: debswarm
+  draft: false
+  prerelease: auto
+  name_template: "{{.ProjectName}} v{{.Version}}"
+  header: |
+    ## debswarm v{{.Version}}
+    
+    P2P package distribution for Debian/Ubuntu.
+    
+    ### Installation
+    
+    **Quick install:**
+    ```bash
+    curl -sSL https://github.com/debswarm/debswarm/releases/download/v{{.Version}}/debswarm_{{.Version}}_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin debswarm
+    ```
+    
+    **Debian/Ubuntu:**
+    ```bash
+    wget https://github.com/debswarm/debswarm/releases/download/v{{.Version}}/debswarm_{{.Version}}-1_amd64.deb
+    sudo dpkg -i debswarm_{{.Version}}-1_amd64.deb
+    ```
+  footer: |
+    ---
+    
+    **Full Changelog**: https://github.com/debswarm/debswarm/compare/{{ .PreviousTag }}...{{ .Tag }}

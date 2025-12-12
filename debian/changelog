@@ -1,0 +1,17 @@
+debswarm (0.2.0-1) unstable; urgency=medium
+
+  * Initial release.
+  * Features:
+    - Transparent APT HTTP proxy integration
+    - P2P package distribution via libp2p/Kademlia DHT
+    - Parallel chunked downloads from multiple peers
+    - Adaptive timeouts based on network conditions
+    - Peer scoring for optimal peer selection
+    - QUIC transport preference for NAT traversal
+    - Prometheus metrics endpoint
+    - Content-addressed cache with SQLite metadata
+    - mDNS local network discovery
+    - SHA256 verification of all P2P downloads
+    - Automatic mirror fallback
+
+ -- debswarm developers <debswarm@example.com>  Thu, 12 Dec 2024 00:00:00 +0000
