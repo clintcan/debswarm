@@ -16,6 +16,7 @@ import (
 
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/config"
+	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
@@ -29,14 +30,19 @@ import (
 )
 
 var (
-	cfgFile     string
-	logLevel    string
-	logFile     string
-	dataDir     string
-	proxyPort   int
-	p2pPort     int
-	metricsPort int
-	preferQUIC  bool
+	// Set at build time via -ldflags
+	version = "dev"
+
+	cfgFile         string
+	logLevel        string
+	logFile         string
+	dataDir         string
+	proxyPort       int
+	p2pPort         int
+	metricsPort     int
+	preferQUIC      bool
+	maxUploadRate   string
+	maxDownloadRate string
 )
 
 func main() {
@@ -105,6 +111,8 @@ downloads packages from P2P peers when available, falling back to mirrors.`,
 	cmd.Flags().IntVar(&p2pPort, "p2p-port", 4001, "P2P listen port")
 	cmd.Flags().IntVar(&metricsPort, "metrics-port", 9978, "Metrics endpoint port (0 to disable)")
 	cmd.Flags().BoolVar(&preferQUIC, "prefer-quic", true, "Prefer QUIC transport over TCP")
+	cmd.Flags().StringVar(&maxUploadRate, "max-upload-rate", "", "Max upload rate (e.g., 10MB/s, 0 = unlimited)")
+	cmd.Flags().StringVar(&maxDownloadRate, "max-download-rate", "", "Max download rate (e.g., 50MB/s, 0 = unlimited)")
 
 	return cmd
 }
@@ -177,15 +185,36 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Initialize mirror fetcher
 	fetcher := mirror.NewFetcher(nil, logger)
 
+	// Parse rate limits (CLI flags override config)
+	uploadRate := maxUploadRate
+	if uploadRate == "" {
+		uploadRate = cfg.Transfer.MaxUploadRate
+	}
+	downloadRate := maxDownloadRate
+	if downloadRate == "" {
+		downloadRate = cfg.Transfer.MaxDownloadRate
+	}
+
+	parsedUploadRate, err := config.ParseRate(uploadRate)
+	if err != nil {
+		return fmt.Errorf("invalid max-upload-rate: %w", err)
+	}
+	parsedDownloadRate, err := config.ParseRate(downloadRate)
+	if err != nil {
+		return fmt.Errorf("invalid max-download-rate: %w", err)
+	}
+
 	// Initialize P2P node with QUIC preference
 	p2pCfg := &p2p.Config{
-		ListenPort:     cfg.Network.ListenPort,
-		BootstrapPeers: cfg.Network.BootstrapPeers,
-		EnableMDNS:     cfg.Privacy.EnableMDNS,
-		PreferQUIC:     preferQUIC,
-		Scorer:         scorer,
-		Timeouts:       tm,
-		Metrics:        m,
+		ListenPort:      cfg.Network.ListenPort,
+		BootstrapPeers:  cfg.Network.BootstrapPeers,
+		EnableMDNS:      cfg.Privacy.EnableMDNS,
+		PreferQUIC:      preferQUIC,
+		MaxUploadRate:   parsedUploadRate,
+		MaxDownloadRate: parsedDownloadRate,
+		Scorer:          scorer,
+		Timeouts:        tm,
+		Metrics:         m,
 	}
 
 	p2pNode, err := p2p.New(ctx, p2pCfg, logger)
@@ -212,6 +241,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		P2PTimeout:     5 * time.Second,
 		DHTLookupLimit: 10,
 		MetricsPort:    metricsPort,
+		CacheMaxSize:   maxSize,
 		Metrics:        m,
 		Timeouts:       tm,
 		Scorer:         scorer,
@@ -219,6 +249,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	proxyServer := proxy.NewServer(proxyCfg, pkgCache, idx, p2pNode, fetcher, logger)
 	proxyServer.SetP2PNode(p2pNode)
+
+	// Initialize dashboard
+	dashCfg := &dashboard.Config{
+		Version:         version,
+		PeerID:          p2pNode.PeerID().String(),
+		MaxUploadRate:   uploadRate,
+		MaxDownloadRate: downloadRate,
+	}
+	dash := dashboard.New(dashCfg, proxyServer.GetDashboardStats, proxyServer.GetPeerInfo)
+	proxyServer.SetDashboard(dash)
 
 	// Start periodic tasks
 	go runPeriodicTasks(ctx, proxyServer, pkgCache, p2pNode, m, logger, cfg.DHT.AnnounceInterval)
@@ -747,7 +787,7 @@ func versionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Show version information",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("debswarm version 0.2.5\n")
+			fmt.Printf("debswarm version %s\n", version)
 			fmt.Printf("\nFeatures:\n")
 			fmt.Printf("  • Parallel chunked downloads\n")
 			fmt.Printf("  • Adaptive timeouts\n")
@@ -755,6 +795,8 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("  • QUIC transport\n")
 			fmt.Printf("  • Prometheus metrics\n")
 			fmt.Printf("  • Package seeding\n")
+			fmt.Printf("  • Bandwidth limiting\n")
+			fmt.Printf("  • Web dashboard\n")
 		},
 	}
 }

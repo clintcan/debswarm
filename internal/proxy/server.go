@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/debswarm/debswarm/internal/cache"
+	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/downloader"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
@@ -57,6 +58,10 @@ type Server struct {
 	// Announcement worker pool (bounded)
 	announceChan chan string
 	announceDone chan struct{}
+
+	// Dashboard
+	dashboard    *dashboard.Dashboard
+	cacheMaxSize int64
 }
 
 // Config holds proxy server configuration
@@ -65,6 +70,7 @@ type Config struct {
 	P2PTimeout     time.Duration
 	DHTLookupLimit int
 	MetricsPort    int
+	CacheMaxSize   int64
 	Metrics        *metrics.Metrics
 	Timeouts       *timeouts.Manager
 	Scorer         *peers.Scorer
@@ -122,6 +128,7 @@ func NewServer(
 		p2pTimeout:     cfg.P2PTimeout,
 		dhtLookupLimit: cfg.DHTLookupLimit,
 		metricsPort:    cfg.MetricsPort,
+		cacheMaxSize:   cfg.CacheMaxSize,
 		announceChan:   make(chan string, 100), // Bounded buffer
 		announceDone:   make(chan struct{}),
 	}
@@ -170,6 +177,19 @@ func (s *Server) startMetricsServer() {
 		_, _ = w.Write([]byte("OK"))
 	})
 	mux.HandleFunc("/stats", s.handleStats)
+
+	// Add dashboard routes if dashboard is set
+	if s.dashboard != nil {
+		mux.Handle("/dashboard", s.dashboard.Handler())
+		mux.Handle("/dashboard/", s.dashboard.Handler())
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)
+				return
+			}
+			http.NotFound(w, r)
+		})
+	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", s.metricsPort)
 	s.logger.Info("Starting metrics server", zap.String("addr", addr))
@@ -255,6 +275,126 @@ func (s *Server) GetStats() Stats {
 		CacheHits:         atomic.LoadInt64(&s.cacheHits),
 		ActiveConnections: atomic.LoadInt64(&s.activeConns),
 	}
+}
+
+// SetDashboard sets the dashboard for the server
+func (s *Server) SetDashboard(d *dashboard.Dashboard) {
+	s.dashboard = d
+}
+
+// GetDashboardStats returns stats in dashboard format
+func (s *Server) GetDashboardStats() *dashboard.Stats {
+	stats := s.GetStats()
+
+	// Calculate P2P ratio
+	p2pRatio := float64(0)
+	if stats.BytesFromP2P+stats.BytesFromMirror > 0 {
+		p2pRatio = float64(stats.BytesFromP2P) / float64(stats.BytesFromP2P+stats.BytesFromMirror) * 100
+	}
+
+	// Calculate cache usage
+	cacheUsage := float64(0)
+	if s.cacheMaxSize > 0 {
+		cacheUsage = float64(s.cache.Size()) / float64(s.cacheMaxSize) * 100
+	}
+
+	// Get P2P stats
+	connectedPeers := 0
+	routingTableSize := 0
+	if s.p2pNode != nil {
+		connectedPeers = s.p2pNode.ConnectedPeers()
+		routingTableSize = s.p2pNode.RoutingTableSize()
+	}
+
+	return &dashboard.Stats{
+		RequestsTotal:     stats.RequestsTotal,
+		RequestsP2P:       stats.RequestsP2P,
+		RequestsMirror:    stats.RequestsMirror,
+		BytesFromP2P:      stats.BytesFromP2P,
+		BytesFromMirror:   stats.BytesFromMirror,
+		CacheHits:         stats.CacheHits,
+		P2PRatioPercent:   p2pRatio,
+		CacheSizeBytes:    s.cache.Size(),
+		CacheCount:        s.cache.Count(),
+		CacheMaxSize:      formatBytes(s.cacheMaxSize),
+		CacheUsagePercent: cacheUsage,
+		ConnectedPeers:    connectedPeers,
+		RoutingTableSize:  routingTableSize,
+		ActiveDownloads:   int(s.metrics.ActiveDownloads.Value()),
+		ActiveUploads:     int(s.metrics.ActiveUploads.Value()),
+	}
+}
+
+// GetPeerInfo returns peer information for the dashboard
+func (s *Server) GetPeerInfo() []dashboard.PeerInfo {
+	if s.p2pNode == nil {
+		return nil
+	}
+
+	peerStats := s.p2pNode.GetPeerStats()
+	result := make([]dashboard.PeerInfo, 0, len(peerStats))
+
+	for _, ps := range peerStats {
+		shortID := ps.PeerID.String()
+		if len(shortID) > 12 {
+			shortID = shortID[:6] + "..." + shortID[len(shortID)-6:]
+		}
+
+		// Get score from scorer
+		score := s.scorer.GetScore(ps.PeerID)
+
+		// Determine category based on score
+		category := "Unknown"
+		if ps.Blacklisted {
+			category = "Blacklisted"
+		} else if score >= 0.8 {
+			category = "Excellent"
+		} else if score >= 0.6 {
+			category = "Good"
+		} else if score >= 0.4 {
+			category = "Fair"
+		} else if ps.TotalRequests > 0 {
+			category = "Poor"
+		}
+
+		result = append(result, dashboard.PeerInfo{
+			ID:          ps.PeerID.String(),
+			ShortID:     shortID,
+			Score:       score,
+			Category:    category,
+			Latency:     formatDuration(time.Duration(ps.AvgLatencyMs) * time.Millisecond),
+			Throughput:  formatBytes(int64(ps.AvgThroughput)) + "/s",
+			Downloaded:  formatBytes(ps.BytesDownloaded),
+			Uploaded:    formatBytes(ps.BytesUploaded),
+			LastSeen:    formatDuration(time.Since(ps.LastSeen)) + " ago",
+			Blacklisted: ps.Blacklisted,
+		})
+	}
+
+	return result
+}
+
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
 func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {

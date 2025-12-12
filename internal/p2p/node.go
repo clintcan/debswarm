@@ -14,6 +14,7 @@ import (
 
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/ratelimit"
 	"github.com/debswarm/debswarm/internal/timeouts"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -61,6 +62,10 @@ type Node struct {
 	mdnsService      mdns.Service
 	bootstrapDone    chan struct{}
 
+	// Rate limiting
+	uploadLimiter   *ratelimit.Limiter
+	downloadLimiter *ratelimit.Limiter
+
 	// Upload tracking
 	uploadsMu      sync.Mutex
 	activeUploads  int
@@ -72,14 +77,16 @@ type ContentGetter func(sha256Hash string) (io.ReadCloser, int64, error)
 
 // Config holds P2P node configuration
 type Config struct {
-	ListenPort     int
-	BootstrapPeers []string
-	EnableMDNS     bool
-	PrivateKey     crypto.PrivKey
-	PreferQUIC     bool // Prefer QUIC over TCP
-	Scorer         *peers.Scorer
-	Timeouts       *timeouts.Manager
-	Metrics        *metrics.Metrics
+	ListenPort      int
+	BootstrapPeers  []string
+	EnableMDNS      bool
+	PrivateKey      crypto.PrivKey
+	PreferQUIC      bool // Prefer QUIC over TCP
+	MaxUploadRate   int64 // bytes per second, 0 = unlimited
+	MaxDownloadRate int64 // bytes per second, 0 = unlimited
+	Scorer          *peers.Scorer
+	Timeouts        *timeouts.Manager
+	Metrics         *metrics.Metrics
 }
 
 // New creates a new P2P node with QUIC preference
@@ -195,6 +202,15 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		metrics:          cfg.Metrics,
 		bootstrapDone:    make(chan struct{}),
 		uploadsPerPeer:   make(map[peer.ID]int),
+		uploadLimiter:    ratelimit.New(cfg.MaxUploadRate),
+		downloadLimiter:  ratelimit.New(cfg.MaxDownloadRate),
+	}
+
+	if cfg.MaxUploadRate > 0 {
+		logger.Info("Upload rate limiting enabled", zap.Int64("bytesPerSecond", cfg.MaxUploadRate))
+	}
+	if cfg.MaxDownloadRate > 0 {
+		logger.Info("Download rate limiting enabled", zap.Int64("bytesPerSecond", cfg.MaxDownloadRate))
 	}
 
 	// Set up transfer protocol handlers
@@ -471,9 +487,13 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		return nil, fmt.Errorf("content too large: %d bytes", size)
 	}
 
-	// Read content
+	// Read content with optional rate limiting
 	data := make([]byte, size)
-	if _, err := io.ReadFull(stream, data); err != nil {
+	var reader io.Reader = stream
+	if n.downloadLimiter.Enabled() {
+		reader = n.downloadLimiter.ReaderContext(ctx, stream)
+	}
+	if _, err := io.ReadFull(reader, data); err != nil {
 		n.scorer.RecordFailure(peerInfo.ID, "read data failed")
 		return nil, fmt.Errorf("failed to read content: %w", err)
 	}
@@ -621,8 +641,12 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	// Send size
 	n.writeSize(stream, responseSize)
 
-	// Send content (limited to response size)
-	written, err := io.CopyN(stream, reader, responseSize)
+	// Send content (limited to response size) with optional rate limiting
+	var writer io.Writer = stream
+	if n.uploadLimiter.Enabled() {
+		writer = n.uploadLimiter.Writer(stream)
+	}
+	written, err := io.CopyN(writer, reader, responseSize)
 	if err != nil {
 		n.logger.Debug("Failed to send content", zap.Error(err))
 		return

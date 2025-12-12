@@ -37,6 +37,7 @@ type CacheConfig struct {
 // TransferConfig holds transfer-related settings
 type TransferConfig struct {
 	MaxUploadRate              string `toml:"max_upload_rate"`
+	MaxDownloadRate            string `toml:"max_download_rate"`
 	MaxConcurrentUploads       int    `toml:"max_concurrent_uploads"`
 	MaxConcurrentPeerDownloads int    `toml:"max_concurrent_peer_downloads"`
 }
@@ -82,6 +83,7 @@ func DefaultConfig() *Config {
 		},
 		Transfer: TransferConfig{
 			MaxUploadRate:              "0", // unlimited
+			MaxDownloadRate:            "0", // unlimited
 			MaxConcurrentUploads:       20,
 			MaxConcurrentPeerDownloads: 10,
 		},
@@ -171,4 +173,20 @@ func parseWithUnit(s string, size *int64, unit *string) (int, error) {
 	}
 	*unit = s[n:]
 	return n, nil
+}
+
+// ParseRate parses a rate string like "10MB/s" or "100KB" into bytes per second
+// Returns 0 for unlimited (empty string, "0", or "unlimited")
+func ParseRate(s string) (int64, error) {
+	if s == "" || s == "0" || s == "unlimited" {
+		return 0, nil
+	}
+
+	// Remove "/s" suffix if present
+	rateStr := s
+	if len(s) > 2 && s[len(s)-2:] == "/s" {
+		rateStr = s[:len(s)-2]
+	}
+
+	return ParseSize(rateStr)
 }
