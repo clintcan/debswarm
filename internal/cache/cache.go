@@ -109,11 +109,41 @@ func createTables(db *sql.DB) error {
 			path TEXT NOT NULL
 		);
 
-		CREATE INDEX IF NOT EXISTS idx_packages_last_accessed 
+		CREATE TABLE IF NOT EXISTS downloads (
+			id TEXT PRIMARY KEY,
+			url TEXT NOT NULL,
+			expected_size INTEGER NOT NULL,
+			completed_size INTEGER DEFAULT 0,
+			chunk_size INTEGER NOT NULL,
+			total_chunks INTEGER NOT NULL,
+			status TEXT DEFAULT 'pending',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			error TEXT
+		);
+
+		CREATE TABLE IF NOT EXISTS download_chunks (
+			download_id TEXT NOT NULL,
+			chunk_index INTEGER NOT NULL,
+			start_offset INTEGER NOT NULL,
+			end_offset INTEGER NOT NULL,
+			status TEXT DEFAULT 'pending',
+			completed_at INTEGER,
+			PRIMARY KEY (download_id, chunk_index),
+			FOREIGN KEY (download_id) REFERENCES downloads(id) ON DELETE CASCADE
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_packages_last_accessed
 		ON packages(last_accessed);
-		
-		CREATE INDEX IF NOT EXISTS idx_packages_announced 
+
+		CREATE INDEX IF NOT EXISTS idx_packages_announced
 		ON packages(announced);
+
+		CREATE INDEX IF NOT EXISTS idx_downloads_status
+		ON downloads(status);
+
+		CREATE INDEX IF NOT EXISTS idx_download_chunks_status
+		ON download_chunks(download_id, status);
 	`)
 	return err
 }
@@ -497,4 +527,32 @@ func (c *Cache) ensureSpace(needed int64) error {
 	}
 
 	return nil
+}
+
+// GetDB returns the underlying database connection
+// Used by downloader for state persistence
+func (c *Cache) GetDB() *sql.DB {
+	return c.db
+}
+
+// PartialDir returns the directory for partial downloads
+func (c *Cache) PartialDir(hash string) string {
+	return filepath.Join(c.basePath, "packages", "partial", hash)
+}
+
+// EnsurePartialDir creates the partial download directory for a hash
+func (c *Cache) EnsurePartialDir(hash string) error {
+	dir := c.PartialDir(hash)
+	return os.MkdirAll(dir, 0755)
+}
+
+// CleanPartialDir removes the partial download directory for a hash
+func (c *Cache) CleanPartialDir(hash string) error {
+	dir := c.PartialDir(hash)
+	return os.RemoveAll(dir)
+}
+
+// BasePath returns the cache base path
+func (c *Cache) BasePath() string {
+	return c.basePath
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/pnet"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
@@ -81,9 +82,11 @@ type Config struct {
 	BootstrapPeers  []string
 	EnableMDNS      bool
 	PrivateKey      crypto.PrivKey
-	PreferQUIC      bool // Prefer QUIC over TCP
+	PreferQUIC      bool  // Prefer QUIC over TCP
 	MaxUploadRate   int64 // bytes per second, 0 = unlimited
 	MaxDownloadRate int64 // bytes per second, 0 = unlimited
+	PSK             []byte   // Pre-shared key for private swarm
+	PeerAllowlist   []string // Allowed peer IDs (empty = all allowed)
 	Scorer          *peers.Scorer
 	Timeouts        *timeouts.Manager
 	Metrics         *metrics.Metrics
@@ -154,6 +157,31 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		libp2p.EnableRelay(),
 		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
+	}
+
+	// Add PSK for private swarm if configured
+	if len(cfg.PSK) > 0 {
+		opts = append(opts, libp2p.PrivateNetwork(pnet.PSK(cfg.PSK)))
+		logger.Info("Private swarm enabled",
+			zap.String("fingerprint", PSKFingerprint(cfg.PSK)))
+	}
+
+	// Add peer allowlist if configured
+	if len(cfg.PeerAllowlist) > 0 {
+		peerIDs := make([]peer.ID, 0, len(cfg.PeerAllowlist))
+		for _, pidStr := range cfg.PeerAllowlist {
+			pid, err := peer.Decode(pidStr)
+			if err != nil {
+				logger.Warn("Invalid peer ID in allowlist", zap.String("peer", pidStr), zap.Error(err))
+				continue
+			}
+			peerIDs = append(peerIDs, pid)
+		}
+		if len(peerIDs) > 0 {
+			gater := NewAllowlistGater(peerIDs)
+			opts = append(opts, libp2p.ConnectionGater(gater))
+			logger.Info("Peer allowlist enabled", zap.Int("count", len(peerIDs)))
+		}
 	}
 
 	// Create libp2p host

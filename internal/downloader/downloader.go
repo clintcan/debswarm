@@ -117,10 +117,11 @@ type Chunk struct {
 
 // Downloader handles parallel chunked downloads
 type Downloader struct {
-	scorer    *peers.Scorer
-	metrics   *metrics.Metrics
-	chunkSize int64
-	maxConc   int
+	scorer       *peers.Scorer
+	metrics      *metrics.Metrics
+	chunkSize    int64
+	maxConc      int
+	stateManager *StateManager
 }
 
 // Config holds downloader configuration
@@ -129,6 +130,7 @@ type Config struct {
 	MaxConcurrent   int
 	Scorer          *peers.Scorer
 	Metrics         *metrics.Metrics
+	StateManager    *StateManager
 }
 
 // New creates a new Downloader
@@ -146,11 +148,22 @@ func New(cfg *Config) *Downloader {
 	}
 
 	return &Downloader{
-		scorer:    cfg.Scorer,
-		metrics:   cfg.Metrics,
-		chunkSize: chunkSize,
-		maxConc:   maxConc,
+		scorer:       cfg.Scorer,
+		metrics:      cfg.Metrics,
+		chunkSize:    chunkSize,
+		maxConc:      maxConc,
+		stateManager: cfg.StateManager,
 	}
+}
+
+// SetStateManager sets the state manager for download resume support
+func (d *Downloader) SetStateManager(sm *StateManager) {
+	d.stateManager = sm
+}
+
+// GetStateManager returns the state manager
+func (d *Downloader) GetStateManager() *StateManager {
+	return d.stateManager
 }
 
 // DownloadResult contains the result of a download
