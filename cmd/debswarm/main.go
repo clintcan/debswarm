@@ -573,6 +573,7 @@ func configCmd() *cobra.Command {
 func seedCmd() *cobra.Command {
 	var recursive bool
 	var announce bool
+	var sync bool
 
 	cmd := &cobra.Command{
 		Use:   "seed",
@@ -591,15 +592,17 @@ making them discoverable via the DHT without waiting for APT requests.`,
 Examples:
   debswarm seed import /var/cache/apt/archives/*.deb
   debswarm seed import --recursive /mirror/ubuntu/pool/
+  debswarm seed import --recursive --sync /var/www/mirror/pool/
   debswarm seed import package1.deb package2.deb`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSeedImport(args, recursive, announce)
+			return runSeedImport(args, recursive, announce, sync)
 		},
 	}
 
 	importCmd.Flags().BoolVarP(&recursive, "recursive", "r", false, "Recursively scan directories")
 	importCmd.Flags().BoolVarP(&announce, "announce", "a", true, "Announce packages to DHT")
+	importCmd.Flags().BoolVar(&sync, "sync", false, "Remove cached packages not in source (mirror sync mode)")
 
 	cmd.AddCommand(importCmd)
 
@@ -643,7 +646,7 @@ Examples:
 	return cmd
 }
 
-func runSeedImport(args []string, recursive, announce bool) error {
+func runSeedImport(args []string, recursive, announce, syncMode bool) error {
 	logger, err := setupLogger()
 	if err != nil {
 		return err
@@ -701,6 +704,9 @@ func runSeedImport(args []string, recursive, announce bool) error {
 
 	fmt.Printf("Found %d .deb files to import\n\n", len(debFiles))
 
+	// Track all source hashes for sync mode
+	sourceHashes := make(map[string]struct{})
+
 	// Import each file
 	var imported, skipped, failed int
 	for _, path := range debFiles {
@@ -708,6 +714,10 @@ func runSeedImport(args []string, recursive, announce bool) error {
 		if err != nil {
 			if err.Error() == "already cached" {
 				skipped++
+				// Still track the hash for sync mode
+				if syncMode {
+					sourceHashes[hash] = struct{}{}
+				}
 				fmt.Printf("  [SKIP] %s (already cached)\n", filepath.Base(path))
 			} else {
 				failed++
@@ -717,6 +727,9 @@ func runSeedImport(args []string, recursive, announce bool) error {
 		}
 
 		imported++
+		if syncMode {
+			sourceHashes[hash] = struct{}{}
+		}
 		fmt.Printf("  [OK]   %s (%s, %s)\n", filepath.Base(path), formatBytes(size), hash[:12]+"...")
 
 		// Announce to DHT
@@ -730,6 +743,29 @@ func runSeedImport(args []string, recursive, announce bool) error {
 	}
 
 	fmt.Printf("\nSummary: %d imported, %d skipped, %d failed\n", imported, skipped, failed)
+
+	// Sync mode: remove packages not in source
+	if syncMode {
+		fmt.Println("\nSync mode: checking for packages to remove...")
+		cachedPkgs, err := pkgCache.List()
+		if err != nil {
+			return fmt.Errorf("failed to list cache: %w", err)
+		}
+
+		var removed int
+		for _, pkg := range cachedPkgs {
+			if _, exists := sourceHashes[pkg.SHA256]; !exists {
+				if err := pkgCache.Delete(pkg.SHA256); err != nil {
+					fmt.Printf("  [FAIL] Could not remove %s: %v\n", pkg.Filename, err)
+				} else {
+					removed++
+					fmt.Printf("  [DEL]  %s (%s)\n", pkg.Filename, pkg.SHA256[:12]+"...")
+				}
+			}
+		}
+		fmt.Printf("\nRemoved %d old packages\n", removed)
+	}
+
 	fmt.Printf("Cache size: %s (%d packages)\n", formatBytes(pkgCache.Size()), pkgCache.Count())
 
 	return nil
