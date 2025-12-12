@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -182,29 +183,33 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		p2pRatio = float64(stats.BytesFromP2P) / float64(stats.BytesFromP2P+stats.BytesFromMirror) * 100
 	}
 
-	fmt.Fprintf(w, `{
-  "requests_total": %d,
-  "requests_p2p": %d,
-  "requests_mirror": %d,
-  "bytes_from_p2p": %d,
-  "bytes_from_mirror": %d,
-  "cache_hits": %d,
-  "active_connections": %d,
-  "p2p_ratio_percent": %.2f,
-  "cache_size_bytes": %d,
-  "cache_count": %d
-}`,
-		stats.RequestsTotal,
-		stats.RequestsP2P,
-		stats.RequestsMirror,
-		stats.BytesFromP2P,
-		stats.BytesFromMirror,
-		stats.CacheHits,
-		stats.ActiveConnections,
-		p2pRatio,
-		s.cache.Size(),
-		s.cache.Count(),
-	)
+	response := struct {
+		RequestsTotal     int64   `json:"requests_total"`
+		RequestsP2P       int64   `json:"requests_p2p"`
+		RequestsMirror    int64   `json:"requests_mirror"`
+		BytesFromP2P      int64   `json:"bytes_from_p2p"`
+		BytesFromMirror   int64   `json:"bytes_from_mirror"`
+		CacheHits         int64   `json:"cache_hits"`
+		ActiveConnections int64   `json:"active_connections"`
+		P2PRatioPercent   float64 `json:"p2p_ratio_percent"`
+		CacheSizeBytes    int64   `json:"cache_size_bytes"`
+		CacheCount        int     `json:"cache_count"`
+	}{
+		RequestsTotal:     stats.RequestsTotal,
+		RequestsP2P:       stats.RequestsP2P,
+		RequestsMirror:    stats.RequestsMirror,
+		BytesFromP2P:      stats.BytesFromP2P,
+		BytesFromMirror:   stats.BytesFromMirror,
+		CacheHits:         stats.CacheHits,
+		ActiveConnections: stats.ActiveConnections,
+		P2PRatioPercent:   p2pRatio,
+		CacheSizeBytes:    s.cache.Size(),
+		CacheCount:        s.cache.Count(),
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Debug("Failed to encode stats response", zap.Error(err))
+	}
 }
 
 // Shutdown gracefully shuts down the server
@@ -319,12 +324,19 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	if path != "" {
 		if pkg := s.index.GetByPath(path); pkg != nil {
-			expectedHash = pkg.SHA256
-			expectedSize = pkg.Size
-			s.logger.Debug("Found package in index",
-				zap.String("path", path),
-				zap.String("hash", expectedHash[:16]+"..."),
-				zap.Int64("size", expectedSize))
+			// Validate hash format before use (must be 64 hex characters)
+			if len(pkg.SHA256) == 64 {
+				if _, err := hex.DecodeString(pkg.SHA256); err == nil {
+					expectedHash = pkg.SHA256
+					expectedSize = pkg.Size
+					s.logger.Debug("Found package in index",
+						zap.String("path", path),
+						zap.String("hash", expectedHash[:16]+"..."),
+						zap.Int64("size", expectedSize))
+				} else {
+					s.logger.Warn("Invalid hash format in index", zap.String("path", path))
+				}
+			}
 		}
 	}
 

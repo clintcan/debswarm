@@ -507,6 +507,12 @@ func (n *Node) handleRangeTransferStream(stream network.Stream) {
 func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	defer stream.Close()
 
+	// Set stream deadline to prevent slowloris attacks
+	if err := stream.SetDeadline(time.Now().Add(2 * time.Minute)); err != nil {
+		n.logger.Debug("Failed to set stream deadline", zap.Error(err))
+		return
+	}
+
 	peerID := stream.Conn().RemotePeer()
 
 	// Check upload limits

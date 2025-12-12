@@ -75,11 +75,24 @@ func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Start the debswarm daemon",
-		Long: `Start the debswarm daemon which provides an HTTP proxy for APT 
+		Long: `Start the debswarm daemon which provides an HTTP proxy for APT
 and participates in the P2P network.
 
 The daemon listens on localhost:9977 for APT requests and automatically
 downloads packages from P2P peers when available, falling back to mirrors.`,
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			// Validate port numbers
+			if proxyPort < 1 || proxyPort > 65535 {
+				return fmt.Errorf("invalid proxy-port: must be between 1 and 65535")
+			}
+			if p2pPort < 1 || p2pPort > 65535 {
+				return fmt.Errorf("invalid p2p-port: must be between 1 and 65535")
+			}
+			if metricsPort < 0 || metricsPort > 65535 {
+				return fmt.Errorf("invalid metrics-port: must be between 0 and 65535")
+			}
+			return nil
+		},
 		RunE: runDaemon,
 	}
 
