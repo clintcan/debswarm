@@ -15,7 +15,7 @@ override_dh_auto_clean:
 
 override_dh_auto_build:
 	mkdir -p build
-	go build -ldflags="-s -w -X main.version=0.2.3" \
+	go build -ldflags="-s -w -X main.version=0.2.4" \
 		-o build/debswarm ./cmd/debswarm
 
 override_dh_auto_test:
@@ -26,14 +26,15 @@ override_dh_auto_install:
 	# Binary
 	install -D -m 0755 build/debswarm \
 		$(CURDIR)/debian/debswarm/usr/bin/debswarm
-	
+
 	# APT configuration
 	install -D -m 0644 90debswarm.conf \
 		$(CURDIR)/debian/debswarm/etc/apt/apt.conf.d/90debswarm.conf
-	
-	# Default configuration directory
-	install -d -m 0755 $(CURDIR)/debian/debswarm/etc/debswarm
-	
+
+	# System configuration (paths for systemd service)
+	install -D -m 0644 packaging/config.system.toml \
+		$(CURDIR)/debian/debswarm/etc/debswarm/config.toml
+
 	# Documentation
 	install -D -m 0644 README.md \
 		$(CURDIR)/debian/debswarm/usr/share/doc/debswarm/README.md
