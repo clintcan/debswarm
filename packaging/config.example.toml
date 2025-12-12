@@ -32,17 +32,17 @@ min_free_space = "1GB"
 
 [transfer]
 # Maximum upload rate (0 = unlimited)
-# Supports KB/s, MB/s suffixes
+# Supports KB/s, MB/s suffixes (e.g., "10MB/s", "500KB/s")
 max_upload_rate = "0"
+
+# Maximum download rate (0 = unlimited)
+max_download_rate = "0"
 
 # Maximum concurrent uploads to other peers
 max_concurrent_uploads = 20
 
 # Maximum concurrent downloads from peers
-max_concurrent_downloads = 8
-
-# Chunk size for parallel downloads
-chunk_size = "4MB"
+max_concurrent_peer_downloads = 10
 
 [dht]
 # How long provider records last in DHT
@@ -59,6 +59,23 @@ enable_mdns = true
 # Announce cached packages to the network
 # Set to false to only download, never upload
 announce_packages = true
+
+# Private swarm settings (optional)
+# Path to PSK file for private swarm (use 'debswarm psk generate' to create)
+psk_path = ""
+
+# Inline PSK (hex), mutually exclusive with psk_path
+# Not recommended - use psk_path instead for better security
+# psk = ""
+
+# List of allowed peer IDs (empty = allow all)
+# Use to restrict connections to specific known peers
+peer_allowlist = []
+# Example:
+# peer_allowlist = [
+#   "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz...",
+#   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
+# ]
 
 [logging]
 # Log level: debug, info, warn, error

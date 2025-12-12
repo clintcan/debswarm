@@ -20,7 +20,15 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **QUIC Transport** - Preferred over TCP for better NAT traversal and multiplexing
 - **Racing Strategy** - Small files race P2P vs mirror, first to finish wins
 
+### New in v0.3.0
+- **Bandwidth Limiting** - Control upload/download rates with `--max-upload-rate` and `--max-download-rate`
+- **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
+- **Private Swarms (PSK)** - Create isolated networks using pre-shared keys for corporate deployments
+- **Peer Allowlist** - Restrict connections to specific peer IDs
+- **Download Resume** - Infrastructure for resuming interrupted downloads (state persistence)
+
 ### Monitoring
+- **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
 - **Prometheus Metrics** - Full observability at `http://localhost:9978/metrics`
 - **JSON Stats** - Quick status check at `http://localhost:9978/stats`
 - **Detailed Logging** - Configurable log levels for debugging
@@ -73,13 +81,15 @@ sudo apt install vim
 internal/
 ├── cache/          # Content-addressed SQLite-backed cache
 ├── config/         # TOML configuration management
-├── downloader/     # Parallel chunked download engine
+├── dashboard/      # Real-time web dashboard
+├── downloader/     # Parallel chunked download engine with resume support
 ├── index/          # Debian Packages file parser
 ├── metrics/        # Prometheus metrics
 ├── mirror/         # HTTP mirror client with retry
-├── p2p/            # libp2p node with Kademlia DHT
+├── p2p/            # libp2p node with Kademlia DHT, PSK support
 ├── peers/          # Peer scoring and selection
 ├── proxy/          # HTTP proxy server for APT
+├── ratelimit/      # Bandwidth limiting for uploads/downloads
 └── timeouts/       # Adaptive timeout management
 ```
 
@@ -108,10 +118,10 @@ max_size = "10GB"
 min_free_space = "1GB"
 
 [transfer]
-max_upload_rate = "0"       # 0 = unlimited
+max_upload_rate = "0"       # 0 = unlimited, or "10MB/s"
+max_download_rate = "0"     # 0 = unlimited, or "50MB/s"
 max_concurrent_uploads = 20
-max_concurrent_downloads = 8
-chunk_size = "4MB"          # For parallel downloads
+max_concurrent_peer_downloads = 10
 
 [dht]
 provider_ttl = "24h"
@@ -120,6 +130,11 @@ announce_interval = "12h"
 [privacy]
 enable_mdns = true          # Local network discovery
 announce_packages = true    # Share with network
+
+# Private swarm settings (optional)
+psk_path = ""               # Path to PSK file for private swarm
+# psk = ""                  # Inline PSK (hex), mutually exclusive with psk_path
+peer_allowlist = []         # List of allowed peer IDs (empty = allow all)
 
 [logging]
 level = "info"              # debug, info, warn, error
@@ -131,6 +146,7 @@ file = ""                   # Empty = stderr
 ```bash
 # Start daemon
 debswarm daemon [--proxy-port 9977] [--p2p-port 4001] [--prefer-quic]
+debswarm daemon --max-upload-rate 10MB/s --max-download-rate 50MB/s
 
 # Show status
 debswarm status
@@ -146,6 +162,12 @@ debswarm seed import -r /path/to/pool/  # Import directory recursively
 debswarm seed import --announce=false   # Import without announcing to DHT
 debswarm seed list                      # List seeded packages
 
+# Private swarm (PSK) management
+debswarm psk generate                   # Generate new PSK file
+debswarm psk generate -o /path/to.key   # Generate to specific path
+debswarm psk show                       # Show PSK fingerprint from config
+debswarm psk show -f /path/to/swarm.key # Show fingerprint of specific file
+
 # Configuration
 debswarm config show        # Display current config
 debswarm config init        # Create default config file
@@ -155,7 +177,21 @@ debswarm peers              # Show peer information
 debswarm version            # Show version and features
 ```
 
-## Metrics
+## Monitoring
+
+### Web Dashboard
+
+Real-time dashboard available at `http://localhost:9978/dashboard`:
+
+- **Overview**: Uptime, P2P ratio, total requests
+- **Cache**: Size, count, usage percentage
+- **Network**: Peer ID, connected peers, routing table size
+- **Transfers**: Active uploads/downloads, recent activity
+- **Peers**: Table with scores, latency, throughput per peer
+
+The dashboard auto-refreshes every 5 seconds.
+
+### Prometheus Metrics
 
 Available at `http://localhost:9978/metrics` in Prometheus format:
 
@@ -251,6 +287,41 @@ debswarm seed import --announce=false package.deb
 - **Mirror operators** - Run dedicated seeders alongside mirrors
 
 See [docs/bootstrap-node.md](docs/bootstrap-node.md) for running a dedicated seeder.
+
+## Private Swarms
+
+For corporate networks or isolated deployments, debswarm supports private swarms using Pre-Shared Keys (PSK):
+
+```bash
+# Generate a new PSK
+debswarm psk generate -o /etc/debswarm/swarm.key
+
+# Distribute swarm.key to all nodes in your network
+# Then configure each node:
+```
+
+```toml
+# /etc/debswarm/config.toml
+[privacy]
+psk_path = "/etc/debswarm/swarm.key"
+
+# Optional: restrict to specific peer IDs
+peer_allowlist = [
+  "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz...",
+  "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
+]
+```
+
+**How it works:**
+- Nodes with the same PSK form an isolated network
+- Connections to/from nodes without the PSK are rejected
+- Peer allowlist provides additional filtering by peer ID
+- PSK fingerprints can be shared safely to verify key matches
+
+**Use cases:**
+- **Corporate networks** - Keep package sharing within your organization
+- **Air-gapped environments** - No connection to public DHT
+- **Testing/staging** - Separate swarms for different environments
 
 ## Security Model
 

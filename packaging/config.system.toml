@@ -23,6 +23,7 @@ min_free_space = "1GB"
 
 [transfer]
 max_upload_rate = "0"
+max_download_rate = "0"
 max_concurrent_uploads = 20
 max_concurrent_peer_downloads = 10
 
@@ -33,6 +34,8 @@ announce_interval = "12h"
 [privacy]
 enable_mdns = true
 announce_packages = true
+# psk_path = "/etc/debswarm/swarm.key"
+# peer_allowlist = []
 
 [logging]
 level = "info"

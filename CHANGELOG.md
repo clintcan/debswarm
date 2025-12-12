@@ -16,7 +16,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Nothing yet
 
-## [0.2.0] - 2024-12-12
+## [0.3.0] - 2025-12-13
+
+### Added
+- **Bandwidth limiting**: Control upload/download rates with `--max-upload-rate` and `--max-download-rate` CLI flags or config
+- **Web dashboard**: Real-time HTML dashboard at `http://localhost:9978/dashboard` showing stats, peers, and transfers
+- **Private swarms (PSK)**: Pre-shared key support for isolated networks via `psk_path` config option
+- **Peer allowlist**: Restrict connections to specific peer IDs via `peer_allowlist` config option
+- **PSK management CLI**: New `debswarm psk generate` and `debswarm psk show` commands
+- **Download resume infrastructure**: SQLite schema for tracking download state and partial files
+- **Rate limit package**: New `internal/ratelimit` package with token bucket rate limiting
+- **Dashboard package**: New `internal/dashboard` package with embedded HTML template
+- **Connection gater**: `internal/p2p/gater.go` for peer allowlist enforcement
+
+### Changed
+- P2P node now supports PSK and connection gating options
+- Dashboard auto-refreshes every 5 seconds
+- Version command now lists all features
+
+### Security
+- PSK files created with 0600 permissions (owner read/write only)
+- PSK values never logged, only fingerprints
+- Inline PSK config generates a warning recommending file-based PSK
+
+## [0.2.0] - 2025-12-12
 
 ### Added
 - **Parallel chunked downloads**: Large files (>10MB) are now split into 4MB chunks and downloaded simultaneously from multiple peers
@@ -41,7 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cache eviction scoring for better LRU behavior
 - Index parsing for edge cases in Packages files
 
-## [0.1.0] - 2024-12-01
+## [0.1.0] - 2025-12-01
 
 ### Added
 - Initial release
@@ -62,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/debswarm/debswarm/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/debswarm/debswarm/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/debswarm/debswarm/releases/tag/v0.1.0
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/clintcan/debswarm/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/clintcan/debswarm/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/clintcan/debswarm/releases/tag/v0.1.0
