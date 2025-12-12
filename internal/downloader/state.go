@@ -49,7 +49,7 @@ func (sm *StateManager) CreateDownload(hash, url string, size, chunkSize int64) 
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Insert download record
 	_, err = tx.Exec(`
@@ -177,7 +177,7 @@ func (sm *StateManager) UpdateChunk(hash string, index int, status string) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Update chunk
 	var completedAt interface{}
@@ -230,7 +230,7 @@ func (sm *StateManager) DeleteDownload(hash string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`DELETE FROM download_chunks WHERE download_id = ?`, hash)
 	if err != nil {
