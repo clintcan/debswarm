@@ -67,7 +67,8 @@ jobs:
         env:
           DEB_BUILD_OPTIONS: nocheck
         run: |
-          dpkg-buildpackage -b -us -uc -a${{ matrix.arch }}
+          # -d skips build dependency checks (Go is installed via actions/setup-go, not apt)
+          dpkg-buildpackage -b -us -uc -d -a${{ matrix.arch }}
       
       - name: Get version
         id: version
