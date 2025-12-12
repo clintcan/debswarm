@@ -9,8 +9,6 @@ import (
 
 // Metrics holds all application metrics
 type Metrics struct {
-	mu sync.RWMutex
-
 	// Counters
 	DownloadsTotal      *CounterVec
 	BytesDownloaded     *CounterVec
@@ -260,32 +258,32 @@ func (m *Metrics) Handler() http.Handler {
 }
 
 func writeCounter(w http.ResponseWriter, name string, value int64) {
-	w.Write([]byte("# TYPE " + name + " counter\n"))
-	w.Write([]byte(name + " " + itoa(value) + "\n"))
+	_, _ = w.Write([]byte("# TYPE " + name + " counter\n"))
+	_, _ = w.Write([]byte(name + " " + itoa(value) + "\n"))
 }
 
 func writeCounterWithLabel(w http.ResponseWriter, name, labelName, labelValue string, value int64) {
-	w.Write([]byte(name + "{" + labelName + "=\"" + labelValue + "\"} " + itoa(value) + "\n"))
+	_, _ = w.Write([]byte(name + "{" + labelName + "=\"" + labelValue + "\"} " + itoa(value) + "\n"))
 }
 
 func writeGauge(w http.ResponseWriter, name string, value float64) {
-	w.Write([]byte("# TYPE " + name + " gauge\n"))
-	w.Write([]byte(name + " " + ftoa(value) + "\n"))
+	_, _ = w.Write([]byte("# TYPE " + name + " gauge\n"))
+	_, _ = w.Write([]byte(name + " " + ftoa(value) + "\n"))
 }
 
 func writeHistogram(w http.ResponseWriter, name string, h *Histogram) {
 	count, sum, buckets := h.Stats()
-	w.Write([]byte("# TYPE " + name + " histogram\n"))
+	_, _ = w.Write([]byte("# TYPE " + name + " histogram\n"))
 
 	cumulative := int64(0)
 	for i, b := range h.buckets {
 		cumulative += buckets[i]
-		w.Write([]byte(name + "_bucket{le=\"" + ftoa(b) + "\"} " + itoa(cumulative) + "\n"))
+		_, _ = w.Write([]byte(name + "_bucket{le=\"" + ftoa(b) + "\"} " + itoa(cumulative) + "\n"))
 	}
 	cumulative += buckets[len(buckets)-1]
-	w.Write([]byte(name + "_bucket{le=\"+Inf\"} " + itoa(cumulative) + "\n"))
-	w.Write([]byte(name + "_sum " + ftoa(sum) + "\n"))
-	w.Write([]byte(name + "_count " + itoa(count) + "\n"))
+	_, _ = w.Write([]byte(name + "_bucket{le=\"+Inf\"} " + itoa(cumulative) + "\n"))
+	_, _ = w.Write([]byte(name + "_sum " + ftoa(sum) + "\n"))
+	_, _ = w.Write([]byte(name + "_count " + itoa(count) + "\n"))
 }
 
 func itoa(i int64) string {

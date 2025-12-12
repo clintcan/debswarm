@@ -649,7 +649,7 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 func (n *Node) writeSize(stream network.Stream, size int64) {
 	sizeBuf := make([]byte, 8)
 	binary.BigEndian.PutUint64(sizeBuf, uint64(size))
-	stream.Write(sizeBuf)
+	_, _ = stream.Write(sizeBuf)
 }
 
 func (n *Node) canAcceptUpload(peerID peer.ID) bool {

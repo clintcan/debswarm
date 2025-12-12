@@ -155,9 +155,9 @@ func (s *Server) Start() error {
 func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", s.metrics.Handler())
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		_, _ = w.Write([]byte("OK"))
 	})
 	mux.HandleFunc("/stats", s.handleStats)
 
@@ -168,7 +168,7 @@ func (s *Server) startMetricsServer() {
 		Addr:    addr,
 		Handler: mux,
 	}
-	server.ListenAndServe()
+	_ = server.ListenAndServe()
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -293,11 +293,7 @@ func (s *Server) classifyRequest(url string) requestType {
 }
 
 func (s *Server) extractTargetURL(r *http.Request) string {
-	path := r.URL.Path
-
-	if strings.HasPrefix(path, "/") {
-		path = path[1:]
-	}
+	path := strings.TrimPrefix(r.URL.Path, "/")
 
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		return path
@@ -457,7 +453,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleDownloadSuccess(w http.ResponseWriter, result *downloader.DownloadResult, expectedHash, path string, start time.Time) {
@@ -489,7 +485,7 @@ func (s *Server) handleDownloadSuccess(w http.ResponseWriter, result *downloader
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", result.Size))
 	w.Header().Set("X-Debswarm-Source", result.Source)
 	w.WriteHeader(http.StatusOK)
-	w.Write(result.Data)
+	_, _ = w.Write(result.Data)
 }
 
 func (s *Server) cacheAndServe(w http.ResponseWriter, data []byte, hash, path string) {
@@ -506,7 +502,7 @@ func (s *Server) cacheAndServe(w http.ResponseWriter, data []byte, hash, path st
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.Header().Set("X-Debswarm-Source", "peer")
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) cacheAndAnnounce(data []byte, hash, path string) {
@@ -545,7 +541,7 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, url string) {
@@ -567,7 +563,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url s
 
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.WriteHeader(http.StatusOK)
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) serveFromCache(w http.ResponseWriter, hash string) {
@@ -584,7 +580,7 @@ func (s *Server) serveFromCache(w http.ResponseWriter, hash string) {
 	w.Header().Set("X-Debswarm-Source", "cache")
 	w.WriteHeader(http.StatusOK)
 
-	io.Copy(w, reader)
+	_, _ = io.Copy(w, reader)
 }
 
 // SetP2PNode sets the P2P node

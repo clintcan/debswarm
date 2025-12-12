@@ -1,0 +1,71 @@
+# debswarm configuration example
+# Copy to /etc/debswarm/config.toml or ~/.config/debswarm/config.toml
+
+[network]
+# P2P listen port (UDP for QUIC, TCP fallback)
+listen_port = 4001
+
+# HTTP proxy port for APT
+proxy_port = 9977
+
+# Maximum concurrent connections
+max_connections = 100
+
+# Bootstrap peers for DHT (libp2p defaults)
+bootstrap_peers = [
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
+  "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
+]
+
+[cache]
+# Cache directory
+# Use absolute path or ~ for home directory
+path = "~/.cache/debswarm"
+
+# Maximum cache size (supports KB, MB, GB, TB suffixes)
+max_size = "10GB"
+
+# Minimum free space to maintain on disk
+min_free_space = "1GB"
+
+[transfer]
+# Maximum upload rate (0 = unlimited)
+# Supports KB/s, MB/s suffixes
+max_upload_rate = "0"
+
+# Maximum concurrent uploads to other peers
+max_concurrent_uploads = 20
+
+# Maximum concurrent downloads from peers
+max_concurrent_downloads = 8
+
+# Chunk size for parallel downloads
+chunk_size = "4MB"
+
+[dht]
+# How long provider records last in DHT
+provider_ttl = "24h"
+
+# How often to re-announce cached packages
+announce_interval = "12h"
+
+[privacy]
+# Enable mDNS for local network peer discovery
+# Set to false if you don't want to be discoverable on LAN
+enable_mdns = true
+
+# Announce cached packages to the network
+# Set to false to only download, never upload
+announce_packages = true
+
+[logging]
+# Log level: debug, info, warn, error
+level = "info"
+
+# Log file path (empty = stderr)
+file = ""
+
+# Example: log to file
+# file = "/var/log/debswarm/debswarm.log"
