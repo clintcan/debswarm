@@ -204,7 +204,10 @@ func (d *Dashboard) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	stats.Version = d.version
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(stats)
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		http.Error(w, "Failed to encode stats", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (d *Dashboard) handleAPIPeers(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +217,10 @@ func (d *Dashboard) handleAPIPeers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(peers)
+	if err := json.NewEncoder(w).Encode(peers); err != nil {
+		http.Error(w, "Failed to encode peers", http.StatusInternalServerError)
+		return
+	}
 }
 
 // Helper functions
