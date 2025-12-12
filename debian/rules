@@ -3,7 +3,7 @@
 export DH_VERBOSE = 1
 export GOCACHE = $(CURDIR)/.gocache
 export GOFLAGS = -mod=vendor -trimpath
-export CGO_ENABLED = 1
+export CGO_ENABLED = 0
 
 %:
 	dh $@
@@ -48,3 +48,11 @@ override_dh_dwz:
 override_dh_strip:
 	# Don't strip Go binaries - they're already stripped with -s -w
 	@echo "Skipping strip for Go binary"
+
+override_dh_makeshlibs:
+	# Skip - Go binaries are statically linked, no shared libs to process
+	@echo "Skipping makeshlibs for Go binary"
+
+override_dh_shlibdeps:
+	# Skip - Go binaries are statically linked, no shared lib deps
+	@echo "Skipping shlibdeps for Go binary"
