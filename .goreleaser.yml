@@ -68,30 +68,22 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: debswarm
-    name: debswarm
+  # Auto-detect from git remote (no hardcoded owner/name)
   draft: false
   prerelease: auto
   name_template: "{{.ProjectName}} v{{.Version}}"
   header: |
     ## debswarm v{{.Version}}
-    
+
     P2P package distribution for Debian/Ubuntu.
-    
+
     ### Installation
-    
+
     **Quick install:**
     ```bash
-    curl -sSL https://github.com/debswarm/debswarm/releases/download/v{{.Version}}/debswarm_{{.Version}}_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin debswarm
-    ```
-    
-    **Debian/Ubuntu:**
-    ```bash
-    wget https://github.com/debswarm/debswarm/releases/download/v{{.Version}}/debswarm_{{.Version}}-1_amd64.deb
-    sudo dpkg -i debswarm_{{.Version}}-1_amd64.deb
+    curl -sSL {{ .ReleaseURL }}/debswarm_{{.Version}}_linux_amd64.tar.gz | sudo tar -xz -C /usr/local/bin debswarm
     ```
   footer: |
     ---
-    
-    **Full Changelog**: https://github.com/debswarm/debswarm/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+    **Full Changelog**: https://github.com/{{ .Env.GITHUB_REPOSITORY }}/compare/{{ .PreviousTag }}...{{ .Tag }}
