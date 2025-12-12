@@ -324,6 +324,34 @@ bootstrap_peers = [
 4. **Monitoring**: Watch for unusual traffic patterns
 5. **Isolation**: Run in a container or VM for additional isolation
 
+## Pre-Seeding Packages (Optional)
+
+Bootstrap nodes can also act as seeders to accelerate package distribution. Use the seed command to import packages:
+
+```bash
+# Seed from a local mirror
+debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
+
+# Seed from APT cache
+debswarm seed import /var/cache/apt/archives/*.deb
+
+# Seed popular packages
+apt-get download linux-image-generic nginx postgresql
+debswarm seed import *.deb
+```
+
+Update the config to enable announcements:
+
+```toml
+[privacy]
+announce_packages = true  # Enable DHT announcements
+
+[cache]
+max_size = "100GB"  # Increase for seeding
+```
+
+See the main README for more details on the seed command.
+
 ## Docker Deployment (Alternative)
 
 ```dockerfile

@@ -131,6 +131,17 @@ Adaptive timeout system:
 
 ## Data Flow
 
+### Seeding
+
+```
+debswarm seed import *.deb
+  └─▶ For each .deb file:
+      ├─▶ Calculate SHA256 hash
+      ├─▶ Store in cache (content-addressed)
+      ├─▶ Update SQLite metadata
+      └─▶ Announce to DHT (if enabled)
+```
+
 ### Package Download
 
 ```

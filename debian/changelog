@@ -1,3 +1,10 @@
+debswarm (0.2.6-1) unstable; urgency=medium
+
+  * Add seed command to import .deb files and announce to DHT
+  * Update documentation for seeding feature
+
+ -- debswarm developers <debswarm@example.com>  Fri, 13 Dec 2024 00:00:00 +0000
+
 debswarm (0.2.5-1) unstable; urgency=medium
 
   * Initial release.

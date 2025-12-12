@@ -11,6 +11,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **P2P Package Sharing** - Download from and upload to other debswarm users
 - **Hash Verification** - All packages verified against signed repository metadata
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
+- **Package Seeding** - Import local .deb files to seed the network
 
 ### Performance (v0.2.0)
 - **Parallel Chunked Downloads** - Large packages split into 4MB chunks downloaded simultaneously from multiple peers
@@ -136,8 +137,14 @@ debswarm status
 
 # Cache management
 debswarm cache list         # List cached packages
-debswarm cache stats        # Show cache statistics  
+debswarm cache stats        # Show cache statistics
 debswarm cache clear        # Clear all cached packages
+
+# Seeding packages
+debswarm seed import *.deb              # Import .deb files to cache and announce
+debswarm seed import -r /path/to/pool/  # Import directory recursively
+debswarm seed import --announce=false   # Import without announcing to DHT
+debswarm seed list                      # List seeded packages
 
 # Configuration
 debswarm config show        # Display current config
@@ -215,6 +222,35 @@ QUIC transport is preferred over TCP because:
 - Built-in multiplexing (no head-of-line blocking)
 - Faster connection establishment (0-RTT)
 - Better performance on lossy networks
+
+## Seeding
+
+Organizations can pre-populate the network by seeding packages from local mirrors or caches:
+
+```bash
+# Seed from APT cache (after normal apt operations)
+debswarm seed import /var/cache/apt/archives/*.deb
+
+# Seed from a local mirror
+debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
+
+# Seed specific packages without announcing (cache only)
+debswarm seed import --announce=false package.deb
+```
+
+**How seeding works:**
+1. Calculate SHA256 hash of each .deb file
+2. Store in local cache
+3. Connect to DHT and announce availability
+4. Other peers can now discover and download from you
+
+**Use cases:**
+- **Bootstrap a network** - Seed popular packages before users arrive
+- **Office/campus deployment** - Pre-seed packages for common software
+- **CI/CD caches** - Seed build artifacts for faster deploys
+- **Mirror operators** - Run dedicated seeders alongside mirrors
+
+See [docs/bootstrap-node.md](docs/bootstrap-node.md) for running a dedicated seeder.
 
 ## Security Model
 
