@@ -41,6 +41,10 @@ type Cache struct {
 	mu          sync.RWMutex
 	logger      *zap.Logger
 	currentSize int64
+
+	// Track active readers to prevent deletion during read
+	activeReaders   map[string]int
+	activeReadersMu sync.Mutex
 }
 
 // New creates a new cache instance
@@ -70,10 +74,11 @@ func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
 	}
 
 	c := &Cache{
-		basePath: basePath,
-		maxSize:  maxSize,
-		db:       db,
-		logger:   logger,
+		basePath:      basePath,
+		maxSize:       maxSize,
+		db:            db,
+		logger:        logger,
+		activeReaders: make(map[string]int),
 	}
 
 	// Calculate current size
@@ -123,6 +128,35 @@ func (c *Cache) Has(sha256Hash string) bool {
 	return err == nil
 }
 
+// trackedReader wraps a file and decrements reader count on close
+type trackedReader struct {
+	file   *os.File
+	hash   string
+	cache  *Cache
+	closed bool
+}
+
+func (tr *trackedReader) Read(p []byte) (n int, err error) {
+	return tr.file.Read(p)
+}
+
+func (tr *trackedReader) Close() error {
+	if tr.closed {
+		return nil
+	}
+	tr.closed = true
+	err := tr.file.Close()
+
+	tr.cache.activeReadersMu.Lock()
+	tr.cache.activeReaders[tr.hash]--
+	if tr.cache.activeReaders[tr.hash] <= 0 {
+		delete(tr.cache.activeReaders, tr.hash)
+	}
+	tr.cache.activeReadersMu.Unlock()
+
+	return err
+}
+
 // Get retrieves a package from the cache
 func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	c.mu.Lock()
@@ -137,11 +171,16 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 		return nil, nil, err
 	}
 
+	// Track active reader to prevent deletion during read
+	c.activeReadersMu.Lock()
+	c.activeReaders[sha256Hash]++
+	c.activeReadersMu.Unlock()
+
 	// Update access time and count
 	now := time.Now().Unix()
 	_, err = c.db.Exec(`
-		UPDATE packages 
-		SET last_accessed = ?, access_count = access_count + 1 
+		UPDATE packages
+		SET last_accessed = ?, access_count = access_count + 1
 		WHERE sha256 = ?`,
 		now, sha256Hash)
 	if err != nil {
@@ -152,10 +191,16 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	pkg, err := c.getPackageInfo(sha256Hash)
 	if err != nil {
 		f.Close()
+		c.activeReadersMu.Lock()
+		c.activeReaders[sha256Hash]--
+		if c.activeReaders[sha256Hash] <= 0 {
+			delete(c.activeReaders, sha256Hash)
+		}
+		c.activeReadersMu.Unlock()
 		return nil, nil, err
 	}
 
-	return f, pkg, nil
+	return &trackedReader{file: f, hash: sha256Hash, cache: c}, pkg, nil
 }
 
 // Put stores a package in the cache
@@ -206,12 +251,17 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return err
 	}
 
-	// Record in database
+	// Record in database - use ON CONFLICT to preserve access_count if re-adding
 	now := time.Now().Unix()
 	_, err = c.db.Exec(`
-		INSERT OR REPLACE INTO packages 
+		INSERT INTO packages
 		(sha256, size, filename, added_at, last_accessed, access_count, announced)
-		VALUES (?, ?, ?, ?, ?, 1, 0)`,
+		VALUES (?, ?, ?, ?, ?, 1, 0)
+		ON CONFLICT(sha256) DO UPDATE SET
+			size = excluded.size,
+			filename = excluded.filename,
+			last_accessed = excluded.last_accessed,
+			access_count = access_count + 1`,
 		expectedHash, size, filename, now, now)
 	if err != nil {
 		return fmt.Errorf("failed to record package: %w", err)
@@ -234,7 +284,18 @@ func (c *Cache) Delete(sha256Hash string) error {
 	return c.deleteUnlocked(sha256Hash)
 }
 
+var ErrFileInUse = errors.New("file is currently being read")
+
 func (c *Cache) deleteUnlocked(sha256Hash string) error {
+	// Check if file is currently being read
+	c.activeReadersMu.Lock()
+	readers := c.activeReaders[sha256Hash]
+	c.activeReadersMu.Unlock()
+
+	if readers > 0 {
+		return ErrFileInUse
+	}
+
 	// Get size before deleting
 	var size int64
 	err := c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", sha256Hash).Scan(&size)
@@ -392,17 +453,21 @@ func (c *Cache) calculateSize() error {
 	return nil
 }
 
+var ErrCacheFull = errors.New("cache full: unable to free enough space")
+
 func (c *Cache) ensureSpace(needed int64) error {
 	if c.currentSize+needed <= c.maxSize {
 		return nil
 	}
 
 	// Get packages sorted by eviction score (oldest, least accessed first)
+	// Uses last_accessed adjusted by access_count - more accesses = higher score = evicted later
+	// SQLite doesn't support LOG, so we use a simpler linear formula
 	rows, err := c.db.Query(`
-		SELECT sha256, size 
-		FROM packages 
+		SELECT sha256, size
+		FROM packages
 		WHERE last_accessed < ?
-		ORDER BY last_accessed / (1.0 + LOG(1 + access_count)) ASC`,
+		ORDER BY (last_accessed + access_count * 3600) ASC`,
 		time.Now().Add(-7*24*time.Hour).Unix()) // Don't evict recently accessed
 	if err != nil {
 		return err
@@ -421,8 +486,14 @@ func (c *Cache) ensureSpace(needed int64) error {
 			zap.Int64("size", size))
 
 		if err := c.deleteUnlocked(hash); err != nil {
+			// Log but continue - file might be in use, try next candidate
 			c.logger.Warn("Failed to evict package", zap.Error(err))
 		}
+	}
+
+	// Check if we freed enough space
+	if c.currentSize+needed > c.maxSize {
+		return ErrCacheFull
 	}
 
 	return nil

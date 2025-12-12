@@ -168,7 +168,9 @@ func (s *Server) startMetricsServer() {
 		Addr:    addr,
 		Handler: mux,
 	}
-	_ = server.ListenAndServe()
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		s.logger.Error("Metrics server failed", zap.Error(err))
+	}
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -405,8 +407,8 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 				atomic.AddInt64(&s.requestsP2P, 1)
 				atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
-				s.metrics.DownloadsTotal.WithLabel("peer").Inc()
-				s.metrics.BytesDownloaded.WithLabel("peer").Add(int64(len(data)))
+				s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
+				s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
 
 				// Cache and serve
 				s.cacheAndServe(w, data, expectedHash, path)
@@ -433,8 +435,8 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	}
 
 	atomic.AddInt64(&s.bytesFromMirror, int64(len(data)))
-	s.metrics.DownloadsTotal.WithLabel("mirror").Inc()
-	s.metrics.BytesDownloaded.WithLabel("mirror").Add(int64(len(data)))
+	s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypeMirror).Inc()
+	s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypeMirror).Add(int64(len(data)))
 
 	// Verify and cache if we have expected hash
 	if expectedHash != "" {
@@ -500,7 +502,7 @@ func (s *Server) cacheAndServe(w http.ResponseWriter, data []byte, hash, path st
 	// Serve
 	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	w.Header().Set("X-Debswarm-Source", "peer")
+	w.Header().Set("X-Debswarm-Source", downloader.SourceTypePeer)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }

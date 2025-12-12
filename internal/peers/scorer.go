@@ -111,7 +111,10 @@ func (s *Scorer) RecordSuccess(peerID peer.ID, bytes int64, latencyMs float64, t
 	}
 
 	ps.SuccessRate = float64(ps.SuccessCount) / float64(ps.TotalRequests)
-	ps.cachedScore = 0 // Invalidate cache
+
+	// Update cached score while holding write lock
+	ps.cachedScore = s.computeScore(ps)
+	ps.scoreCachedAt = time.Now()
 }
 
 // RecordFailure records a failed transfer
@@ -128,7 +131,10 @@ func (s *Scorer) RecordFailure(peerID peer.ID, reason string) {
 	ps.LastFailure = now
 
 	ps.SuccessRate = float64(ps.SuccessCount) / float64(ps.TotalRequests)
-	ps.cachedScore = 0 // Invalidate cache
+
+	// Update cached score while holding write lock
+	ps.cachedScore = s.computeScore(ps)
+	ps.scoreCachedAt = time.Now()
 }
 
 // RecordUpload records bytes uploaded to a peer
@@ -151,6 +157,7 @@ func (s *Scorer) Blacklist(peerID peer.ID, reason string, duration time.Duration
 	ps.BlacklistReason = reason
 	ps.BlacklistUntil = time.Now().Add(duration)
 	ps.cachedScore = 0
+	ps.scoreCachedAt = time.Now()
 }
 
 // IsBlacklisted checks if a peer is currently blacklisted
@@ -158,6 +165,11 @@ func (s *Scorer) IsBlacklisted(peerID peer.ID) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	return s.isBlacklistedLocked(peerID)
+}
+
+// isBlacklistedLocked checks blacklist status - caller must hold at least RLock
+func (s *Scorer) isBlacklistedLocked(peerID peer.ID) bool {
 	ps, ok := s.peers[peerID]
 	if !ok {
 		return false
@@ -200,7 +212,7 @@ func (s *Scorer) SelectBest(candidates []peer.AddrInfo, n int) []peer.AddrInfo {
 
 	scoredPeers := make([]scored, 0, len(candidates))
 	for _, c := range candidates {
-		if s.IsBlacklisted(c.ID) {
+		if s.isBlacklistedLocked(c.ID) {
 			continue
 		}
 
@@ -351,8 +363,9 @@ func (s *Scorer) getOrCreate(peerID peer.ID) *PeerScore {
 }
 
 func (s *Scorer) computeScore(ps *PeerScore) float64 {
-	// Check cache
-	if ps.cachedScore > 0 && time.Since(ps.scoreCachedAt) < time.Minute {
+	// Check cache - use cached value if valid and recent
+	// Note: cachedScore of 0 is valid for blacklisted peers, so check scoreCachedAt
+	if !ps.scoreCachedAt.IsZero() && time.Since(ps.scoreCachedAt) < time.Minute {
 		return ps.cachedScore
 	}
 
@@ -398,9 +411,8 @@ func (s *Scorer) computeScore(ps *PeerScore) float64 {
 		score = 1
 	}
 
-	// Cache the score
-	ps.cachedScore = score
-	ps.scoreCachedAt = time.Now()
+	// Note: We don't cache here as this may be called from RLock context
+	// Caching is done in write operations (RecordSuccess/RecordFailure)
 
 	return score
 }

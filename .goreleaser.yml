@@ -32,9 +32,9 @@ archives:
     files:
       - README.md
       - LICENSE
-      - dist/90debswarm.conf
-      - dist/debswarm.service
-      - dist/config.example.toml
+      - packaging/90debswarm.conf
+      - packaging/debswarm.service
+      - packaging/config.example.toml
 
 checksum:
   name_template: 'checksums.txt'

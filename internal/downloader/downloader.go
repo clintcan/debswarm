@@ -36,6 +36,14 @@ const (
 
 	// Time to wait before starting mirror fallback
 	MirrorFallbackDelay = 200 * time.Millisecond
+
+	// Reference throughput for scoring (10 MB/s is considered "good")
+	ReferenceThroughput = 10 * 1024 * 1024
+
+	// Source type identifiers
+	SourceTypePeer   = "peer"
+	SourceTypeMirror = "mirror"
+	SourceTypeMixed  = "mixed"
 )
 
 var (
@@ -68,7 +76,7 @@ type PeerSource struct {
 }
 
 func (p *PeerSource) ID() string { return p.Info.ID.String() }
-func (p *PeerSource) Type() string { return "peer" }
+func (p *PeerSource) Type() string { return SourceTypePeer }
 
 func (p *PeerSource) Download(ctx context.Context, hash string, start, end int64) ([]byte, error) {
 	return p.Downloader(ctx, p.Info, hash, start, end)
@@ -85,7 +93,7 @@ type MirrorSource struct {
 }
 
 func (m *MirrorSource) ID() string { return m.URL }
-func (m *MirrorSource) Type() string { return "mirror" }
+func (m *MirrorSource) Type() string { return SourceTypeMirror }
 
 func (m *MirrorSource) Download(ctx context.Context, hash string, start, end int64) ([]byte, error) {
 	return m.Fetcher(ctx, m.URL, start, end)
@@ -275,7 +283,7 @@ func (d *Downloader) downloadChunked(
 
 		completedChunks[chunk.Index] = chunk
 
-		if chunk.Source.Type() == "peer" {
+		if chunk.Source.Type() == SourceTypePeer {
 			peerBytes += int64(len(chunk.Data))
 			chunksFromP2P++
 		} else {
@@ -308,11 +316,11 @@ func (d *Downloader) downloadChunked(
 	}
 
 	// Determine source type
-	sourceType := "mixed"
+	sourceType := SourceTypeMixed
 	if peerBytes == 0 {
-		sourceType = "mirror"
+		sourceType = SourceTypeMirror
 	} else if mirrorBytes == 0 {
-		sourceType = "peer"
+		sourceType = SourceTypePeer
 	}
 
 	return &DownloadResult{
@@ -467,7 +475,7 @@ func (d *Downloader) downloadRacing(
 					d.metrics.VerificationFailures.Inc()
 				}
 				// Blacklist peer if hash mismatch
-				if res.source.Type() == "peer" && d.scorer != nil {
+				if res.source.Type() == SourceTypePeer && d.scorer != nil {
 					if ps, ok := res.source.(*PeerSource); ok {
 						d.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
 					}
@@ -484,7 +492,7 @@ func (d *Downloader) downloadRacing(
 
 			sourceType := res.source.Type()
 			var peerBytes, mirrorBytes int64
-			if sourceType == "peer" {
+			if sourceType == SourceTypePeer {
 				peerBytes = int64(len(res.data))
 			} else {
 				mirrorBytes = int64(len(res.data))
@@ -499,7 +507,7 @@ func (d *Downloader) downloadRacing(
 				PeerBytes:     peerBytes,
 				MirrorBytes:   mirrorBytes,
 				ChunksTotal:   1,
-				ChunksFromP2P: btoi(sourceType == "peer"),
+				ChunksFromP2P: btoi(sourceType == SourceTypePeer),
 			}, nil
 
 		case <-ctx.Done():
@@ -540,7 +548,7 @@ func (st *sourceTracker) selectBest(sources []Source) Source {
 		if !ok {
 			// Unknown source - give neutral score, slight preference for peers
 			score = 0.5
-			if s.Type() == "peer" {
+			if s.Type() == SourceTypePeer {
 				score = 0.55
 			}
 		} else {
@@ -553,8 +561,8 @@ func (st *sourceTracker) selectBest(sources []Source) Source {
 				if stats.totalTime > 0 {
 					throughput = float64(stats.totalBytes) / stats.totalTime.Seconds()
 				}
-				// Normalize throughput (assume 10MB/s is good)
-				throughputScore := throughput / (throughput + 10*1024*1024)
+				// Normalize throughput
+				throughputScore := throughput / (throughput + ReferenceThroughput)
 
 				score = 0.6*reliability + 0.4*throughputScore
 

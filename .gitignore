@@ -37,3 +37,4 @@ debian/*.log
 
 # Release
 *.tar.gz
+dist/

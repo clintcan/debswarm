@@ -88,8 +88,12 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 	var lastErr error
 	for attempt := 0; attempt < f.maxRetries; attempt++ {
 		if attempt > 0 {
-			// Exponential backoff
-			time.Sleep(time.Duration(attempt*attempt) * time.Second)
+			// Exponential backoff with context check
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt*attempt) * time.Second):
+			}
 		}
 
 		resp, err := f.client.Do(req)
@@ -142,7 +146,12 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 	var lastErr error
 	for attempt := 0; attempt < f.maxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt*attempt) * time.Second)
+			// Exponential backoff with context check
+			select {
+			case <-ctx.Done():
+				return 0, ctx.Err()
+			case <-time.After(time.Duration(attempt*attempt) * time.Second):
+			}
 		}
 
 		resp, err := f.client.Do(req)

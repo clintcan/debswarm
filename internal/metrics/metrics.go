@@ -40,36 +40,41 @@ type Counter struct {
 	mu    sync.Mutex
 }
 
+// Inc increments the counter by 1.
 func (c *Counter) Inc() {
 	c.mu.Lock()
 	c.value++
 	c.mu.Unlock()
 }
 
+// Add adds the given value to the counter.
 func (c *Counter) Add(v int64) {
 	c.mu.Lock()
 	c.value += v
 	c.mu.Unlock()
 }
 
+// Value returns the current counter value.
 func (c *Counter) Value() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.value
 }
 
-// CounterVec is a counter with labels
+// CounterVec is a counter with labels for multi-dimensional metrics.
 type CounterVec struct {
 	counters map[string]*Counter
 	mu       sync.RWMutex
 }
 
+// NewCounterVec creates a new labeled counter vector.
 func NewCounterVec() *CounterVec {
 	return &CounterVec{
 		counters: make(map[string]*Counter),
 	}
 }
 
+// WithLabel returns the counter for the given label, creating it if needed.
 func (cv *CounterVec) WithLabel(label string) *Counter {
 	cv.mu.Lock()
 	defer cv.mu.Unlock()
@@ -81,6 +86,7 @@ func (cv *CounterVec) WithLabel(label string) *Counter {
 	return c
 }
 
+// Values returns all label-value pairs in the counter vector.
 func (cv *CounterVec) Values() map[string]int64 {
 	cv.mu.RLock()
 	defer cv.mu.RUnlock()
@@ -91,43 +97,48 @@ func (cv *CounterVec) Values() map[string]int64 {
 	return result
 }
 
-// Gauge is a metric that can go up and down
+// Gauge is a metric that can go up and down.
 type Gauge struct {
 	value float64
 	mu    sync.Mutex
 }
 
+// Set sets the gauge to the given value.
 func (g *Gauge) Set(v float64) {
 	g.mu.Lock()
 	g.value = v
 	g.mu.Unlock()
 }
 
+// Inc increments the gauge by 1.
 func (g *Gauge) Inc() {
 	g.mu.Lock()
 	g.value++
 	g.mu.Unlock()
 }
 
+// Dec decrements the gauge by 1.
 func (g *Gauge) Dec() {
 	g.mu.Lock()
 	g.value--
 	g.mu.Unlock()
 }
 
+// Add adds the given value to the gauge.
 func (g *Gauge) Add(v float64) {
 	g.mu.Lock()
 	g.value += v
 	g.mu.Unlock()
 }
 
+// Value returns the current gauge value.
 func (g *Gauge) Value() float64 {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.value
 }
 
-// Histogram tracks distribution of values
+// Histogram tracks distribution of values across buckets.
 type Histogram struct {
 	buckets []float64
 	counts  []int64
@@ -136,6 +147,7 @@ type Histogram struct {
 	mu      sync.Mutex
 }
 
+// NewHistogram creates a new histogram with the given bucket boundaries.
 func NewHistogram(buckets []float64) *Histogram {
 	return &Histogram{
 		buckets: buckets,
@@ -143,6 +155,7 @@ func NewHistogram(buckets []float64) *Histogram {
 	}
 }
 
+// Observe records a value in the histogram.
 func (h *Histogram) Observe(v float64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -157,6 +170,7 @@ func (h *Histogram) Observe(v float64) {
 	h.counts[len(h.buckets)]++
 }
 
+// Stats returns the current histogram statistics.
 func (h *Histogram) Stats() (count int64, sum float64, buckets []int64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -165,13 +179,14 @@ func (h *Histogram) Stats() (count int64, sum float64, buckets []int64) {
 	return h.count, h.sum, bucketsCopy
 }
 
-// HistogramVec is a histogram with labels
+// HistogramVec is a histogram with labels for multi-dimensional metrics.
 type HistogramVec struct {
 	histograms map[string]*Histogram
 	buckets    []float64
 	mu         sync.RWMutex
 }
 
+// NewHistogramVec creates a new labeled histogram vector.
 func NewHistogramVec(buckets []float64) *HistogramVec {
 	return &HistogramVec{
 		histograms: make(map[string]*Histogram),
@@ -179,6 +194,7 @@ func NewHistogramVec(buckets []float64) *HistogramVec {
 	}
 }
 
+// WithLabel returns the histogram for the given label, creating it if needed.
 func (hv *HistogramVec) WithLabel(label string) *Histogram {
 	hv.mu.Lock()
 	defer hv.mu.Unlock()

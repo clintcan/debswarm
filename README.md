@@ -32,8 +32,8 @@ make build
 
 # Install
 sudo cp build/debswarm /usr/bin/
-sudo cp dist/debswarm.service /etc/systemd/system/
-sudo cp dist/90debswarm.conf /etc/apt/apt.conf.d/
+sudo cp packaging/debswarm.service /etc/systemd/system/
+sudo cp packaging/90debswarm.conf /etc/apt/apt.conf.d/
 
 # Start
 sudo systemctl enable --now debswarm
