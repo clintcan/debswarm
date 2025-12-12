@@ -1,6 +1,6 @@
 [Unit]
 Description=debswarm Peer-to-Peer Package Distribution
-Documentation=https://github.com/debswarm/debswarm
+Documentation=https://github.com/clintcan/debswarm
 After=network-online.target
 Wants=network-online.target
 
