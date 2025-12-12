@@ -1,13 +1,12 @@
 # Build artifacts
 build/
 *.exe
-debswarm
+/debswarm
 debswarm-*
 
 # Go
 vendor/
 .gocache/
-go.sum
 
 # IDE
 .idea/
@@ -37,5 +36,4 @@ debian/*.substvars
 debian/*.log
 
 # Release
-dist/
 *.tar.gz
