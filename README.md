@@ -159,6 +159,7 @@ debswarm cache clear        # Clear all cached packages
 # Seeding packages
 debswarm seed import *.deb              # Import .deb files to cache and announce
 debswarm seed import -r /path/to/pool/  # Import directory recursively
+debswarm seed import -r --sync /mirror/ # Sync with mirror (import new, remove old)
 debswarm seed import --announce=false   # Import without announcing to DHT
 debswarm seed list                      # List seeded packages
 
@@ -270,15 +271,24 @@ debswarm seed import /var/cache/apt/archives/*.deb
 # Seed from a local mirror
 debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
 
+# Sync with mirror (import new packages, remove old versions)
+debswarm seed import --recursive --sync /var/www/mirror/ubuntu/pool/
+
 # Seed specific packages without announcing (cache only)
 debswarm seed import --announce=false package.deb
 ```
 
 **How seeding works:**
 1. Calculate SHA256 hash of each .deb file
-2. Store in local cache
+2. Store in local cache (skip if already cached)
 3. Connect to DHT and announce availability
 4. Other peers can now discover and download from you
+
+**Mirror sync mode (`--sync`):**
+- Imports new/updated packages (different hash = new file)
+- Removes cached packages not found in source directory
+- Ideal for keeping cache synchronized with a local mirror
+- Run periodically via cron to stay in sync
 
 **Use cases:**
 - **Bootstrap a network** - Seed popular packages before users arrive

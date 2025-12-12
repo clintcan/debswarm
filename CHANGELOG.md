@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Private swarms (PSK)**: Pre-shared key support for isolated networks via `psk_path` config option
 - **Peer allowlist**: Restrict connections to specific peer IDs via `peer_allowlist` config option
 - **PSK management CLI**: New `debswarm psk generate` and `debswarm psk show` commands
+- **Mirror sync mode**: New `--sync` flag for `seed import` removes cached packages not in source directory
 - **Download resume infrastructure**: SQLite schema for tracking download state and partial files
 - **Rate limit package**: New `internal/ratelimit` package with token bucket rate limiting
 - **Dashboard package**: New `internal/dashboard` package with embedded HTML template

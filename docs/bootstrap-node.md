@@ -332,6 +332,9 @@ Bootstrap nodes can also act as seeders to accelerate package distribution. Use 
 # Seed from a local mirror
 debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
 
+# Sync with mirror (import new, remove old packages)
+debswarm seed import --recursive --sync /var/www/mirror/ubuntu/pool/
+
 # Seed from APT cache
 debswarm seed import /var/cache/apt/archives/*.deb
 
@@ -339,6 +342,20 @@ debswarm seed import /var/cache/apt/archives/*.deb
 apt-get download linux-image-generic nginx postgresql
 debswarm seed import *.deb
 ```
+
+### Automated Mirror Sync
+
+To keep your seeder synchronized with a local mirror, set up a cron job:
+
+```bash
+# /etc/cron.d/debswarm-sync
+0 */6 * * * root /usr/bin/debswarm seed import --recursive --sync /var/www/mirror/ubuntu/pool/ --announce=false >> /var/log/debswarm-sync.log 2>&1
+```
+
+This runs every 6 hours and:
+- Imports new/updated packages
+- Removes packages no longer in the mirror
+- Skips DHT announcement (daemon handles that)
 
 Update the config to enable announcements:
 
