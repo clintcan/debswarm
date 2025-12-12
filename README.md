@@ -28,12 +28,12 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 
 ```bash
 # Build
-go build -o debswarm ./cmd/debswarm
+make build
 
 # Install
-sudo cp debswarm /usr/bin/
-sudo cp debswarm.service /etc/systemd/system/
-sudo cp 90debswarm.conf /etc/apt/apt.conf.d/
+sudo cp build/debswarm /usr/bin/
+sudo cp dist/debswarm.service /etc/systemd/system/
+sudo cp dist/90debswarm.conf /etc/apt/apt.conf.d/
 
 # Start
 sudo systemctl enable --now debswarm
@@ -248,14 +248,33 @@ Requirements:
 
 ```bash
 # Simple build
-go build -o debswarm ./cmd/debswarm
+make build
 
-# With optimizations
-go build -ldflags="-s -w" -o debswarm ./cmd/debswarm
+# Build for all architectures (amd64, arm64, armv7)
+make build-all
+
+# Run tests
+make test
+
+# Run linter
+make lint
 
 # Cross-compile for ARM64
-GOOS=linux GOARCH=arm64 go build -o debswarm-arm64 ./cmd/debswarm
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o debswarm-arm64 ./cmd/debswarm
 ```
+
+## Releases
+
+Releases are automated via GitHub Actions. To create a release:
+
+```bash
+git tag -a v0.2.1 -m "Release v0.2.1"
+git push origin v0.2.1
+```
+
+This triggers the release workflow which builds:
+- Binary releases for linux/amd64, linux/arm64, linux/armv7
+- Debian packages (.deb) for amd64 and arm64
 
 ## Troubleshooting
 
