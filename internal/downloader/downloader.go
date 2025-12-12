@@ -2,13 +2,11 @@
 package downloader
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -476,7 +474,7 @@ func (d *Downloader) downloadRacing(
 				}
 				lastErr = ErrHashMismatch
 				if received >= atomic.LoadInt32(&racers) {
-					return nil, ErrHashMismatch
+					return nil, fmt.Errorf("%w: %v", ErrAllSourcesFailed, lastErr)
 				}
 				continue
 			}

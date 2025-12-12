@@ -349,7 +349,7 @@ func (c *Cache) Count() int {
 	defer c.mu.RUnlock()
 
 	var count int
-	c.db.QueryRow("SELECT COUNT(*) FROM packages").Scan(&count)
+	_ = c.db.QueryRow("SELECT COUNT(*) FROM packages").Scan(&count)
 	return count
 }
 
