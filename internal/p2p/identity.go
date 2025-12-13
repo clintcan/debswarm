@@ -84,8 +84,8 @@ func LoadIdentity(path string) (crypto.PrivKey, error) {
 		return nil, fmt.Errorf("invalid identity file: bad hex encoding: %w", err)
 	}
 
-	// Unmarshal the key
-	privKey, err := crypto.UnmarshalEd25519PrivateKey(keyBytes)
+	// Unmarshal the key (use generic unmarshal since MarshalPrivateKey includes type prefix)
+	privKey, err := crypto.UnmarshalPrivateKey(keyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("invalid identity file: bad key data: %w", err)
 	}
