@@ -1,4 +1,4 @@
-version: 1
+version: 2
 
 before:
   hooks:
@@ -18,7 +18,7 @@ builds:
       - arm64
       - arm
     goarm:
-      - 7
+      - "7"
     ldflags:
       - -s -w
       - -X main.version={{.Version}}
@@ -28,7 +28,8 @@ builds:
 archives:
   - id: default
     name_template: '{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
-    format: tar.gz
+    formats:
+      - tar.gz
     files:
       - README.md
       - LICENSE
@@ -41,7 +42,7 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 
 changelog:
   sort: asc
@@ -71,6 +72,7 @@ release:
   # Auto-detect from git remote (no hardcoded owner/name)
   draft: false
   prerelease: auto
+  mode: replace
   name_template: "{{.ProjectName}} v{{.Version}}"
   header: |
     ## debswarm v{{.Version}}
