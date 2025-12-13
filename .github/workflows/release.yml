@@ -46,6 +46,8 @@ jobs:
             go_arch: amd64
           - arch: arm64
             go_arch: arm64
+          - arch: armhf
+            go_arch: arm
     
     steps:
       - uses: actions/checkout@v6
