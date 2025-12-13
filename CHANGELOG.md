@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-12-13
+
 ### Added
 - **Multi-repository support**: Proper isolation of package indexes from different repositories (deb.debian.org, archive.ubuntu.com, third-party repos)
 - **Auto-indexing**: Packages files are automatically parsed when APT fetches them, enabling P2P for all configured repos
@@ -97,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/clintcan/debswarm/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/clintcan/debswarm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/clintcan/debswarm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/clintcan/debswarm/releases/tag/v0.1.0
