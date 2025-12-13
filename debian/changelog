@@ -1,3 +1,22 @@
+debswarm (0.5.2-1) unstable; urgency=medium
+
+  * Update libp2p to v0.46.0
+  * Update go-sqlite3 to v1.14.32
+  * Fix debian cross-compilation for arm64
+  * Make version dynamic in debian/rules
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
+debswarm (0.5.1-1) unstable; urgency=medium
+
+  * Update libp2p to v0.45.0 and kad-dht to v0.36.0
+  * Update cobra to v1.10.2
+  * Fix identity key loading for libp2p compatibility
+  * Update GoReleaser config to v2
+  * CI now uses Go 1.24.6
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
 debswarm (0.5.0-1) unstable; urgency=medium
 
   * Fix race condition in cache reader tracking (TOCTOU bug)
