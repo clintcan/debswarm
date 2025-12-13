@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -824,13 +825,21 @@ func (s *Server) announceAsync(hash string) {
 // announcementWorker processes announcements with bounded concurrency
 func (s *Server) announcementWorker() {
 	// Process up to 4 announcements concurrently
-	sem := make(chan struct{}, 4)
+	const maxConcurrent = 4
+	const announceTimeout = 30 * time.Second
+
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
 
 	for hash := range s.announceChan {
 		sem <- struct{}{} // Acquire semaphore
+		wg.Add(1)
 		go func(h string) {
-			defer func() { <-sem }() // Release semaphore
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer func() {
+				<-sem // Release semaphore
+				wg.Done()
+			}()
+			ctx, cancel := context.WithTimeout(context.Background(), announceTimeout)
 			defer cancel()
 			if err := s.p2pNode.Provide(ctx, h); err != nil {
 				s.logger.Debug("Failed to announce", zap.Error(err))
@@ -839,9 +848,7 @@ func (s *Server) announcementWorker() {
 	}
 
 	// Wait for all in-flight announcements to complete
-	for i := 0; i < 4; i++ {
-		sem <- struct{}{}
-	}
+	wg.Wait()
 	close(s.announceDone)
 }
 

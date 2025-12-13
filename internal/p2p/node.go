@@ -574,8 +574,9 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	defer stream.Close()
 
 	// Set stream deadline to prevent slowloris attacks
+	// If this fails, subsequent I/O operations may hang indefinitely, so bail out
 	if err := stream.SetDeadline(time.Now().Add(2 * time.Minute)); err != nil {
-		n.logger.Debug("Failed to set stream deadline", zap.Error(err))
+		n.logger.Warn("Failed to set stream deadline, rejecting request", zap.Error(err))
 		return
 	}
 
@@ -687,9 +688,10 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	n.writeSize(stream, responseSize)
 
 	// Send content (limited to response size) with optional rate limiting
+	// Use context from the node to support proper cancellation
 	var writer io.Writer = stream
 	if n.uploadLimiter.Enabled() {
-		writer = n.uploadLimiter.Writer(stream)
+		writer = n.uploadLimiter.WriterContext(n.ctx, stream)
 	}
 	written, err := io.CopyN(writer, reader, responseSize)
 	if err != nil {

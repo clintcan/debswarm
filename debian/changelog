@@ -1,3 +1,15 @@
+debswarm (0.5.0-1) unstable; urgency=medium
+
+  * Fix race condition in cache reader tracking (TOCTOU bug)
+  * Fix goroutine leak on chunk download failure
+  * Fix blacklist flag inconsistency after expiration
+  * Fix stream deadline error handling in P2P transfers
+  * Improve error context in download retry loops
+  * Add context propagation to rate limiter for proper cancellation
+  * Add proper goroutine cleanup in announcement worker
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2024 00:00:00 +0000
+
 debswarm (0.4.0-1) unstable; urgency=medium
 
   * Multi-repository support with proper isolation

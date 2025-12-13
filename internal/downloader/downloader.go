@@ -287,11 +287,15 @@ func (d *Downloader) downloadChunked(
 	completedChunks := make([]*Chunk, numChunks)
 	var peerBytes, mirrorBytes int64
 	var chunksFromP2P int
+	var firstError error
 
 	for chunk := range results {
 		if chunk.Error != nil {
-			cancel() // Cancel other downloads on failure
-			return nil, fmt.Errorf("chunk %d failed: %w", chunk.Index, chunk.Error)
+			if firstError == nil {
+				firstError = fmt.Errorf("chunk %d failed: %w", chunk.Index, chunk.Error)
+				cancel() // Cancel other downloads on failure
+			}
+			continue // Drain remaining results to allow goroutines to exit
 		}
 
 		completedChunks[chunk.Index] = chunk
@@ -302,6 +306,11 @@ func (d *Downloader) downloadChunked(
 		} else {
 			mirrorBytes += int64(len(chunk.Data))
 		}
+	}
+
+	// Return error after all goroutines have finished
+	if firstError != nil {
+		return nil, firstError
 	}
 
 	// Verify all chunks received
@@ -371,10 +380,11 @@ func (d *Downloader) chunkWorker(
 		// Select best source for this chunk
 		source := tracker.selectBest(sources)
 
-		// Download chunk with retries
+		// Download chunk with retries, collecting errors for context
 		var data []byte
-		var err error
+		var lastErr error
 		var duration time.Duration
+		var allErrors []string
 
 		for attempt := 0; attempt < MaxChunkRetries; attempt++ {
 			chunk.Attempts++
@@ -382,12 +392,19 @@ func (d *Downloader) chunkWorker(
 			chunkCtx, cancel := context.WithTimeout(ctx, ChunkTimeout)
 			start := time.Now()
 
-			data, err = source.Download(chunkCtx, hash, chunk.Start, chunk.End)
+			data, lastErr = source.Download(chunkCtx, hash, chunk.Start, chunk.End)
 			duration = time.Since(start)
 			cancel()
 
-			if err == nil && int64(len(data)) == chunk.End-chunk.Start {
+			if lastErr == nil && int64(len(data)) == chunk.End-chunk.Start {
 				break
+			}
+
+			// Record error for context
+			if lastErr != nil {
+				allErrors = append(allErrors, fmt.Sprintf("attempt %d (%s): %v", attempt+1, source.ID(), lastErr))
+			} else {
+				allErrors = append(allErrors, fmt.Sprintf("attempt %d (%s): incomplete data", attempt+1, source.ID()))
 			}
 
 			// Try a different source on failure
@@ -395,10 +412,10 @@ func (d *Downloader) chunkWorker(
 			source = tracker.selectBest(sources)
 		}
 
-		if err != nil {
-			chunk.Error = err
+		if lastErr != nil {
+			chunk.Error = fmt.Errorf("all retries failed: %v (history: %v)", lastErr, allErrors)
 		} else if int64(len(data)) != chunk.End-chunk.Start {
-			chunk.Error = fmt.Errorf("incomplete chunk: got %d, expected %d", len(data), chunk.End-chunk.Start)
+			chunk.Error = fmt.Errorf("incomplete chunk: got %d, expected %d (history: %v)", len(data), chunk.End-chunk.Start, allErrors)
 		} else {
 			chunk.Data = data
 			chunk.Source = source

@@ -193,16 +193,18 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	defer c.mu.Unlock()
 
 	path := c.packagePath(sha256Hash)
+
+	// Use a single critical section for file open and reader tracking
+	// to prevent TOCTOU race conditions
+	c.activeReadersMu.Lock()
 	f, err := os.Open(path)
 	if err != nil {
+		c.activeReadersMu.Unlock()
 		if os.IsNotExist(err) {
 			return nil, nil, ErrNotFound
 		}
 		return nil, nil, err
 	}
-
-	// Track active reader to prevent deletion during read
-	c.activeReadersMu.Lock()
 	c.activeReaders[sha256Hash]++
 	c.activeReadersMu.Unlock()
 

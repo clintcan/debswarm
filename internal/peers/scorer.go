@@ -101,6 +101,12 @@ func (s *Scorer) RecordSuccess(peerID peer.ID, bytes int64, latencyMs float64, t
 	ps.LastSeen = now
 	ps.LastSuccess = now
 
+	// Clear expired blacklist on successful transfer
+	if ps.Blacklisted && now.After(ps.BlacklistUntil) {
+		ps.Blacklisted = false
+		ps.BlacklistReason = ""
+	}
+
 	// Update EMAs
 	if ps.TotalRequests == 1 {
 		ps.AvgLatencyMs = latencyMs
@@ -169,18 +175,24 @@ func (s *Scorer) IsBlacklisted(peerID peer.ID) bool {
 }
 
 // isBlacklistedLocked checks blacklist status - caller must hold at least RLock
+// Note: This only checks if the peer is currently blacklisted; expired blacklists
+// are cleared during Cleanup() or write operations
 func (s *Scorer) isBlacklistedLocked(peerID peer.ID) bool {
 	ps, ok := s.peers[peerID]
 	if !ok {
 		return false
 	}
 
-	if ps.Blacklisted && time.Now().After(ps.BlacklistUntil) {
-		// Blacklist expired - will be cleared on next write
+	if !ps.Blacklisted {
 		return false
 	}
 
-	return ps.Blacklisted
+	// Check if blacklist has expired
+	if time.Now().After(ps.BlacklistUntil) {
+		return false
+	}
+
+	return true
 }
 
 // GetScore returns the current score for a peer (0-1)
