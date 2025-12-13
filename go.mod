@@ -1,6 +1,8 @@
 module github.com/debswarm/debswarm
 
-go 1.24.6
+go 1.22.0
+
+toolchain go1.23.4
 
 require (
 	github.com/libp2p/go-libp2p v0.45.0
