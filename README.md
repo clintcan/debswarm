@@ -368,7 +368,7 @@ MemoryMax=512M
 ## Building
 
 Requirements:
-- Go 1.22+
+- Go 1.24+
 - GCC (for SQLite)
 - libsqlite3-dev
 

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2025-12-14
+
+### Changed
+- Updated libp2p to v0.46.0
+- Updated go-sqlite3 to v1.14.32
+- Updated golang.org/x/sync to v0.19.0
+- Updated golang.org/x/time to v0.14.0
+- Updated quic-go to v0.57.1 (transitive)
+
+## [0.5.0] - 2025-12-14
+
+### Changed
+- **Go 1.24 required**: Updated minimum Go version from 1.22 to 1.24.6
+- Updated libp2p to v0.45.0 and kad-dht to v0.36.0
+- Updated cobra to v1.10.2
+- Updated GoReleaser config to v2 format
+
+### Fixed
+- Fixed identity key loading for libp2p v0.45+ compatibility (use generic unmarshal)
+
+### Infrastructure
+- CI now uses Go 1.24.6
+- Added `GOTOOLCHAIN=auto` to CI workflows
+- GoReleaser config updated to v2 with `mode: replace` for re-releases
+
 ## [0.4.0] - 2025-12-13
 
 ### Added
@@ -99,7 +124,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/clintcan/debswarm/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/clintcan/debswarm/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/clintcan/debswarm/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/clintcan/debswarm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/clintcan/debswarm/compare/v0.1.0...v0.2.0
