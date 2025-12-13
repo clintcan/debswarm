@@ -78,12 +78,11 @@ jobs:
       - name: List built packages
         run: ls -la ../*.deb
 
-      - name: Copy deb to workspace
-        run: cp ../*.deb .
-
-      - name: Upload to release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: "*.deb"
+      - name: Upload deb to release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for deb in ../*.deb; do
+            echo "Uploading $deb..."
+            gh release upload ${{ github.ref_name }} "$deb" --clobber
+          done
