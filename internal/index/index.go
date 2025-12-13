@@ -33,20 +33,22 @@ type PackageInfo struct {
 
 // Index manages package index files from multiple repositories
 type Index struct {
-	cachePath string
-	packages  map[string]*PackageInfo            // keyed by SHA256
-	byRepo    map[string]map[string]*PackageInfo // repo → path → pkg
-	mu        sync.RWMutex
-	logger    *zap.Logger
+	cachePath  string
+	packages   map[string]*PackageInfo            // keyed by SHA256
+	byRepo     map[string]map[string]*PackageInfo // repo → path → pkg
+	byBasename map[string][]*PackageInfo          // basename → packages (for O(1) lookup)
+	mu         sync.RWMutex
+	logger     *zap.Logger
 }
 
 // New creates a new Index manager
 func New(cachePath string, logger *zap.Logger) *Index {
 	return &Index{
-		cachePath: cachePath,
-		packages:  make(map[string]*PackageInfo),
-		byRepo:    make(map[string]map[string]*PackageInfo),
-		logger:    logger,
+		cachePath:  cachePath,
+		packages:   make(map[string]*PackageInfo),
+		byRepo:     make(map[string]map[string]*PackageInfo),
+		byBasename: make(map[string][]*PackageInfo),
+		logger:     logger,
 	}
 }
 
@@ -169,6 +171,9 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 				idx.packages[pkg.SHA256] = pkg
 				if pkg.Filename != "" {
 					idx.byRepo[repo][pkg.Filename] = pkg
+					// Add to basename index for O(1) lookups
+					basename := filepath.Base(pkg.Filename)
+					idx.byBasename[basename] = append(idx.byBasename[basename], pkg)
 				}
 				count++
 			}
@@ -216,6 +221,9 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 		idx.packages[pkg.SHA256] = pkg
 		if pkg.Filename != "" {
 			idx.byRepo[repo][pkg.Filename] = pkg
+			// Add to basename index for O(1) lookups
+			basename := filepath.Base(pkg.Filename)
+			idx.byBasename[basename] = append(idx.byBasename[basename], pkg)
 		}
 		count++
 	}
@@ -264,14 +272,10 @@ func (idx *Index) GetByPath(path string) *PackageInfo {
 		}
 	}
 
-	// Try matching just the filename part
+	// O(1) lookup by basename using the secondary index
 	base := filepath.Base(path)
-	for _, repoMap := range idx.byRepo {
-		for filename, pkg := range repoMap {
-			if filepath.Base(filename) == base {
-				return pkg
-			}
-		}
+	if packages := idx.byBasename[base]; len(packages) > 0 {
+		return packages[0] // Return first match
 	}
 
 	return nil
@@ -330,6 +334,7 @@ func (idx *Index) Clear() {
 	defer idx.mu.Unlock()
 	idx.packages = make(map[string]*PackageInfo)
 	idx.byRepo = make(map[string]map[string]*PackageInfo)
+	idx.byBasename = make(map[string][]*PackageInfo)
 }
 
 // ClearRepo removes packages from a specific repository
@@ -337,10 +342,28 @@ func (idx *Index) ClearRepo(repo string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Remove packages from this repo from the global packages map
+	// Remove packages from this repo from the global packages map and basename index
 	if repoMap := idx.byRepo[repo]; repoMap != nil {
 		for _, pkg := range repoMap {
 			delete(idx.packages, pkg.SHA256)
+			// Remove from basename index
+			if pkg.Filename != "" {
+				basename := filepath.Base(pkg.Filename)
+				if packages := idx.byBasename[basename]; len(packages) > 0 {
+					// Filter out packages from this repo
+					filtered := packages[:0]
+					for _, p := range packages {
+						if p.Repo != repo {
+							filtered = append(filtered, p)
+						}
+					}
+					if len(filtered) == 0 {
+						delete(idx.byBasename, basename)
+					} else {
+						idx.byBasename[basename] = filtered
+					}
+				}
+			}
 		}
 	}
 	delete(idx.byRepo, repo)

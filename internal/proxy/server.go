@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/downloader"
@@ -63,6 +65,9 @@ type Server struct {
 	// Dashboard
 	dashboard    *dashboard.Dashboard
 	cacheMaxSize int64
+
+	// Request coalescing - prevents duplicate downloads for same package
+	downloadGroup singleflight.Group
 }
 
 // Config holds proxy server configuration
@@ -589,6 +594,44 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	s.metrics.CacheMisses.Inc()
 
+	// Use singleflight to coalesce concurrent requests for the same package
+	// This prevents duplicate downloads when multiple clients request the same package
+	coalescingKey := url
+	if expectedHash != "" {
+		coalescingKey = expectedHash // Use hash if known for better deduplication
+	}
+
+	result, err, shared := s.downloadGroup.Do(coalescingKey, func() (interface{}, error) {
+		return s.downloadPackage(ctx, url, expectedHash, expectedSize, path, start)
+	})
+
+	if shared {
+		s.logger.Debug("Request coalesced with another download",
+			zap.String("url", url),
+			zap.String("key", coalescingKey[:min(16, len(coalescingKey))]+"..."))
+	}
+
+	if err != nil {
+		s.logger.Error("Download failed", zap.Error(err))
+		http.Error(w, "Failed to fetch package", http.StatusBadGateway)
+		return
+	}
+
+	// Serve the result
+	downloadResult := result.(*packageDownloadResult)
+	s.servePackageResult(w, downloadResult)
+}
+
+// packageDownloadResult holds the result of a package download
+type packageDownloadResult struct {
+	data        []byte
+	hash        string
+	source      string
+	contentType string
+}
+
+// downloadPackage performs the actual download (called via singleflight)
+func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string, start time.Time) (*packageDownloadResult, error) {
 	// Build download sources
 	var peerSources []downloader.Source
 	var mirrorSource downloader.Source
@@ -629,8 +672,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	if expectedHash != "" && expectedSize > 0 && len(peerSources) > 0 {
 		result, err := s.downloader.Download(ctx, expectedHash, expectedSize, peerSources, mirrorSource)
 		if err == nil {
-			s.handleDownloadSuccess(w, result, expectedHash, path, start)
-			return
+			return s.processDownloadSuccess(result, expectedHash, path, start), nil
 		}
 		s.logger.Debug("Parallel download failed, falling back to mirror", zap.Error(err))
 	}
@@ -660,15 +702,21 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 				s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
 				s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
 
-				// Cache and serve
-				s.cacheAndServe(w, data, expectedHash, path)
-				return
-			} else {
-				s.logger.Warn("P2P hash mismatch, blacklisting peer")
-				s.metrics.VerificationFailures.Inc()
-				if ps, ok := src.(*downloader.PeerSource); ok {
-					s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
-				}
+				// Cache the data
+				s.cacheAndAnnounce(data, expectedHash, path)
+
+				return &packageDownloadResult{
+					data:        data,
+					hash:        expectedHash,
+					source:      downloader.SourceTypePeer,
+					contentType: "application/vnd.debian.binary-package",
+				}, nil
+			}
+
+			s.logger.Warn("P2P hash mismatch, blacklisting peer")
+			s.metrics.VerificationFailures.Inc()
+			if ps, ok := src.(*downloader.PeerSource); ok {
+				s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
 			}
 		}
 	}
@@ -680,8 +728,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
 		s.logger.Error("Mirror fetch failed", zap.Error(err))
-		http.Error(w, "Failed to fetch package", http.StatusBadGateway)
-		return
+		return nil, fmt.Errorf("mirror fetch failed: %w", err)
 	}
 
 	atomic.AddInt64(&s.bytesFromMirror, int64(len(data)))
@@ -701,14 +748,16 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 		}
 	}
 
-	// Serve
-	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	return &packageDownloadResult{
+		data:        data,
+		hash:        expectedHash,
+		source:      downloader.SourceTypeMirror,
+		contentType: "application/vnd.debian.binary-package",
+	}, nil
 }
 
-func (s *Server) handleDownloadSuccess(w http.ResponseWriter, result *downloader.DownloadResult, expectedHash, path string, start time.Time) {
+// processDownloadSuccess processes a successful parallel download result
+func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expectedHash, path string, start time.Time) *packageDownloadResult {
 	// Update stats
 	atomic.AddInt64(&s.bytesFromP2P, result.PeerBytes)
 	atomic.AddInt64(&s.bytesFromMirror, result.MirrorBytes)
@@ -732,12 +781,23 @@ func (s *Server) handleDownloadSuccess(w http.ResponseWriter, result *downloader
 	// Cache and announce
 	s.cacheAndAnnounce(result.Data, expectedHash, path)
 
-	// Serve
-	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", result.Size))
-	w.Header().Set("X-Debswarm-Source", result.Source)
+	return &packageDownloadResult{
+		data:        result.Data,
+		hash:        expectedHash,
+		source:      result.Source,
+		contentType: "application/vnd.debian.binary-package",
+	}
+}
+
+// servePackageResult writes a download result to the HTTP response
+func (s *Server) servePackageResult(w http.ResponseWriter, result *packageDownloadResult) {
+	w.Header().Set("Content-Type", result.contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(result.data)))
+	if result.source != "" {
+		w.Header().Set("X-Debswarm-Source", result.source)
+	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(result.Data)
+	_, _ = w.Write(result.data)
 }
 
 func (s *Server) cacheAndServe(w http.ResponseWriter, data []byte, hash, path string) {
