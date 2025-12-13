@@ -800,23 +800,6 @@ func (s *Server) servePackageResult(w http.ResponseWriter, result *packageDownlo
 	_, _ = w.Write(result.data)
 }
 
-func (s *Server) cacheAndServe(w http.ResponseWriter, data []byte, hash, path string) {
-	// Cache
-	if err := s.cache.Put(bytes.NewReader(data), hash, path); err != nil {
-		s.logger.Warn("Failed to cache", zap.Error(err))
-	}
-
-	// Announce to DHT
-	s.announceAsync(hash)
-
-	// Serve
-	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	w.Header().Set("X-Debswarm-Source", downloader.SourceTypePeer)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
-}
-
 func (s *Server) cacheAndAnnounce(data []byte, hash, path string) {
 	if err := s.cache.Put(bytes.NewReader(data), hash, path); err != nil {
 		s.logger.Warn("Failed to cache", zap.Error(err))
