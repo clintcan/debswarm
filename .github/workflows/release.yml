@@ -72,15 +72,16 @@ jobs:
         run: |
           # -d skips build dependency checks (Go is installed via actions/setup-go, not apt)
           dpkg-buildpackage -b -us -uc -d -a${{ matrix.arch }}
-      
-      - name: Get version
-        id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
+
+      - name: List built packages
+        run: ls -la ../*.deb
+
+      - name: Copy deb to workspace
+        run: cp ../*.deb .
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            ../debswarm_${{ steps.version.outputs.VERSION }}-1_${{ matrix.arch }}.deb
+          files: "*.deb"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
