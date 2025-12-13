@@ -1,3 +1,27 @@
+debswarm (0.4.0-1) unstable; urgency=medium
+
+  * Multi-repository support with proper isolation
+  * Auto-indexing of Packages files when APT fetches them
+  * Persistent identity (stable peer IDs across restarts)
+  * Identity CLI commands (show, regenerate)
+  * Remote monitoring (--metrics-bind flag)
+  * Request coalescing for concurrent downloads
+  * O(1) basename index for faster lookups
+  * Security: SSRF mitigation, metrics server hardening, CSS injection fix
+
+ -- debswarm developers <debswarm@example.com>  Fri, 13 Dec 2024 00:00:00 +0000
+
+debswarm (0.3.0-1) unstable; urgency=medium
+
+  * Bandwidth limiting (--max-upload-rate, --max-download-rate)
+  * Web dashboard at /dashboard
+  * Private swarms (PSK) support
+  * Peer allowlist
+  * PSK management CLI (generate, show)
+  * Mirror sync mode for seed import
+
+ -- debswarm developers <debswarm@example.com>  Fri, 13 Dec 2024 00:00:00 +0000
+
 debswarm (0.2.6-1) unstable; urgency=medium
 
   * Add seed command to import .deb files and announce to DHT
