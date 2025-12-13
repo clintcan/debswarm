@@ -77,7 +77,7 @@ release:
   header: |
     ## debswarm v{{.Version}}
 
-    P2P package distribution for Debian/Ubuntu.
+    debswarm accelerates APT package downloads by fetching packages from nearby peers while maintaining security through cryptographic verification. It operates as a transparent HTTP proxy, requiring no changes to your normal `apt` workflow.
 
     ### Installation
 
