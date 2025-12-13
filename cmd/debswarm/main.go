@@ -40,6 +40,7 @@ var (
 	proxyPort       int
 	p2pPort         int
 	metricsPort     int
+	metricsBind     string
 	preferQUIC      bool
 	maxUploadRate   string
 	maxDownloadRate string
@@ -75,6 +76,7 @@ Features:
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(seedCmd())
 	rootCmd.AddCommand(pskCmd())
+	rootCmd.AddCommand(identityCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -111,6 +113,7 @@ downloads packages from P2P peers when available, falling back to mirrors.`,
 	cmd.Flags().IntVarP(&proxyPort, "proxy-port", "p", 9977, "HTTP proxy port")
 	cmd.Flags().IntVar(&p2pPort, "p2p-port", 4001, "P2P listen port")
 	cmd.Flags().IntVar(&metricsPort, "metrics-port", 9978, "Metrics endpoint port (0 to disable)")
+	cmd.Flags().StringVar(&metricsBind, "metrics-bind", "127.0.0.1", "Metrics endpoint bind address (use 0.0.0.0 for remote access)")
 	cmd.Flags().BoolVar(&preferQUIC, "prefer-quic", true, "Prefer QUIC transport over TCP")
 	cmd.Flags().StringVar(&maxUploadRate, "max-upload-rate", "", "Max upload rate (e.g., 10MB/s, 0 = unlimited)")
 	cmd.Flags().StringVar(&maxDownloadRate, "max-download-rate", "", "Max download rate (e.g., 50MB/s, 0 = unlimited)")
@@ -132,10 +135,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		zap.Int("metricsPort", metricsPort),
 		zap.Bool("preferQUIC", preferQUIC))
 
-	// Load configuration
-	cfg, err := loadConfig()
+	// Load configuration with security warnings
+	cfg, warnings, err := loadConfigWithWarnings()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+	for _, warn := range warnings {
+		logger.Warn("Security warning", zap.String("message", warn.Message), zap.String("file", warn.File))
 	}
 
 	// Override with command-line flags
@@ -226,11 +232,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			zap.String("fingerprint", p2p.PSKFingerprint(loadedPSK)))
 	}
 
+	// Determine data directory for persistent identity
+	// Use parent of cache path + /data, or ~/.local/share/debswarm
+	p2pDataDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+	if dataDir != "" {
+		p2pDataDir = dataDir
+	}
+
 	// Initialize P2P node with QUIC preference
 	p2pCfg := &p2p.Config{
 		ListenPort:      cfg.Network.ListenPort,
 		BootstrapPeers:  cfg.Network.BootstrapPeers,
 		EnableMDNS:      cfg.Privacy.EnableMDNS,
+		DataDir:         p2pDataDir,
 		PreferQUIC:      preferQUIC,
 		MaxUploadRate:   parsedUploadRate,
 		MaxDownloadRate: parsedDownloadRate,
@@ -265,6 +279,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		P2PTimeout:     5 * time.Second,
 		DHTLookupLimit: 10,
 		MetricsPort:    metricsPort,
+		MetricsBind:    metricsBind,
 		CacheMaxSize:   maxSize,
 		Metrics:        m,
 		Timeouts:       tm,
@@ -951,6 +966,135 @@ The fingerprint can be shared to verify that nodes are using the same PSK.`,
 	return cmd
 }
 
+func identityCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "identity",
+		Short: "Manage node identity",
+		Long: `Manage the persistent identity key for this node.
+
+The identity key determines your peer ID in the P2P network. By default,
+debswarm generates a new ephemeral identity on each start. When a data
+directory is configured, the identity is persisted for stable peer IDs.`,
+	}
+
+	// Show subcommand
+	showCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show current identity information",
+		Long:  `Display the current peer ID and identity key file location.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			// Determine data directory
+			identityDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+			if dataDir != "" {
+				identityDir = dataDir
+			}
+
+			keyPath := filepath.Join(identityDir, p2p.IdentityKeyFile)
+
+			fmt.Printf("Node Identity\n")
+			fmt.Printf("══════════════════════════════════════\n")
+
+			// Check if identity file exists
+			if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+				fmt.Printf("Status:      No persistent identity\n")
+				fmt.Printf("Key File:    %s (not created yet)\n", keyPath)
+				fmt.Printf("\nA persistent identity will be created when the daemon starts.\n")
+				fmt.Printf("Until then, ephemeral identities are used.\n")
+				return nil
+			}
+
+			// Load the identity
+			privKey, err := p2p.LoadIdentity(keyPath)
+			if err != nil {
+				return fmt.Errorf("failed to load identity: %w", err)
+			}
+
+			peerID := p2p.IdentityFingerprint(privKey)
+
+			fmt.Printf("Peer ID:     %s\n", peerID)
+			fmt.Printf("Key File:    %s\n", keyPath)
+			fmt.Printf("Key Type:    Ed25519\n")
+			fmt.Printf("\nThis peer ID is stable across daemon restarts.\n")
+			fmt.Printf("Share it with others to add to their peer allowlists.\n")
+
+			return nil
+		},
+	}
+
+	// Regenerate subcommand
+	var force bool
+	regenerateCmd := &cobra.Command{
+		Use:   "regenerate",
+		Short: "Regenerate the identity key (WARNING: changes peer ID)",
+		Long: `Generate a new identity key, replacing the existing one.
+
+WARNING: This will change your peer ID. Other nodes will see you as a
+different peer, and any peer allowlists that include your old ID will
+need to be updated.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			// Determine data directory
+			identityDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+			if dataDir != "" {
+				identityDir = dataDir
+			}
+
+			keyPath := filepath.Join(identityDir, p2p.IdentityKeyFile)
+
+			// Check if file exists and confirm
+			if _, err := os.Stat(keyPath); err == nil && !force {
+				// Load current identity to show what we're replacing
+				privKey, err := p2p.LoadIdentity(keyPath)
+				if err == nil {
+					fmt.Printf("Current Peer ID: %s\n\n", p2p.IdentityFingerprint(privKey))
+				}
+				return fmt.Errorf("identity file exists at %s\n\nUse --force to regenerate (this will change your peer ID)", keyPath)
+			}
+
+			// Ensure directory exists
+			if err := os.MkdirAll(identityDir, 0700); err != nil {
+				return fmt.Errorf("failed to create identity directory: %w", err)
+			}
+
+			// Generate new identity
+			privKey, err := p2p.GenerateIdentity()
+			if err != nil {
+				return fmt.Errorf("failed to generate identity: %w", err)
+			}
+
+			// Save identity
+			if err := p2p.SaveIdentity(privKey, keyPath); err != nil {
+				return fmt.Errorf("failed to save identity: %w", err)
+			}
+
+			peerID := p2p.IdentityFingerprint(privKey)
+
+			fmt.Printf("New Identity Generated\n")
+			fmt.Printf("══════════════════════════════════════\n")
+			fmt.Printf("Peer ID:     %s\n", peerID)
+			fmt.Printf("Key File:    %s\n", keyPath)
+			fmt.Printf("\nThis is now your stable peer ID.\n")
+
+			return nil
+		},
+	}
+	regenerateCmd.Flags().BoolVar(&force, "force", false, "Force regeneration even if identity exists")
+
+	cmd.AddCommand(showCmd)
+	cmd.AddCommand(regenerateCmd)
+
+	return cmd
+}
+
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -967,6 +1111,7 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("  • Bandwidth limiting\n")
 			fmt.Printf("  • Web dashboard\n")
 			fmt.Printf("  • Private swarms (PSK)\n")
+			fmt.Printf("  • Persistent identity\n")
 		},
 	}
 }
@@ -1016,6 +1161,27 @@ func loadConfig() (*config.Config, error) {
 	}
 
 	return config.DefaultConfig(), nil
+}
+
+// loadConfigWithWarnings loads config and returns security warnings for sensitive settings
+func loadConfigWithWarnings() (*config.Config, []config.SecurityWarning, error) {
+	if cfgFile != "" {
+		return config.LoadWithWarnings(cfgFile)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	paths := []string{
+		"/etc/debswarm/config.toml",
+		filepath.Join(homeDir, ".config", "debswarm", "config.toml"),
+	}
+
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return config.LoadWithWarnings(path)
+		}
+	}
+
+	return config.DefaultConfig(), nil, nil
 }
 
 func formatBytes(b int64) string {

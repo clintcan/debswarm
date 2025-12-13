@@ -2,8 +2,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -192,4 +194,65 @@ func ParseRate(s string) (int64, error) {
 	}
 
 	return ParseSize(rateStr)
+}
+
+// SecurityWarning represents a security concern with the configuration
+type SecurityWarning struct {
+	Message string
+	File    string
+}
+
+// LoadWithWarnings reads configuration and returns security warnings
+// This should be used when security-sensitive options might be present
+func LoadWithWarnings(path string) (*Config, []SecurityWarning, error) {
+	cfg, err := Load(path)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var warnings []SecurityWarning
+
+	// Check file permissions if inline PSK is configured
+	if cfg.Privacy.PSK != "" {
+		warn := checkFilePermissions(path)
+		if warn != nil {
+			warnings = append(warnings, *warn)
+		}
+	}
+
+	return cfg, warnings, nil
+}
+
+// checkFilePermissions checks if a file has appropriately restrictive permissions
+// Returns a warning if the file is world-readable or group-writable
+func checkFilePermissions(path string) *SecurityWarning {
+	// Skip permission check on Windows as it uses a different security model
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+
+	mode := info.Mode().Perm()
+
+	// Check if file is world-readable (o+r) or world-writable (o+w)
+	// Bits: -----rwx (world), --rwx--- (group), rwx------ (owner)
+	if mode&0004 != 0 { // world readable
+		return &SecurityWarning{
+			Message: fmt.Sprintf("config file is world-readable (mode %04o); consider 'chmod 600 %s' for files with inline PSK", mode, path),
+			File:    path,
+		}
+	}
+
+	if mode&0002 != 0 { // world writable
+		return &SecurityWarning{
+			Message: fmt.Sprintf("config file is world-writable (mode %04o); this is a security risk", mode),
+			File:    path,
+		}
+	}
+
+	return nil
 }

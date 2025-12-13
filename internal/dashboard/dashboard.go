@@ -135,7 +135,7 @@ func (d *Dashboard) RecordDownload(filename string, size int64, source string, d
 		Time:     time.Now().Format("15:04:05"),
 		Filename: truncateFilename(filename, 40),
 		Size:     formatBytes(size),
-		Source:   source,
+		Source:   sanitizeForCSS(source), // Sanitize for safe CSS class usage
 		Duration: formatDuration(duration),
 	}
 
@@ -256,6 +256,22 @@ func truncateFilename(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// sanitizeForCSS ensures a string is safe to use in a CSS class name
+// Only allows alphanumeric characters and hyphens
+func sanitizeForCSS(s string) string {
+	result := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' {
+			result = append(result, c)
+		}
+	}
+	if len(result) == 0 {
+		return "unknown"
+	}
+	return string(result)
 }
 
 // Embedded HTML template

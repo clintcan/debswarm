@@ -8,13 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Nothing yet
+- **Persistent identity**: Stable peer IDs across daemon restarts via Ed25519 key persistence
+- **Identity CLI**: New `debswarm identity show` and `debswarm identity regenerate` commands
+- **Config security warnings**: Warnings for world-readable config files containing inline PSK
+- **Remote monitoring**: New `--metrics-bind` flag to expose dashboard/metrics on non-localhost (for seeding servers)
 
 ### Changed
-- Nothing yet
+- Daemon now persists identity key to `<data-dir>/identity.key` for stable peer IDs
+- Version command now includes "Persistent identity" in feature list
 
-### Fixed
-- Nothing yet
+### Security
+- **SSRF mitigation**: Proxy now validates URLs to only allow legitimate Debian/Ubuntu mirror requests, blocking access to private networks and cloud metadata endpoints
+- **Metrics server hardening**: Added ReadTimeout (10s), WriteTimeout (30s), IdleTimeout (60s) to prevent slowloris attacks
+- **CSS injection fix**: Dashboard source values sanitized to prevent CSS class name injection
+- Identity keys stored with 0600 permissions
+- Config file permission check warns about world-readable files with secrets
+- Identity key format includes version header for forward compatibility
 
 ## [0.3.0] - 2025-12-13
 

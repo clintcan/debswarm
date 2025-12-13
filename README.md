@@ -25,6 +25,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
 - **Private Swarms (PSK)** - Create isolated networks using pre-shared keys for corporate deployments
 - **Peer Allowlist** - Restrict connections to specific peer IDs
+- **Persistent Identity** - Stable peer IDs across restarts with Ed25519 key persistence
 - **Download Resume** - Infrastructure for resuming interrupted downloads (state persistence)
 
 ### Monitoring
@@ -148,6 +149,9 @@ file = ""                   # Empty = stderr
 debswarm daemon [--proxy-port 9977] [--p2p-port 4001] [--prefer-quic]
 debswarm daemon --max-upload-rate 10MB/s --max-download-rate 50MB/s
 
+# Seeding server with remote monitoring
+debswarm daemon --metrics-bind 0.0.0.0  # Expose dashboard on all interfaces
+
 # Show status
 debswarm status
 
@@ -168,6 +172,10 @@ debswarm psk generate                   # Generate new PSK file
 debswarm psk generate -o /path/to.key   # Generate to specific path
 debswarm psk show                       # Show PSK fingerprint from config
 debswarm psk show -f /path/to/swarm.key # Show fingerprint of specific file
+
+# Identity management
+debswarm identity show                  # Show current peer ID and key location
+debswarm identity regenerate            # Generate new identity (requires --force)
 
 # Configuration
 debswarm config show        # Display current config

@@ -54,6 +54,7 @@ type Server struct {
 	p2pTimeout     time.Duration
 	dhtLookupLimit int
 	metricsPort    int
+	metricsBind    string
 
 	// Announcement worker pool (bounded)
 	announceChan chan string
@@ -70,6 +71,7 @@ type Config struct {
 	P2PTimeout     time.Duration
 	DHTLookupLimit int
 	MetricsPort    int
+	MetricsBind    string // Bind address for metrics server (default: 127.0.0.1)
 	CacheMaxSize   int64
 	Metrics        *metrics.Metrics
 	Timeouts       *timeouts.Manager
@@ -115,6 +117,12 @@ func NewServer(
 		scorer = peers.NewScorer()
 	}
 
+	// Default metrics bind to localhost if not specified
+	metricsBind := cfg.MetricsBind
+	if metricsBind == "" {
+		metricsBind = "127.0.0.1"
+	}
+
 	s := &Server{
 		addr:           cfg.Addr,
 		cache:          pkgCache,
@@ -128,6 +136,7 @@ func NewServer(
 		p2pTimeout:     cfg.P2PTimeout,
 		dhtLookupLimit: cfg.DHTLookupLimit,
 		metricsPort:    cfg.MetricsPort,
+		metricsBind:    metricsBind,
 		cacheMaxSize:   cfg.CacheMaxSize,
 		announceChan:   make(chan string, 100), // Bounded buffer
 		announceDone:   make(chan struct{}),
@@ -191,12 +200,21 @@ func (s *Server) startMetricsServer() {
 		})
 	}
 
-	addr := fmt.Sprintf("127.0.0.1:%d", s.metricsPort)
+	addr := fmt.Sprintf("%s:%d", s.metricsBind, s.metricsPort)
 	s.logger.Info("Starting metrics server", zap.String("addr", addr))
 
+	// Warn if binding to non-localhost
+	if s.metricsBind != "127.0.0.1" && s.metricsBind != "localhost" {
+		s.logger.Warn("Metrics server bound to non-localhost address - ensure firewall is configured",
+			zap.String("bind", s.metricsBind))
+	}
+
 	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:         addr,
+		Handler:      mux,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.logger.Error("Metrics server failed", zap.Error(err))
@@ -458,15 +476,76 @@ func (s *Server) classifyRequest(url string) requestType {
 func (s *Server) extractTargetURL(r *http.Request) string {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
+	var targetURL string
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return path
+		targetURL = path
+	} else if strings.Contains(path, "/") {
+		targetURL = "http://" + path
+	} else {
+		return ""
 	}
 
-	if strings.Contains(path, "/") {
-		return "http://" + path
+	// SECURITY: Validate URL to prevent SSRF attacks
+	// Only allow requests to legitimate Debian/Ubuntu package mirrors
+	if !isAllowedMirrorURL(targetURL) {
+		s.logger.Warn("Blocked request to non-allowed URL",
+			zap.String("url", targetURL),
+			zap.String("remoteAddr", r.RemoteAddr))
+		return ""
 	}
 
-	return ""
+	return targetURL
+}
+
+// isAllowedMirrorURL validates that a URL is a legitimate Debian/Ubuntu mirror
+// This prevents SSRF attacks by blocking requests to internal services
+func isAllowedMirrorURL(url string) bool {
+	lower := strings.ToLower(url)
+
+	// Block obviously dangerous URLs
+	blockedHosts := []string{
+		"localhost",
+		"127.0.0.1",
+		"[::1]",
+		"0.0.0.0",
+		"169.254.",     // AWS metadata
+		"metadata.",    // Cloud metadata
+		"10.",          // Private networks
+		"172.16.",      // Private networks
+		"172.17.",
+		"172.18.",
+		"172.19.",
+		"172.20.",
+		"172.21.",
+		"172.22.",
+		"172.23.",
+		"172.24.",
+		"172.25.",
+		"172.26.",
+		"172.27.",
+		"172.28.",
+		"172.29.",
+		"172.30.",
+		"172.31.",
+		"192.168.",     // Private networks
+	}
+
+	for _, blocked := range blockedHosts {
+		if strings.Contains(lower, blocked) {
+			return false
+		}
+	}
+
+	// Must look like a package repository URL (contains pool/ or dists/)
+	// This is the pattern for Debian/Ubuntu mirrors
+	if !strings.Contains(lower, "/pool/") &&
+		!strings.Contains(lower, "/dists/") &&
+		!strings.Contains(lower, "/ubuntu/") &&
+		!strings.Contains(lower, "/debian/") {
+		return false
+	}
+
+	return true
 }
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {

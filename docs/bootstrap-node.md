@@ -231,6 +231,22 @@ bootstrap_peers = [
 
 ## Monitoring
 
+### Remote Dashboard Access
+
+For remote monitoring of seeding/bootstrap servers, use the `--metrics-bind` flag:
+
+```bash
+# Expose dashboard on all interfaces (ensure firewall restricts access)
+debswarm daemon --metrics-bind 0.0.0.0
+
+# Or in systemd service
+ExecStart=/usr/local/bin/debswarm daemon --config /etc/debswarm/config.toml --metrics-bind 0.0.0.0
+```
+
+Then access the dashboard remotely at `http://YOUR_SERVER_IP:9978/dashboard`
+
+**Security note**: When using `--metrics-bind 0.0.0.0`, ensure your firewall restricts port 9978 to trusted IPs only.
+
 ### Check Node Health
 
 ```bash

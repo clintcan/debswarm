@@ -82,9 +82,10 @@ type Config struct {
 	BootstrapPeers  []string
 	EnableMDNS      bool
 	PrivateKey      crypto.PrivKey
-	PreferQUIC      bool  // Prefer QUIC over TCP
-	MaxUploadRate   int64 // bytes per second, 0 = unlimited
-	MaxDownloadRate int64 // bytes per second, 0 = unlimited
+	DataDir         string // Directory for persistent data (identity key, etc.)
+	PreferQUIC      bool   // Prefer QUIC over TCP
+	MaxUploadRate   int64  // bytes per second, 0 = unlimited
+	MaxDownloadRate int64  // bytes per second, 0 = unlimited
 	PSK             []byte   // Pre-shared key for private swarm
 	PeerAllowlist   []string // Allowed peer IDs (empty = all allowed)
 	Scorer          *peers.Scorer
@@ -96,15 +97,31 @@ type Config struct {
 func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	ctx, cancel := context.WithCancel(ctx)
 
-	// Generate or use provided private key
-	privKey := cfg.PrivateKey
-	if privKey == nil {
-		var err error
+	// Load or generate identity key
+	var privKey crypto.PrivKey
+	var err error
+
+	if cfg.PrivateKey != nil {
+		// Use explicitly provided key
+		privKey = cfg.PrivateKey
+	} else if cfg.DataDir != "" {
+		// Load from persistent storage or create new
+		privKey, err = LoadOrCreateIdentity(cfg.DataDir)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to load/create identity: %w", err)
+		}
+		logger.Info("Loaded persistent identity",
+			zap.String("peerID", IdentityFingerprint(privKey)),
+			zap.String("dataDir", cfg.DataDir))
+	} else {
+		// Generate ephemeral key (not persisted)
 		privKey, _, err = crypto.GenerateEd25519Key(rand.Reader)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("failed to generate key: %w", err)
 		}
+		logger.Debug("Generated ephemeral identity (not persisted)")
 	}
 
 	// Create listen addresses - QUIC first for preference
