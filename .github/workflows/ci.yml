@@ -10,30 +10,30 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
-      
+
       - name: Install dependencies
         run: sudo apt-get install -y libsqlite3-dev
-      
+
       - name: Verify modules
         run: go mod verify
 
       - name: Build
         run: go build -v ./...
-      
+
       - name: Test
         run: go test -v -race ./...
 
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
 
@@ -41,7 +41,7 @@ jobs:
         run: go mod download
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
           args: --timeout=5m
@@ -59,12 +59,12 @@ jobs:
             goarch: arm
             goarm: 7
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
-      
+
       - name: Build
         env:
           GOOS: ${{ matrix.goos }}

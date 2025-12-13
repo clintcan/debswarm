@@ -12,19 +12,19 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      
-      - uses: actions/setup-go@v5
+
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
-      
+
       - name: Install dependencies
         run: sudo apt-get install -y libsqlite3-dev
-      
+
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
           args: release --clean
@@ -43,12 +43,12 @@ jobs:
             go_arch: arm64
     
     steps:
-      - uses: actions/checkout@v4
-      
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.22'
-      
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -75,7 +75,7 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
       
       - name: Upload to release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             ../debswarm_${{ steps.version.outputs.VERSION }}-1_${{ matrix.arch }}.deb
