@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Multi-repository support**: Proper isolation of package indexes from different repositories (deb.debian.org, archive.ubuntu.com, third-party repos)
+- **Auto-indexing**: Packages files are automatically parsed when APT fetches them, enabling P2P for all configured repos
 - **Persistent identity**: Stable peer IDs across daemon restarts via Ed25519 key persistence
 - **Identity CLI**: New `debswarm identity show` and `debswarm identity regenerate` commands
 - **Config security warnings**: Warnings for world-readable config files containing inline PSK

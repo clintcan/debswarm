@@ -552,25 +552,28 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	ctx := r.Context()
 	start := time.Now()
 
-	// Find expected hash from index
+	// Extract path for caching
 	path := index.ExtractPathFromURL(url)
+
+	// Find expected hash from index using repo-aware lookup
 	var expectedHash string
 	var expectedSize int64
 
-	if path != "" {
-		if pkg := s.index.GetByPath(path); pkg != nil {
-			// Validate hash format before use (must be 64 hex characters)
-			if len(pkg.SHA256) == 64 {
-				if _, err := hex.DecodeString(pkg.SHA256); err == nil {
-					expectedHash = pkg.SHA256
-					expectedSize = pkg.Size
-					s.logger.Debug("Found package in index",
-						zap.String("path", path),
-						zap.String("hash", expectedHash[:16]+"..."),
-						zap.Int64("size", expectedSize))
-				} else {
-					s.logger.Warn("Invalid hash format in index", zap.String("path", path))
-				}
+	// Try repo-specific lookup first (more accurate for multi-repo setups)
+	if pkg := s.index.GetByURLPath(url); pkg != nil {
+		// Validate hash format before use (must be 64 hex characters)
+		if len(pkg.SHA256) == 64 {
+			if _, err := hex.DecodeString(pkg.SHA256); err == nil {
+				expectedHash = pkg.SHA256
+				expectedSize = pkg.Size
+				path = pkg.Filename // Use filename from index if available
+				s.logger.Debug("Found package in index",
+					zap.String("repo", pkg.Repo),
+					zap.String("path", path),
+					zap.String("hash", expectedHash[:16]+"..."),
+					zap.Int64("size", expectedSize))
+			} else {
+				s.logger.Warn("Invalid hash format in index", zap.String("url", url))
 			}
 		}
 	}
@@ -809,6 +812,23 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 		s.logger.Error("Failed to fetch index", zap.Error(err))
 		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
 		return
+	}
+
+	// Auto-parse Packages files to populate the index for multi-repo support
+	lowerURL := strings.ToLower(url)
+	if strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation") {
+		go func() {
+			if err := s.index.LoadFromData(data, url); err != nil {
+				s.logger.Debug("Failed to parse index file",
+					zap.String("url", url),
+					zap.Error(err))
+			} else {
+				s.logger.Debug("Parsed index file",
+					zap.String("url", url),
+					zap.Int("totalPackages", s.index.Count()),
+					zap.Int("repos", s.index.RepoCount()))
+			}
+		}()
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")

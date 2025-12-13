@@ -9,6 +9,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 ### Core
 - **Transparent APT Integration** - Just use `apt install` as usual
 - **P2P Package Sharing** - Download from and upload to other debswarm users
+- **Multi-Repository Support** - Works with Debian, Ubuntu, and third-party repositories simultaneously
 - **Hash Verification** - All packages verified against signed repository metadata
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network

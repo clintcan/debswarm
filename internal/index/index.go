@@ -3,6 +3,7 @@ package index
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"fmt"
 	"io"
@@ -27,13 +28,14 @@ type PackageInfo struct {
 	SHA256       string
 	SHA512       string
 	Description  string
+	Repo         string // Repository base URL this package belongs to
 }
 
-// Index manages package index files
+// Index manages package index files from multiple repositories
 type Index struct {
 	cachePath string
-	packages  map[string]*PackageInfo // keyed by SHA256
-	byPath    map[string]*PackageInfo // keyed by Filename
+	packages  map[string]*PackageInfo            // keyed by SHA256
+	byRepo    map[string]map[string]*PackageInfo // repo → path → pkg
 	mu        sync.RWMutex
 	logger    *zap.Logger
 }
@@ -43,7 +45,7 @@ func New(cachePath string, logger *zap.Logger) *Index {
 	return &Index{
 		cachePath: cachePath,
 		packages:  make(map[string]*PackageInfo),
-		byPath:    make(map[string]*PackageInfo),
+		byRepo:    make(map[string]map[string]*PackageInfo),
 		logger:    logger,
 	}
 }
@@ -74,7 +76,8 @@ func (idx *Index) LoadFromFile(path string) error {
 		reader = xzReader
 	}
 
-	return idx.parse(reader)
+	// Use filename as repo identifier for local files
+	return idx.parseForRepo(reader, path)
 }
 
 // LoadFromURL downloads and parses a Packages file from a URL
@@ -109,13 +112,44 @@ func (idx *Index) LoadFromURL(url string) error {
 		reader = xzReader
 	}
 
-	return idx.parse(reader)
+	// Extract repo base URL
+	repo := ExtractRepoFromURL(url)
+	return idx.parseForRepo(reader, repo)
 }
 
-// parse parses an uncompressed Packages file
-func (idx *Index) parse(reader io.Reader) error {
+// LoadFromData parses Packages data for a specific repository
+func (idx *Index) LoadFromData(data []byte, url string) error {
+	var reader io.Reader = bytes.NewReader(data)
+
+	// Handle compression based on URL
+	if strings.HasSuffix(url, ".gz") {
+		gzReader, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer gzReader.Close()
+		reader = gzReader
+	} else if strings.HasSuffix(url, ".xz") {
+		xzReader, err := xz.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("failed to create xz reader: %w", err)
+		}
+		reader = xzReader
+	}
+
+	repo := ExtractRepoFromURL(url)
+	return idx.parseForRepo(reader, repo)
+}
+
+// parseForRepo parses an uncompressed Packages file for a specific repository
+func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+
+	// Ensure repo map exists
+	if idx.byRepo[repo] == nil {
+		idx.byRepo[repo] = make(map[string]*PackageInfo)
+	}
 
 	scanner := bufio.NewScanner(reader)
 	// Increase buffer size for long lines (descriptions can be long)
@@ -131,9 +165,10 @@ func (idx *Index) parse(reader io.Reader) error {
 		// Empty line marks end of package entry
 		if line == "" {
 			if pkg != nil && pkg.SHA256 != "" {
+				pkg.Repo = repo
 				idx.packages[pkg.SHA256] = pkg
 				if pkg.Filename != "" {
-					idx.byPath[pkg.Filename] = pkg
+					idx.byRepo[repo][pkg.Filename] = pkg
 				}
 				count++
 			}
@@ -177,9 +212,10 @@ func (idx *Index) parse(reader io.Reader) error {
 
 	// Handle last package
 	if pkg != nil && pkg.SHA256 != "" {
+		pkg.Repo = repo
 		idx.packages[pkg.SHA256] = pkg
 		if pkg.Filename != "" {
-			idx.byPath[pkg.Filename] = pkg
+			idx.byRepo[repo][pkg.Filename] = pkg
 		}
 		count++
 	}
@@ -188,8 +224,16 @@ func (idx *Index) parse(reader io.Reader) error {
 		return fmt.Errorf("scanner error: %w", err)
 	}
 
-	idx.logger.Debug("Parsed package index", zap.Int("packages", count))
+	idx.logger.Debug("Parsed package index",
+		zap.String("repo", repo),
+		zap.Int("packages", count),
+		zap.Int("totalRepos", len(idx.byRepo)))
 	return nil
+}
+
+// parse is kept for backwards compatibility - uses empty repo
+func (idx *Index) parse(reader io.Reader) error {
+	return idx.parseForRepo(reader, "")
 }
 
 // GetBySHA256 returns package info by SHA256 hash
@@ -199,25 +243,61 @@ func (idx *Index) GetBySHA256(sha256 string) *PackageInfo {
 	return idx.packages[sha256]
 }
 
-// GetByPath returns package info by filename/path
+// GetByRepoAndPath returns package info for a specific repo and path
+func (idx *Index) GetByRepoAndPath(repo, path string) *PackageInfo {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	if repoMap := idx.byRepo[repo]; repoMap != nil {
+		if pkg := repoMap[path]; pkg != nil {
+			return pkg
+		}
+	}
+	return nil
+}
+
+// GetByPath returns package info by filename/path, searching all repositories
+// If multiple repos have the same path, returns any match (use GetByRepoAndPath for specific repo)
 func (idx *Index) GetByPath(path string) *PackageInfo {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	// Try exact match first
-	if pkg := idx.byPath[path]; pkg != nil {
-		return pkg
-	}
-
-	// Try matching just the filename part
-	base := filepath.Base(path)
-	for filename, pkg := range idx.byPath {
-		if filepath.Base(filename) == base {
+	// Search all repos for exact match
+	for _, repoMap := range idx.byRepo {
+		if pkg := repoMap[path]; pkg != nil {
 			return pkg
 		}
 	}
 
+	// Try matching just the filename part
+	base := filepath.Base(path)
+	for _, repoMap := range idx.byRepo {
+		for filename, pkg := range repoMap {
+			if filepath.Base(filename) == base {
+				return pkg
+			}
+		}
+	}
+
 	return nil
+}
+
+// GetByURLPath extracts repo and path from a URL and looks up the package
+func (idx *Index) GetByURLPath(url string) *PackageInfo {
+	repo := ExtractRepoFromURL(url)
+	path := ExtractPathFromURL(url)
+
+	if repo == "" || path == "" {
+		return nil
+	}
+
+	// Try specific repo first
+	if pkg := idx.GetByRepoAndPath(repo, path); pkg != nil {
+		return pkg
+	}
+
+	// Fall back to any repo with this path
+	return idx.GetByPath(path)
 }
 
 // GetByPathSuffix returns package info by path suffix (for URL matching)
@@ -225,19 +305,28 @@ func (idx *Index) GetByPathSuffix(suffix string) *PackageInfo {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	for filename, pkg := range idx.byPath {
-		if strings.HasSuffix(filename, suffix) || strings.HasSuffix(suffix, filename) {
-			return pkg
+	for _, repoMap := range idx.byRepo {
+		for filename, pkg := range repoMap {
+			if strings.HasSuffix(filename, suffix) || strings.HasSuffix(suffix, filename) {
+				return pkg
+			}
 		}
 	}
 	return nil
 }
 
-// Count returns the number of indexed packages
+// Count returns the number of indexed packages (unique by SHA256)
 func (idx *Index) Count() int {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	return len(idx.packages)
+}
+
+// RepoCount returns the number of indexed repositories
+func (idx *Index) RepoCount() int {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return len(idx.byRepo)
 }
 
 // Clear removes all indexed packages
@@ -245,7 +334,48 @@ func (idx *Index) Clear() {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	idx.packages = make(map[string]*PackageInfo)
-	idx.byPath = make(map[string]*PackageInfo)
+	idx.byRepo = make(map[string]map[string]*PackageInfo)
+}
+
+// ClearRepo removes packages from a specific repository
+func (idx *Index) ClearRepo(repo string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Remove packages from this repo from the global packages map
+	if repoMap := idx.byRepo[repo]; repoMap != nil {
+		for _, pkg := range repoMap {
+			delete(idx.packages, pkg.SHA256)
+		}
+	}
+	delete(idx.byRepo, repo)
+}
+
+// ExtractRepoFromURL extracts the repository base URL from a full URL
+// e.g., "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz"
+//
+//	-> "deb.debian.org/debian"
+func ExtractRepoFromURL(url string) string {
+	// Remove protocol
+	s := url
+	if strings.HasPrefix(s, "https://") {
+		s = s[8:]
+	} else if strings.HasPrefix(s, "http://") {
+		s = s[7:]
+	}
+
+	// Find dists/ or pool/ and take everything before it
+	for _, marker := range []string{"/dists/", "/pool/"} {
+		if idx := strings.Index(s, marker); idx != -1 {
+			return s[:idx]
+		}
+	}
+
+	// Fallback: return host only
+	if idx := strings.Index(s, "/"); idx != -1 {
+		return s[:idx]
+	}
+	return s
 }
 
 // ExtractPathFromURL extracts the package path from a full URL
