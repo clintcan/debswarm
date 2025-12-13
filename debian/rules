@@ -5,6 +5,17 @@ export GOCACHE = $(CURDIR)/.gocache
 export GOFLAGS = -mod=vendor -trimpath
 export CGO_ENABLED = 0
 
+# Map Debian architecture to Go architecture
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+ifeq ($(DEB_HOST_ARCH),amd64)
+    export GOARCH = amd64
+else ifeq ($(DEB_HOST_ARCH),arm64)
+    export GOARCH = arm64
+else ifeq ($(DEB_HOST_ARCH),armhf)
+    export GOARCH = arm
+    export GOARM = 7
+endif
+
 %:
 	dh $@
 
@@ -15,7 +26,7 @@ override_dh_auto_clean:
 
 override_dh_auto_build:
 	mkdir -p build
-	go build -ldflags="-s -w -X main.version=0.2.6" \
+	go build -ldflags="-s -w -X main.version=$(shell dpkg-parsechangelog -S Version | sed 's/-[^-]*$$//')" \
 		-o build/debswarm ./cmd/debswarm
 
 override_dh_auto_test:
