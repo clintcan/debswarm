@@ -231,11 +231,6 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 	return nil
 }
 
-// parse is kept for backwards compatibility - uses empty repo
-func (idx *Index) parse(reader io.Reader) error {
-	return idx.parseForRepo(reader, "")
-}
-
 // GetBySHA256 returns package info by SHA256 hash
 func (idx *Index) GetBySHA256(sha256 string) *PackageInfo {
 	idx.mu.RLock()
