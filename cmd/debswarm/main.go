@@ -115,7 +115,7 @@ downloads packages from P2P peers when available, falling back to mirrors.`,
 	cmd.Flags().IntVarP(&proxyPort, "proxy-port", "p", 9977, "HTTP proxy port")
 	cmd.Flags().IntVar(&p2pPort, "p2p-port", 4001, "P2P listen port")
 	cmd.Flags().IntVar(&metricsPort, "metrics-port", 9978, "Metrics endpoint port (0 to disable)")
-	cmd.Flags().StringVar(&metricsBind, "metrics-bind", "127.0.0.1", "Metrics endpoint bind address (use 0.0.0.0 for remote access)")
+	cmd.Flags().StringVar(&metricsBind, "metrics-bind", "127.0.0.1", "Metrics endpoint bind address (SECURITY: 0.0.0.0 exposes stats externally)")
 	cmd.Flags().BoolVar(&preferQUIC, "prefer-quic", true, "Prefer QUIC transport over TCP")
 	cmd.Flags().StringVar(&maxUploadRate, "max-upload-rate", "", "Max upload rate (e.g., 10MB/s, 0 = unlimited)")
 	cmd.Flags().StringVar(&maxDownloadRate, "max-download-rate", "", "Max download rate (e.g., 50MB/s, 0 = unlimited)")

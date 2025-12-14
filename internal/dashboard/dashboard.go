@@ -189,7 +189,8 @@ func (d *Dashboard) handleDashboard(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := d.template.Execute(w, stats); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		// SECURITY: Don't expose internal error details to clients
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 

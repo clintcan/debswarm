@@ -77,6 +77,20 @@ peer_allowlist = []
 #   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
 # ]
 
+[metrics]
+# Metrics/dashboard server port (0 to disable)
+port = 9978
+
+# Metrics server bind address
+# SECURITY WARNING: The metrics endpoint exposes operational information including:
+#   - Cache statistics and hit rates
+#   - Connected peer counts and IDs
+#   - Download/upload statistics
+#   - Network performance data
+# Keep bound to 127.0.0.1 (localhost) unless you have firewall rules in place.
+# If exposing externally, consider placing behind a reverse proxy with authentication.
+bind = "127.0.0.1"
+
 [logging]
 # Log level: debug, info, warn, error
 level = "info"

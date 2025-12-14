@@ -1,3 +1,14 @@
+debswarm (0.5.3-1) unstable; urgency=high
+
+  * Security: Fix SSRF vulnerability in index URL fetching
+    - Block requests to localhost, cloud metadata services, private networks
+    - Validate URLs match Debian/Ubuntu repository patterns
+  * Security: Fix information disclosure in dashboard error messages
+  * Security: Add documentation for metrics endpoint exposure risks
+  * Add test coverage for SSRF URL validation
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
 debswarm (0.5.2-1) unstable; urgency=medium
 
   * Update libp2p to v0.46.0
