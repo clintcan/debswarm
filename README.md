@@ -14,20 +14,26 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
 
-### Performance (v0.2.0)
+### Performance
 - **Parallel Chunked Downloads** - Large packages split into 4MB chunks downloaded simultaneously from multiple peers
 - **Adaptive Timeouts** - Network timeouts automatically adjust based on observed performance
 - **Peer Scoring** - Peers ranked by latency, throughput, and reliability for optimal selection
 - **QUIC Transport** - Preferred over TCP for better NAT traversal and multiplexing
 - **Racing Strategy** - Small files race P2P vs mirror, first to finish wins
+- **Benchmark Testing** - Built-in performance testing with simulated peers
 
-### New in v0.3.0
+### Privacy & Access Control
 - **Bandwidth Limiting** - Control upload/download rates with `--max-upload-rate` and `--max-download-rate`
-- **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
 - **Private Swarms (PSK)** - Create isolated networks using pre-shared keys for corporate deployments
 - **Peer Allowlist** - Restrict connections to specific peer IDs
 - **Persistent Identity** - Stable peer IDs across restarts with Ed25519 key persistence
 - **Download Resume** - Infrastructure for resuming interrupted downloads (state persistence)
+
+### Security (v0.5.x)
+- **SSRF Protection** - Block requests to localhost, cloud metadata, private networks
+- **Response Size Limits** - Prevent memory exhaustion from malicious mirrors (500MB max)
+- **HTTP Security Headers** - CSP, X-Frame-Options, X-Content-Type-Options on dashboard
+- **Error Disclosure Prevention** - Hide internal errors from dashboard users
 
 ### Monitoring
 - **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
@@ -81,6 +87,7 @@ sudo apt install vim
 
 ```
 internal/
+├── benchmark/      # Performance testing with simulated peers
 ├── cache/          # Content-addressed SQLite-backed cache
 ├── config/         # TOML configuration management
 ├── dashboard/      # Real-time web dashboard
@@ -92,6 +99,7 @@ internal/
 ├── peers/          # Peer scoring and selection
 ├── proxy/          # HTTP proxy server for APT
 ├── ratelimit/      # Bandwidth limiting for uploads/downloads
+├── security/       # SSRF validation, URL allowlisting
 └── timeouts/       # Adaptive timeout management
 ```
 
@@ -181,6 +189,12 @@ debswarm identity regenerate            # Generate new identity (requires --forc
 # Configuration
 debswarm config show        # Display current config
 debswarm config init        # Create default config file
+
+# Benchmarking
+debswarm benchmark                      # Run default performance benchmark
+debswarm benchmark --scenario all       # Run all test scenarios
+debswarm benchmark --file-size 50MB     # Test with specific file size
+debswarm benchmark --peers 10           # Simulate 10 peers
 
 # Info
 debswarm peers              # Show peer information
@@ -394,8 +408,8 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o debswarm-arm6
 Releases are automated via GitHub Actions. To create a release:
 
 ```bash
-git tag -a v0.2.1 -m "Release v0.2.1"
-git push origin v0.2.1
+git tag -a v0.5.6 -m "Release v0.5.6"
+git push origin v0.5.6
 ```
 
 This triggers the release workflow which builds:

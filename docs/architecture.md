@@ -129,6 +129,27 @@ Adaptive timeout system:
 - **Size-Based**: Calculates timeouts based on file size
 - **Decay**: Gradually returns to base values
 
+### Security Validator (`internal/security/`)
+
+URL validation and SSRF protection:
+
+- **SSRF Blocking**: Prevents requests to localhost, cloud metadata (169.254.x.x), private networks
+- **URL Allowlisting**: Validates URLs match Debian/Ubuntu repository patterns
+- **Pattern Matching**: Requires `/dists/`, `/pool/`, `/debian/`, or `/ubuntu/` in URLs
+
+```go
+func IsAllowedMirrorURL(rawURL string) bool
+```
+
+### Benchmark (`internal/benchmark/`)
+
+Performance testing with simulated peers:
+
+- **Simulated Peers**: Configurable latency and throughput for testing
+- **Scenarios**: Small files, large files, varying peer counts
+- **Metrics**: Throughput (MB/s), duration, chunk distribution
+- **Reproducible**: Deterministic testing without real network
+
 ## Data Flow
 
 ### Seeding
@@ -274,3 +295,14 @@ Provider Key: /debswarm/pkg/{sha256_hash}
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
 ```
+
+### Security Hardening (v0.5.x)
+
+Additional security measures beyond content verification:
+
+- **SSRF Protection**: Block requests to localhost, cloud metadata, private networks
+- **Response Limits**: Mirror responses capped at 500MB to prevent memory exhaustion
+- **HTTP Headers**: Dashboard/metrics serve security headers (CSP, X-Frame-Options, X-Content-Type-Options)
+- **Error Disclosure**: Dashboard hides internal error details from users
+- **Identity Protection**: Ed25519 keys stored with 0600 permissions
+- **PSK Security**: Only fingerprints logged, never full keys

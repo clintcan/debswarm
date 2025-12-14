@@ -7,19 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.5.1] - 2025-12-14
+## [0.5.5] - 2025-12-14
+
+### Security
+- Added HTTP security headers to dashboard and metrics endpoints (X-Content-Type-Options, X-Frame-Options, Cache-Control, X-XSS-Protection)
+- Added Content-Security-Policy for dashboard
+- Added response size limit (500MB) to mirror fetcher to prevent memory exhaustion
+
+### Changed
+- Extracted SSRF validation to shared `internal/security` package
+- Removed redundant `min()` function (use Go 1.21+ built-in)
+
+## [0.5.3] - 2025-12-14
+
+### Security
+- **SSRF vulnerability fix**: Block requests to localhost, cloud metadata services, private networks
+- Validate URLs match Debian/Ubuntu repository patterns
+- Fixed information disclosure in dashboard error messages
+- Added documentation for metrics endpoint exposure risks
+
+### Added
+- Test coverage for SSRF URL validation
+
+## [0.5.2] - 2025-12-14
 
 ### Changed
 - Updated libp2p to v0.46.0
 - Updated go-sqlite3 to v1.14.32
-- Updated golang.org/x/sync to v0.19.0
-- Updated golang.org/x/time to v0.14.0
-- Updated quic-go to v0.57.1 (transitive)
+- Fixed debian cross-compilation for arm64
+- Made version dynamic in debian/rules
 
-## [0.5.0] - 2025-12-14
+## [0.5.1] - 2025-12-14
 
 ### Changed
-- **Go 1.24 required**: Updated minimum Go version from 1.22 to 1.24.6
 - Updated libp2p to v0.45.0 and kad-dht to v0.36.0
 - Updated cobra to v1.10.2
 - Updated GoReleaser config to v2 format
@@ -29,8 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Infrastructure
 - CI now uses Go 1.24.6
-- Added `GOTOOLCHAIN=auto` to CI workflows
-- GoReleaser config updated to v2 with `mode: replace` for re-releases
+
+## [0.5.0] - 2025-12-14
+
+### Added
+- **Benchmark command**: New `debswarm benchmark` command with simulated peers for performance testing
+- New `internal/benchmark` package for reproducible download performance testing
+
+### Changed
+- **Go 1.24 required**: Updated minimum Go version from 1.22 to 1.24.6
+
+### Fixed
+- Fixed race condition in cache reader tracking (TOCTOU bug)
+- Fixed goroutine leak on chunk download failure
+- Fixed blacklist flag inconsistency after expiration
+- Fixed stream deadline error handling in P2P transfers
+- Improved error context in download retry loops
+- Added context propagation to rate limiter for proper cancellation
+- Added proper goroutine cleanup in announcement worker
 
 ## [0.4.0] - 2025-12-13
 
@@ -124,7 +160,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/clintcan/debswarm/compare/v0.5.3...v0.5.5
+[0.5.3]: https://github.com/clintcan/debswarm/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/clintcan/debswarm/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/clintcan/debswarm/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/clintcan/debswarm/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/clintcan/debswarm/compare/v0.3.0...v0.4.0

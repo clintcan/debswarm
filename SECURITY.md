@@ -4,8 +4,10 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
-| < 0.2   | :x:                |
+| 0.5.x   | :white_check_mark: |
+| 0.4.x   | :white_check_mark: |
+| 0.3.x   | :x:                |
+| < 0.3   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -53,6 +55,12 @@ debswarm is designed to maintain APT's existing security guarantees while adding
 
 - **Hash Verification**: All P2P downloads verified against SHA256
 - **Peer Blacklisting**: Peers serving bad data are automatically blacklisted
+- **SSRF Protection** (v0.5.3+): URL validation blocks localhost, cloud metadata (169.254.x.x), and private networks
+- **Response Limits** (v0.5.5+): Mirror responses capped at 500MB to prevent memory exhaustion
+- **HTTP Security Headers** (v0.5.5+): Dashboard/metrics serve X-Content-Type-Options, X-Frame-Options, Content-Security-Policy
+- **Error Disclosure Prevention** (v0.5.3+): Dashboard hides internal error details from users
+- **Identity Protection**: Ed25519 keys stored with 0600 permissions
+- **PSK Security**: Pre-shared keys never logged, only fingerprints displayed
 - **Sandboxing**: systemd service runs with restricted permissions:
   - `DynamicUser=yes`
   - `ProtectSystem=strict`
@@ -78,6 +86,8 @@ debswarm is designed to maintain APT's existing security guarantees while adding
 - DoS attacks against the local daemon
 - Attempts to exhaust disk space via cache
 - Network-level attacks on P2P connections
+- SSRF attempts via malicious repository configurations
+- Memory exhaustion via oversized mirror responses
 
 ### Out of Scope
 
