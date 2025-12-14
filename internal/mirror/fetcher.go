@@ -24,29 +24,36 @@ type Stats struct {
 
 // Fetcher handles downloading from HTTP mirrors
 type Fetcher struct {
-	client     *http.Client
-	stats      map[string]*Stats
-	statsMu    sync.RWMutex
-	logger     *zap.Logger
-	userAgent  string
-	maxRetries int
+	client          *http.Client
+	stats           map[string]*Stats
+	statsMu         sync.RWMutex
+	logger          *zap.Logger
+	userAgent       string
+	maxRetries      int
+	maxResponseSize int64
 }
 
 // Config holds mirror fetcher configuration
 type Config struct {
-	Timeout     time.Duration
-	MaxRetries  int
-	UserAgent   string
-	MaxIdleConn int
+	Timeout         time.Duration
+	MaxRetries      int
+	UserAgent       string
+	MaxIdleConn     int
+	MaxResponseSize int64 // Maximum response size in bytes (0 = default 500MB)
 }
+
+// DefaultMaxResponseSize is the default maximum response size (500MB)
+// This prevents memory exhaustion from malicious or misconfigured mirrors
+const DefaultMaxResponseSize = 500 * 1024 * 1024
 
 // DefaultConfig returns default configuration
 func DefaultConfig() *Config {
 	return &Config{
-		Timeout:     60 * time.Second,
-		MaxRetries:  3,
-		UserAgent:   "debswarm/1.0",
-		MaxIdleConn: 10,
+		Timeout:         60 * time.Second,
+		MaxRetries:      3,
+		UserAgent:       "debswarm/1.0",
+		MaxIdleConn:     10,
+		MaxResponseSize: DefaultMaxResponseSize,
 	}
 }
 
@@ -66,12 +73,18 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 		Timeout:   cfg.Timeout,
 	}
 
+	maxResponseSize := cfg.MaxResponseSize
+	if maxResponseSize <= 0 {
+		maxResponseSize = DefaultMaxResponseSize
+	}
+
 	return &Fetcher{
-		client:     client,
-		stats:      make(map[string]*Stats),
-		logger:     logger,
-		userAgent:  cfg.UserAgent,
-		maxRetries: cfg.MaxRetries,
+		client:          client,
+		stats:           make(map[string]*Stats),
+		logger:          logger,
+		userAgent:       cfg.UserAgent,
+		maxRetries:      cfg.MaxRetries,
+		maxResponseSize: maxResponseSize,
 	}
 }
 
@@ -115,12 +128,21 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 			continue
 		}
 
-		data, err := io.ReadAll(resp.Body)
+		// Limit response size to prevent memory exhaustion attacks
+		limitedReader := io.LimitReader(resp.Body, f.maxResponseSize+1)
+		data, err := io.ReadAll(limitedReader)
 		resp.Body.Close()
 		if err != nil {
 			lastErr = err
 			f.recordError(url)
 			continue
+		}
+
+		// Check if we hit the size limit
+		if int64(len(data)) > f.maxResponseSize {
+			lastErr = fmt.Errorf("response size exceeds maximum allowed (%d bytes)", f.maxResponseSize)
+			f.recordError(url)
+			return nil, lastErr
 		}
 
 		// Record success

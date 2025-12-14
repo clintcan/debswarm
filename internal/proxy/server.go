@@ -25,6 +25,7 @@ import (
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.uber.org/zap"
@@ -188,6 +189,7 @@ func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", s.metrics.Handler())
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		setSecurityHeaders(w)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
@@ -227,7 +229,17 @@ func (s *Server) startMetricsServer() {
 	}
 }
 
+// setSecurityHeaders adds security headers to HTTP responses
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
 	w.Header().Set("Content-Type", "application/json")
 
 	stats := s.GetStats()
@@ -506,52 +518,7 @@ func (s *Server) extractTargetURL(r *http.Request) string {
 // isAllowedMirrorURL validates that a URL is a legitimate Debian/Ubuntu mirror
 // This prevents SSRF attacks by blocking requests to internal services
 func isAllowedMirrorURL(url string) bool {
-	lower := strings.ToLower(url)
-
-	// Block obviously dangerous URLs
-	blockedHosts := []string{
-		"localhost",
-		"127.0.0.1",
-		"[::1]",
-		"0.0.0.0",
-		"169.254.",     // AWS metadata
-		"metadata.",    // Cloud metadata
-		"10.",          // Private networks
-		"172.16.",      // Private networks
-		"172.17.",
-		"172.18.",
-		"172.19.",
-		"172.20.",
-		"172.21.",
-		"172.22.",
-		"172.23.",
-		"172.24.",
-		"172.25.",
-		"172.26.",
-		"172.27.",
-		"172.28.",
-		"172.29.",
-		"172.30.",
-		"172.31.",
-		"192.168.",     // Private networks
-	}
-
-	for _, blocked := range blockedHosts {
-		if strings.Contains(lower, blocked) {
-			return false
-		}
-	}
-
-	// Must look like a package repository URL (contains pool/ or dists/)
-	// This is the pattern for Debian/Ubuntu mirrors
-	if !strings.Contains(lower, "/pool/") &&
-		!strings.Contains(lower, "/dists/") &&
-		!strings.Contains(lower, "/ubuntu/") &&
-		!strings.Contains(lower, "/debian/") {
-		return false
-	}
-
-	return true
+	return security.IsAllowedMirrorURL(url)
 }
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
@@ -995,11 +962,4 @@ func (s *Server) UpdateMetrics() {
 		s.metrics.ConnectedPeers.Set(float64(s.p2pNode.ConnectedPeers()))
 		s.metrics.RoutingTableSize.Set(float64(s.p2pNode.RoutingTableSize()))
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

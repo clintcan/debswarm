@@ -1,3 +1,15 @@
+debswarm (0.5.5-1) unstable; urgency=medium
+
+  * Security: Add HTTP security headers to dashboard and metrics endpoints
+    - X-Content-Type-Options, X-Frame-Options, Cache-Control, X-XSS-Protection
+    - Content-Security-Policy for dashboard
+  * Security: Add response size limit (500MB) to mirror fetcher
+    - Prevents memory exhaustion from malicious/misconfigured mirrors
+  * Refactor: Extract SSRF validation to shared internal/security package
+  * Cleanup: Remove redundant min() function (use Go 1.21+ built-in)
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
 debswarm (0.5.3-1) unstable; urgency=high
 
   * Security: Fix SSRF vulnerability in index URL fetching

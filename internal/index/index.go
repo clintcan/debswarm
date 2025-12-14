@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/debswarm/debswarm/internal/security"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
 )
@@ -416,39 +417,5 @@ func ExtractPathFromURL(url string) string {
 // isAllowedIndexURL validates that a URL is a legitimate Debian/Ubuntu repository
 // This prevents SSRF attacks by blocking requests to internal services
 func isAllowedIndexURL(url string) bool {
-	lower := strings.ToLower(url)
-
-	// Block dangerous URLs that could target internal services
-	blockedPatterns := []string{
-		"localhost",
-		"127.0.0.1",
-		"[::1]",
-		"0.0.0.0",
-		"169.254.",  // AWS/cloud metadata service
-		"metadata.", // Cloud metadata endpoints
-		"10.",       // Private network (RFC 1918)
-		"172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.",
-		"172.24.", "172.25.", "172.26.", "172.27.",
-		"172.28.", "172.29.", "172.30.", "172.31.", // Private network (RFC 1918)
-		"192.168.", // Private network (RFC 1918)
-		"fd00:",    // IPv6 unique local addresses
-		"fe80:",    // IPv6 link-local
-	}
-
-	for _, blocked := range blockedPatterns {
-		if strings.Contains(lower, blocked) {
-			return false
-		}
-	}
-
-	// Must look like a Debian/Ubuntu repository URL
-	// Package indices are found under /dists/ in standard repository layouts
-	if !strings.Contains(lower, "/dists/") &&
-		!strings.Contains(lower, "/ubuntu/") &&
-		!strings.Contains(lower, "/debian/") {
-		return false
-	}
-
-	return true
+	return security.IsAllowedMirrorURL(url)
 }

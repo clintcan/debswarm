@@ -154,7 +154,27 @@ func (d *Dashboard) Handler() http.Handler {
 	mux.HandleFunc("/", d.handleDashboard)
 	mux.HandleFunc("/api/stats", d.handleAPIStats)
 	mux.HandleFunc("/api/peers", d.handleAPIPeers)
-	return mux
+	return securityHeadersMiddleware(mux)
+}
+
+// securityHeadersMiddleware adds security headers to all responses
+func securityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Prevent MIME type sniffing
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// Prevent clickjacking
+		w.Header().Set("X-Frame-Options", "DENY")
+		// Disable caching for sensitive data
+		w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+		// XSS protection (legacy but still useful)
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		// Referrer policy
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		// Content Security Policy - restrict resource loading
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; script-src 'none'; img-src 'self' data:; frame-ancestors 'none'")
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (d *Dashboard) handleDashboard(w http.ResponseWriter, r *http.Request) {
