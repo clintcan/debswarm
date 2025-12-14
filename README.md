@@ -434,6 +434,9 @@ journalctl -u debswarm -f
 
 - [Technical Comparison](docs/comparison.md) - debswarm vs apt-p2p, DebTorrent, apt-cacher-ng
 - [Bootstrap Node Setup](docs/bootstrap-node.md) - Running a dedicated seeder/bootstrap node
+- [Cache Pre-warming](docs/cache-prewarming.md) - Pre-populate cache for your network
+- [Popular Packages](docs/popular-packages.md) - Pre-warm cache with commonly used packages
+- [debmirror Integration](docs/debmirror-integration.md) - Use local mirror with debswarm P2P
 
 ## Contributing
 
