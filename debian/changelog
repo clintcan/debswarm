@@ -1,3 +1,14 @@
+debswarm (0.5.6-1) unstable; urgency=medium
+
+  * Fix shutdown hang from context leak in DHT announcement worker
+    - Announcements now properly terminate on server shutdown
+  * Fix goroutine leak in DHT provider discovery
+    - Channel is now drained when breaking early from provider search
+  * Add comprehensive test coverage for cache, peers, and downloader packages
+    - 48 new tests with race detection
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
 debswarm (0.5.5-1) unstable; urgency=medium
 
   * Security: Add HTTP security headers to dashboard and metrics endpoints
