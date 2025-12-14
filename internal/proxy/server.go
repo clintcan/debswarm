@@ -61,8 +61,10 @@ type Server struct {
 	metricsBind    string
 
 	// Announcement worker pool (bounded)
-	announceChan chan string
-	announceDone chan struct{}
+	announceChan   chan string
+	announceDone   chan struct{}
+	announceCtx    context.Context
+	announceCancel context.CancelFunc
 
 	// Dashboard
 	dashboard    *dashboard.Dashboard
@@ -148,6 +150,9 @@ func NewServer(
 		announceChan:   make(chan string, 100), // Bounded buffer
 		announceDone:   make(chan struct{}),
 	}
+
+	// Create context for announcement worker that will be canceled on shutdown
+	s.announceCtx, s.announceCancel = context.WithCancel(context.Background())
 
 	// Start announcement worker (bounded goroutines)
 	go s.announcementWorker()
@@ -279,6 +284,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // Shutdown gracefully shuts down the server
 func (s *Server) Shutdown(ctx context.Context) error {
+	// Cancel announcement context to stop in-flight announcements
+	s.announceCancel()
+
 	// Stop accepting new announcements and wait for pending ones
 	close(s.announceChan)
 	select {
@@ -799,6 +807,13 @@ func (s *Server) announcementWorker() {
 	var wg sync.WaitGroup
 
 	for hash := range s.announceChan {
+		// Check if we're shutting down before processing
+		select {
+		case <-s.announceCtx.Done():
+			continue
+		default:
+		}
+
 		sem <- struct{}{} // Acquire semaphore
 		wg.Add(1)
 		go func(h string) {
@@ -806,10 +821,14 @@ func (s *Server) announcementWorker() {
 				<-sem // Release semaphore
 				wg.Done()
 			}()
-			ctx, cancel := context.WithTimeout(context.Background(), announceTimeout)
+			// Use server's announce context as parent so announcements stop on shutdown
+			ctx, cancel := context.WithTimeout(s.announceCtx, announceTimeout)
 			defer cancel()
 			if err := s.p2pNode.Provide(ctx, h); err != nil {
-				s.logger.Debug("Failed to announce", zap.Error(err))
+				// Don't log context canceled errors during shutdown
+				if s.announceCtx.Err() == nil {
+					s.logger.Debug("Failed to announce", zap.Error(err))
+				}
 			}
 		}(hash)
 	}

@@ -434,6 +434,11 @@ func (n *Node) FindProviders(ctx context.Context, sha256Hash string, limit int) 
 		}
 		providers = append(providers, p)
 		if len(providers) >= limit {
+			// Drain remaining channel entries in background to prevent goroutine leaks
+			go func() {
+				for range peerChan {
+				}
+			}()
 			break
 		}
 	}
