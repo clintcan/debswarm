@@ -1,6 +1,7 @@
 package peers
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -430,5 +431,289 @@ func TestSelectBestMoreThanAvailable(t *testing.T) {
 	result := s.SelectBest(candidates, 10)
 	if len(result) != 1 {
 		t.Errorf("Expected 1 peer, got %d", len(result))
+	}
+}
+
+func TestConcurrentRecordSuccess(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("peer1")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.RecordSuccess(peerID, 1024, 50.0, 1024*1024)
+		}()
+	}
+	wg.Wait()
+
+	stats := s.GetStats(peerID)
+	if stats.TotalRequests != 100 {
+		t.Errorf("Expected 100 requests, got %d", stats.TotalRequests)
+	}
+	if stats.SuccessCount != 100 {
+		t.Errorf("Expected 100 successes, got %d", stats.SuccessCount)
+	}
+}
+
+func TestConcurrentMixedOperations(t *testing.T) {
+	s := NewScorer()
+
+	var wg sync.WaitGroup
+	peers := make([]peer.ID, 10)
+	for i := 0; i < 10; i++ {
+		peers[i] = testPeerID(string(rune('a' + i)))
+	}
+
+	// Concurrent successes, failures, blacklists, and reads
+	for i := 0; i < 50; i++ {
+		wg.Add(4)
+		go func(idx int) {
+			defer wg.Done()
+			s.RecordSuccess(peers[idx%10], 1024, 50.0, 1024*1024)
+		}(i)
+		go func(idx int) {
+			defer wg.Done()
+			s.RecordFailure(peers[idx%10], "test error")
+		}(i)
+		go func(idx int) {
+			defer wg.Done()
+			_ = s.GetScore(peers[idx%10])
+		}(i)
+		go func(idx int) {
+			defer wg.Done()
+			_ = s.IsBlacklisted(peers[idx%10])
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify no data corruption
+	if s.PeerCount() != 10 {
+		t.Errorf("Expected 10 peers, got %d", s.PeerCount())
+	}
+}
+
+func TestConcurrentGetStats(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("peer1")
+
+	// Pre-populate with data
+	for i := 0; i < 10; i++ {
+		s.RecordSuccess(peerID, 1024, 50.0, 1024*1024)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			stats := s.GetStats(peerID)
+			if stats == nil {
+				t.Error("GetStats returned nil")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestEMAEdgeCases(t *testing.T) {
+	// Alpha = 0 (no change)
+	result := ema(100, 200, 0)
+	if result != 100 {
+		t.Errorf("ema with alpha=0 should return old value, got %f", result)
+	}
+
+	// Alpha = 1 (full replacement)
+	result = ema(100, 200, 1)
+	if result != 200 {
+		t.Errorf("ema with alpha=1 should return new value, got %f", result)
+	}
+
+	// Very small values
+	result = ema(0.001, 0.002, 0.5)
+	expected := 0.5*0.002 + 0.5*0.001
+	if result != expected {
+		t.Errorf("ema with small values: expected %f, got %f", expected, result)
+	}
+}
+
+func TestScoreClamping(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("peer1")
+
+	// Score should always be between 0 and 1
+	// Create conditions that might push score to extremes
+	for i := 0; i < 100; i++ {
+		s.RecordSuccess(peerID, 1024, 1.0, 100*1024*1024) // Very fast
+	}
+
+	score := s.GetScore(peerID)
+	if score < 0 || score > 1 {
+		t.Errorf("Score out of bounds: %f", score)
+	}
+}
+
+func TestSelectDiverseEdgeCases(t *testing.T) {
+	s := NewScorer()
+
+	// Single peer
+	peer1 := testPeerID("peer1")
+	s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+	s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+	s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+
+	candidates := []peer.AddrInfo{{ID: peer1}}
+	diverse := s.SelectDiverse(candidates, 5)
+	if len(diverse) != 1 {
+		t.Errorf("Expected 1 peer, got %d", len(diverse))
+	}
+
+	// Empty candidates
+	diverse = s.SelectDiverse(nil, 5)
+	if diverse != nil {
+		t.Error("Expected nil for nil candidates")
+	}
+
+	diverse = s.SelectDiverse([]peer.AddrInfo{}, 5)
+	if diverse != nil {
+		t.Error("Expected nil for empty candidates")
+	}
+}
+
+func TestSelectDiverseTwoPeers(t *testing.T) {
+	s := NewScorer()
+
+	peer1 := testPeerID("peer1")
+	peer2 := testPeerID("peer2")
+
+	for i := 0; i < 5; i++ {
+		s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+		s.RecordSuccess(peer2, 1024, 100.0, 512*1024) // Worse performance
+	}
+
+	candidates := []peer.AddrInfo{{ID: peer1}, {ID: peer2}}
+	diverse := s.SelectDiverse(candidates, 5)
+
+	if len(diverse) != 2 {
+		t.Errorf("Expected 2 peers, got %d", len(diverse))
+	}
+}
+
+func TestBlacklistMultipleTimes(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("peer1")
+
+	// Blacklist multiple times
+	s.Blacklist(peerID, "reason1", 1*time.Hour)
+	s.Blacklist(peerID, "reason2", 2*time.Hour)
+
+	stats := s.GetStats(peerID)
+	if stats.BlacklistReason != "reason2" {
+		t.Errorf("Expected 'reason2', got '%s'", stats.BlacklistReason)
+	}
+}
+
+func TestGetStatsUnknownPeer(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("unknown")
+
+	stats := s.GetStats(peerID)
+	if stats != nil {
+		t.Error("Expected nil for unknown peer")
+	}
+}
+
+func TestPeerCountAfterOperations(t *testing.T) {
+	s := NewScorer()
+
+	if s.PeerCount() != 0 {
+		t.Error("Initial peer count should be 0")
+	}
+
+	peer1 := testPeerID("peer1")
+	peer2 := testPeerID("peer2")
+
+	s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+	if s.PeerCount() != 1 {
+		t.Errorf("Expected 1 peer, got %d", s.PeerCount())
+	}
+
+	s.RecordFailure(peer2, "error")
+	if s.PeerCount() != 2 {
+		t.Errorf("Expected 2 peers, got %d", s.PeerCount())
+	}
+
+	// Recording more for existing peer shouldn't increase count
+	s.RecordSuccess(peer1, 1024, 50.0, 1024*1024)
+	if s.PeerCount() != 2 {
+		t.Errorf("Expected 2 peers (no increase), got %d", s.PeerCount())
+	}
+}
+
+func TestRecordUploadCreatesEntry(t *testing.T) {
+	s := NewScorer()
+	peerID := testPeerID("peer1")
+
+	// RecordUpload should create peer entry if doesn't exist
+	s.RecordUpload(peerID, 1024)
+
+	if s.PeerCount() != 1 {
+		t.Errorf("Expected 1 peer after RecordUpload, got %d", s.PeerCount())
+	}
+
+	stats := s.GetStats(peerID)
+	if stats == nil {
+		t.Fatal("GetStats returned nil")
+	}
+	if stats.BytesUploaded != 1024 {
+		t.Errorf("Expected 1024 bytes uploaded, got %d", stats.BytesUploaded)
+	}
+}
+
+func TestScoreCategoryBoundaries(t *testing.T) {
+	// Test exact boundary values
+	tests := []struct {
+		score    float64
+		category string
+	}{
+		{0.8, "excellent"},  // Exactly at boundary
+		{0.79, "good"},      // Just below
+		{0.6, "good"},       // Exactly at boundary
+		{0.59, "fair"},      // Just below
+		{0.4, "fair"},       // Exactly at boundary
+		{0.39, "poor"},      // Just below
+		{0.2, "poor"},       // Exactly at boundary
+		{0.19, "bad"},       // Just below
+	}
+
+	for _, tt := range tests {
+		got := ScoreCategory(tt.score)
+		if got != tt.category {
+			t.Errorf("ScoreCategory(%f) = %s, want %s", tt.score, got, tt.category)
+		}
+	}
+}
+
+func TestGetAllStatsCopy(t *testing.T) {
+	s := NewScorer()
+	peer1 := testPeerID("peer1")
+
+	s.RecordSuccess(peer1, 1024, 50.0, 1*1024*1024)
+
+	allStats := s.GetAllStats()
+	if len(allStats) != 1 {
+		t.Fatalf("Expected 1 stat, got %d", len(allStats))
+	}
+
+	// Modify returned stats
+	for _, stat := range allStats {
+		stat.BytesDownloaded = 999999
+	}
+
+	// Verify original is unchanged
+	original := s.GetStats(peer1)
+	if original.BytesDownloaded == 999999 {
+		t.Error("GetAllStats should return copies, not references")
 	}
 }

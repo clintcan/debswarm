@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -422,5 +423,274 @@ func TestPutReplacesExisting(t *testing.T) {
 	// Access count is incremented by Get too, so it should be >= 2
 	if pkg.AccessCount < 2 {
 		t.Errorf("Expected access count >= 2, got %d", pkg.AccessCount)
+	}
+}
+
+func TestPartialDir(t *testing.T) {
+	c, tmpDir := testCache(t)
+
+	hash := "abc123def456"
+	expected := filepath.Join(tmpDir, "packages", "partial", hash)
+	got := c.PartialDir(hash)
+
+	if got != expected {
+		t.Errorf("PartialDir = %q, want %q", got, expected)
+	}
+}
+
+func TestEnsurePartialDir(t *testing.T) {
+	c, tmpDir := testCache(t)
+
+	hash := "abc123def456"
+	err := c.EnsurePartialDir(hash)
+	if err != nil {
+		t.Fatalf("EnsurePartialDir failed: %v", err)
+	}
+
+	// Verify directory exists
+	partialDir := filepath.Join(tmpDir, "packages", "partial", hash)
+	info, err := os.Stat(partialDir)
+	if err != nil {
+		t.Fatalf("Directory not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Error("PartialDir should be a directory")
+	}
+
+	// Calling again should not error (idempotent)
+	err = c.EnsurePartialDir(hash)
+	if err != nil {
+		t.Errorf("Second EnsurePartialDir failed: %v", err)
+	}
+}
+
+func TestCleanPartialDir(t *testing.T) {
+	c, tmpDir := testCache(t)
+
+	hash := "abc123def456"
+
+	// Create the partial directory with some content
+	partialDir := filepath.Join(tmpDir, "packages", "partial", hash)
+	if err := os.MkdirAll(partialDir, 0755); err != nil {
+		t.Fatalf("Failed to create partial dir: %v", err)
+	}
+
+	// Create a file inside
+	testFile := filepath.Join(partialDir, "chunk_0")
+	if err := os.WriteFile(testFile, []byte("chunk data"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	// Clean the directory
+	err := c.CleanPartialDir(hash)
+	if err != nil {
+		t.Fatalf("CleanPartialDir failed: %v", err)
+	}
+
+	// Verify directory is gone
+	if _, err := os.Stat(partialDir); !os.IsNotExist(err) {
+		t.Error("Partial directory should be removed")
+	}
+
+	// Cleaning non-existent dir should not error
+	err = c.CleanPartialDir("nonexistent")
+	if err != nil {
+		t.Errorf("CleanPartialDir on non-existent dir failed: %v", err)
+	}
+}
+
+func TestBasePath(t *testing.T) {
+	c, tmpDir := testCache(t)
+
+	if c.BasePath() != tmpDir {
+		t.Errorf("BasePath = %q, want %q", c.BasePath(), tmpDir)
+	}
+}
+
+func TestGetDB(t *testing.T) {
+	c, _ := testCache(t)
+
+	db := c.GetDB()
+	if db == nil {
+		t.Fatal("GetDB returned nil")
+	}
+
+	// Verify we can query the database
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM packages").Scan(&count)
+	if err != nil {
+		t.Errorf("Query on GetDB failed: %v", err)
+	}
+}
+
+func TestCachePersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create cache and add package
+	c1, err := New(tmpDir, 100*1024*1024, testLogger())
+	if err != nil {
+		t.Fatalf("Failed to create cache: %v", err)
+	}
+
+	data := []byte("persistent package")
+	hash := hashData(data)
+
+	if err := c1.Put(bytes.NewReader(data), hash, "persist.deb"); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	c1.Close()
+
+	// Reopen cache and verify package is still there
+	c2, err := New(tmpDir, 100*1024*1024, testLogger())
+	if err != nil {
+		t.Fatalf("Failed to reopen cache: %v", err)
+	}
+	defer c2.Close()
+
+	if !c2.Has(hash) {
+		t.Error("Package should exist after cache reopen")
+	}
+
+	reader, pkg, err := c2.Get(hash)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	defer reader.Close()
+
+	if pkg.Filename != "persist.deb" {
+		t.Errorf("Filename = %q, want persist.deb", pkg.Filename)
+	}
+
+	// Verify Size is calculated on reopen
+	if c2.Size() != int64(len(data)) {
+		t.Errorf("Size = %d, want %d", c2.Size(), len(data))
+	}
+}
+
+func TestConcurrentPut(t *testing.T) {
+	c, _ := testCache(t)
+
+	var wg sync.WaitGroup
+	errors := make(chan error, 10)
+
+	// Concurrent puts of different packages
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			data := []byte(fmt.Sprintf("package content %d", n))
+			hash := hashData(data)
+			err := c.Put(bytes.NewReader(data), hash, fmt.Sprintf("pkg%d.deb", n))
+			if err != nil {
+				errors <- fmt.Errorf("put %d failed: %w", n, err)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	for err := range errors {
+		t.Error(err)
+	}
+
+	// Verify all packages were stored
+	if c.Count() != 10 {
+		t.Errorf("Count = %d, want 10", c.Count())
+	}
+}
+
+func TestHasNonexistent(t *testing.T) {
+	c, _ := testCache(t)
+
+	if c.Has("0000000000000000000000000000000000000000000000000000000000000000") {
+		t.Error("Has should return false for nonexistent hash")
+	}
+}
+
+func TestListEmpty(t *testing.T) {
+	c, _ := testCache(t)
+
+	list, err := c.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+
+	if len(list) != 0 {
+		t.Errorf("Expected empty list, got %d items", len(list))
+	}
+}
+
+func TestGetUnannouncedEmpty(t *testing.T) {
+	c, _ := testCache(t)
+
+	unannounced, err := c.GetUnannounced()
+	if err != nil {
+		t.Fatalf("GetUnannounced failed: %v", err)
+	}
+
+	if len(unannounced) != 0 {
+		t.Errorf("Expected empty unannounced list, got %d items", len(unannounced))
+	}
+}
+
+func TestDeleteNonexistent(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Deleting nonexistent should not error
+	err := c.Delete("0000000000000000000000000000000000000000000000000000000000000000")
+	if err != nil {
+		t.Errorf("Delete nonexistent should not error, got: %v", err)
+	}
+}
+
+func TestMultipleReadersSimultaneous(t *testing.T) {
+	c, _ := testCache(t)
+
+	data := []byte("shared package content")
+	hash := hashData(data)
+
+	err := c.Put(bytes.NewReader(data), hash, "shared.deb")
+	if err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Open multiple readers
+	readers := make([]io.ReadCloser, 5)
+	for i := 0; i < 5; i++ {
+		reader, _, err := c.Get(hash)
+		if err != nil {
+			t.Fatalf("Get %d failed: %v", i, err)
+		}
+		readers[i] = reader
+	}
+
+	// All readers should work
+	for i, reader := range readers {
+		content, err := io.ReadAll(reader)
+		if err != nil {
+			t.Errorf("Read %d failed: %v", i, err)
+		}
+		if !bytes.Equal(content, data) {
+			t.Errorf("Reader %d got wrong content", i)
+		}
+	}
+
+	// Delete should fail while readers are open
+	err = c.Delete(hash)
+	if err != ErrFileInUse {
+		t.Errorf("Delete should fail with ErrFileInUse while readers open, got: %v", err)
+	}
+
+	// Close all readers
+	for _, reader := range readers {
+		reader.Close()
+	}
+
+	// Now delete should succeed
+	err = c.Delete(hash)
+	if err != nil {
+		t.Errorf("Delete after closing readers failed: %v", err)
 	}
 }
