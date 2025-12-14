@@ -1,0 +1,342 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+	"time"
+)
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := DefaultConfig()
+
+	if cfg == nil {
+		t.Fatal("DefaultConfig returned nil")
+	}
+
+	// Check network defaults
+	if cfg.Network.ListenPort != 4001 {
+		t.Errorf("ListenPort = %d, want 4001", cfg.Network.ListenPort)
+	}
+	if cfg.Network.ProxyPort != 9977 {
+		t.Errorf("ProxyPort = %d, want 9977", cfg.Network.ProxyPort)
+	}
+	if cfg.Network.MaxConnections != 100 {
+		t.Errorf("MaxConnections = %d, want 100", cfg.Network.MaxConnections)
+	}
+	if len(cfg.Network.BootstrapPeers) != 4 {
+		t.Errorf("BootstrapPeers count = %d, want 4", len(cfg.Network.BootstrapPeers))
+	}
+
+	// Check cache defaults
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("Cache.MaxSize = %s, want 10GB", cfg.Cache.MaxSize)
+	}
+
+	// Check transfer defaults
+	if cfg.Transfer.MaxConcurrentUploads != 20 {
+		t.Errorf("MaxConcurrentUploads = %d, want 20", cfg.Transfer.MaxConcurrentUploads)
+	}
+
+	// Check DHT defaults
+	if cfg.DHT.ProviderTTL != 24*time.Hour {
+		t.Errorf("ProviderTTL = %v, want 24h", cfg.DHT.ProviderTTL)
+	}
+
+	// Check privacy defaults
+	if !cfg.Privacy.EnableMDNS {
+		t.Error("EnableMDNS should be true by default")
+	}
+	if !cfg.Privacy.AnnouncePackages {
+		t.Error("AnnouncePackages should be true by default")
+	}
+
+	// Check logging defaults
+	if cfg.Logging.Level != "info" {
+		t.Errorf("Logging.Level = %s, want info", cfg.Logging.Level)
+	}
+}
+
+func TestLoad_NonexistentFile(t *testing.T) {
+	cfg, err := Load("/nonexistent/path/config.toml")
+	if err != nil {
+		t.Fatalf("Load should not error for nonexistent file: %v", err)
+	}
+
+	// Should return defaults
+	if cfg.Network.ListenPort != 4001 {
+		t.Error("Should return default config for nonexistent file")
+	}
+}
+
+func TestLoad_ValidConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	configContent := `
+[network]
+listen_port = 5001
+proxy_port = 8080
+max_connections = 50
+
+[cache]
+max_size = "5GB"
+
+[logging]
+level = "debug"
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if cfg.Network.ListenPort != 5001 {
+		t.Errorf("ListenPort = %d, want 5001", cfg.Network.ListenPort)
+	}
+	if cfg.Network.ProxyPort != 8080 {
+		t.Errorf("ProxyPort = %d, want 8080", cfg.Network.ProxyPort)
+	}
+	if cfg.Cache.MaxSize != "5GB" {
+		t.Errorf("MaxSize = %s, want 5GB", cfg.Cache.MaxSize)
+	}
+	if cfg.Logging.Level != "debug" {
+		t.Errorf("Level = %s, want debug", cfg.Logging.Level)
+	}
+}
+
+func TestLoad_InvalidTOML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	if err := os.WriteFile(configPath, []byte("invalid toml [[["), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Error("Load should fail with invalid TOML")
+	}
+}
+
+func TestConfig_Save(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "subdir", "config.toml")
+
+	cfg := DefaultConfig()
+	cfg.Network.ListenPort = 6001
+	cfg.Logging.Level = "warn"
+
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Verify file exists
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		t.Fatal("Save did not create file")
+	}
+
+	// Load it back
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if loaded.Network.ListenPort != 6001 {
+		t.Errorf("ListenPort = %d, want 6001", loaded.Network.ListenPort)
+	}
+	if loaded.Logging.Level != "warn" {
+		t.Errorf("Level = %s, want warn", loaded.Logging.Level)
+	}
+}
+
+func TestParseSize(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"0", 0},
+		{"100", 100},
+		{"1KB", 1024},
+		{"1K", 1024},
+		{"10KB", 10 * 1024},
+		{"1MB", 1024 * 1024},
+		{"1M", 1024 * 1024},
+		{"100MB", 100 * 1024 * 1024},
+		{"1GB", 1024 * 1024 * 1024},
+		{"1G", 1024 * 1024 * 1024},
+		{"10GB", 10 * 1024 * 1024 * 1024},
+		{"1TB", 1024 * 1024 * 1024 * 1024},
+		{"1T", 1024 * 1024 * 1024 * 1024},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			result, err := ParseSize(tc.input)
+			if err != nil {
+				t.Fatalf("ParseSize(%q) error: %v", tc.input, err)
+			}
+			if result != tc.expected {
+				t.Errorf("ParseSize(%q) = %d, want %d", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestParseRate(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"", 0},           // unlimited
+		{"0", 0},          // unlimited
+		{"unlimited", 0},  // unlimited
+		{"1MB/s", 1024 * 1024},
+		{"10MB/s", 10 * 1024 * 1024},
+		{"100KB/s", 100 * 1024},
+		{"1GB/s", 1024 * 1024 * 1024},
+		{"50MB", 50 * 1024 * 1024}, // without /s
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			result, err := ParseRate(tc.input)
+			if err != nil {
+				t.Fatalf("ParseRate(%q) error: %v", tc.input, err)
+			}
+			if result != tc.expected {
+				t.Errorf("ParseRate(%q) = %d, want %d", tc.input, result, tc.expected)
+			}
+		})
+	}
+}
+
+func TestLoadWithWarnings_NoWarnings(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Config without PSK - no warnings expected
+	configContent := `
+[network]
+listen_port = 4001
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	cfg, warnings, err := LoadWithWarnings(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithWarnings failed: %v", err)
+	}
+
+	if cfg == nil {
+		t.Fatal("Config should not be nil")
+	}
+
+	if len(warnings) != 0 {
+		t.Errorf("Expected no warnings, got %d", len(warnings))
+	}
+}
+
+func TestLoadWithWarnings_WorldReadablePSK(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Permission checks not applicable on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Config with inline PSK
+	configContent := `
+[privacy]
+psk = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+`
+	// Write with world-readable permissions
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	_, warnings, err := LoadWithWarnings(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithWarnings failed: %v", err)
+	}
+
+	if len(warnings) == 0 {
+		t.Error("Expected warning for world-readable config with PSK")
+	}
+}
+
+func TestLoadWithWarnings_SecurePSK(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Permission checks not applicable on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Config with inline PSK
+	configContent := `
+[privacy]
+psk = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+`
+	// Write with secure permissions
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	_, warnings, err := LoadWithWarnings(configPath)
+	if err != nil {
+		t.Fatalf("LoadWithWarnings failed: %v", err)
+	}
+
+	if len(warnings) != 0 {
+		t.Errorf("Expected no warnings for secure config, got: %v", warnings)
+	}
+}
+
+func TestLoad_PartialConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Only override some values
+	configContent := `
+[network]
+listen_port = 7001
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to write test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	// Overridden value
+	if cfg.Network.ListenPort != 7001 {
+		t.Errorf("ListenPort = %d, want 7001", cfg.Network.ListenPort)
+	}
+
+	// Default values should still be present
+	if cfg.Network.ProxyPort != 9977 {
+		t.Errorf("ProxyPort = %d, want 9977 (default)", cfg.Network.ProxyPort)
+	}
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("Cache.MaxSize = %s, want 10GB (default)", cfg.Cache.MaxSize)
+	}
+}
+
+func TestParseSize_EdgeCases(t *testing.T) {
+	// Test with just numbers (no unit)
+	size, err := ParseSize("12345")
+	if err != nil {
+		t.Fatalf("ParseSize(\"12345\") error: %v", err)
+	}
+	if size != 12345 {
+		t.Errorf("ParseSize(\"12345\") = %d, want 12345", size)
+	}
+}
