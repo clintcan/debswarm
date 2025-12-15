@@ -3,6 +3,10 @@ package index
 import (
 	"bytes"
 	"compress/gzip"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -417,5 +421,196 @@ func TestIsAllowedIndexURL(t *testing.T) {
 		if result != tt.allowed {
 			t.Errorf("isAllowedIndexURL(%q) = %v, want %v", tt.url, result, tt.allowed)
 		}
+	}
+}
+
+func TestLoadFromFile(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a temporary plain Packages file
+	tmpFile := filepath.Join(t.TempDir(), "Packages")
+	err := os.WriteFile(tmpFile, []byte(samplePackagesContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	err = idx.LoadFromFile(tmpFile)
+	if err != nil {
+		t.Fatalf("LoadFromFile failed: %v", err)
+	}
+
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages, got %d", idx.Count())
+	}
+}
+
+func TestLoadFromFile_Gzip(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a gzip compressed file
+	tmpFile := filepath.Join(t.TempDir(), "Packages.gz")
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	gzWriter := gzip.NewWriter(f)
+	_, err = gzWriter.Write([]byte(samplePackagesContent))
+	if err != nil {
+		f.Close()
+		t.Fatalf("Failed to write gzip: %v", err)
+	}
+	gzWriter.Close()
+	f.Close()
+
+	err = idx.LoadFromFile(tmpFile)
+	if err != nil {
+		t.Fatalf("LoadFromFile with gzip failed: %v", err)
+	}
+
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages, got %d", idx.Count())
+	}
+}
+
+func TestLoadFromFile_NotFound(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	err := idx.LoadFromFile("/nonexistent/path/Packages")
+	if err == nil {
+		t.Error("Expected error for nonexistent file")
+	}
+}
+
+func TestLoadFromFile_InvalidGzip(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a file with .gz extension but invalid gzip content
+	tmpFile := filepath.Join(t.TempDir(), "Packages.gz")
+	err := os.WriteFile(tmpFile, []byte("not gzip content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	err = idx.LoadFromFile(tmpFile)
+	if err == nil {
+		t.Error("Expected error for invalid gzip file")
+	}
+}
+
+func TestLoadFromURL(t *testing.T) {
+	// Create a test server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(samplePackagesContent))
+	}))
+	defer server.Close()
+
+	idx := New(t.TempDir(), testLogger())
+
+	// LoadFromURL will reject localhost URLs for security
+	// So we test the error path
+	err := idx.LoadFromURL(server.URL + "/dists/test/Packages")
+	if err == nil {
+		t.Error("Expected error for localhost URL (SSRF protection)")
+	}
+}
+
+func TestLoadFromURL_BlockedURL(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Test SSRF protection
+	err := idx.LoadFromURL("http://127.0.0.1/Packages")
+	if err == nil {
+		t.Error("Expected error for blocked URL")
+	}
+
+	err = idx.LoadFromURL("http://169.254.169.254/latest/meta-data/")
+	if err == nil {
+		t.Error("Expected error for AWS metadata URL")
+	}
+}
+
+func TestGetByURLPath_NotFound(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
+
+	// Nonexistent package path - GetByURLPath has fallback to GetByPath
+	pkg := idx.GetByURLPath("http://wrong.repo.com/pool/main/x/nonexistent/nonexistent.deb")
+	if pkg != nil {
+		t.Error("Expected nil for nonexistent package path")
+	}
+}
+
+func TestGetByPathSuffix_NotFound(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
+
+	pkg := idx.GetByPathSuffix("nonexistent/package.deb")
+	if pkg != nil {
+		t.Error("Expected nil for nonexistent suffix")
+	}
+}
+
+func TestClearRepo_NonexistentRepo(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
+
+	// Clear a repo that doesn't exist - should not error
+	idx.ClearRepo("nonexistent.repo.com")
+
+	// Original packages should still be there
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages after clearing nonexistent repo, got %d", idx.Count())
+	}
+}
+
+func TestExtractRepoFromURL_EdgeCases(t *testing.T) {
+	tests := []struct {
+		url      string
+		expected string
+	}{
+		{"", ""},
+		{"invalid-url", "invalid-url"}, // No "/" means return input as-is
+		{"http://example.com", "example.com"},
+		{"http://example.com/", "example.com"},
+		{"http://example.com/path", "example.com"},
+	}
+
+	for _, tt := range tests {
+		result := ExtractRepoFromURL(tt.url)
+		if result != tt.expected {
+			t.Errorf("ExtractRepoFromURL(%q) = %q, want %q", tt.url, result, tt.expected)
+		}
+	}
+}
+
+func TestLoadFromData_InvalidXZ(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Try to load invalid XZ data
+	err := idx.LoadFromData([]byte("not xz content"), "http://deb.debian.org/debian/dists/test/Packages.xz")
+	if err == nil {
+		t.Error("Expected error for invalid xz data")
+	}
+}
+
+func TestGetByPath_EmptyIndex(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	pkg := idx.GetByPath("pool/main/v/vim/vim.deb")
+	if pkg != nil {
+		t.Error("Expected nil for empty index")
+	}
+}
+
+func TestGetByRepoAndPath_EmptyRepo(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
+
+	// Try to get from empty repo string
+	pkg := idx.GetByRepoAndPath("", "pool/main/v/vim/vim.deb")
+	if pkg != nil {
+		t.Error("Expected nil for empty repo")
 	}
 }
