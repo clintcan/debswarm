@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-12-15
+
+### Added
+- **Download resume support**: Interrupted chunked downloads can now resume from where they left off
+  - Chunks persisted to disk during download
+  - Download state tracked in SQLite database
+  - Automatic recovery on daemon restart
+- **HTTP Range request support**: Mirror fetcher now supports byte-range requests for partial content
+- **Configurable chunked download threshold**: `MinChunkedSize` can be configured for testing
+
+### Changed
+- Improved test coverage across all packages (73-100% coverage)
+- Enhanced CI/CD workflows with better caching and security scanning
+
+### Security
+- Fixed unhandled errors in cleanup paths (gosec G104)
+- Restricted directory permissions from 0755 to 0750
+- Restricted file permissions from 0644 to 0600 for sensitive files
+- Proper error handling for Close() and Remove() operations
+
+## [0.5.6] - 2025-12-15
+
+### Fixed
+- Fixed DHT lifecycle issues: context leak and channel drain
+- Improved DHT shutdown handling
+
+### Changed
+- Added comprehensive test coverage for cache, peers, and downloader packages
+- Updated documentation for v0.5.x releases
+
 ## [0.5.5] - 2025-12-14
 
 ### Security
@@ -160,7 +190,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/clintcan/debswarm/compare/v0.5.6...v0.6.0
+[0.5.6]: https://github.com/clintcan/debswarm/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/clintcan/debswarm/compare/v0.5.3...v0.5.5
 [0.5.3]: https://github.com/clintcan/debswarm/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/clintcan/debswarm/compare/v0.5.1...v0.5.2
