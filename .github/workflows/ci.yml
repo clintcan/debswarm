@@ -148,10 +148,13 @@ jobs:
           DEB_BUILD_OPTIONS: nocheck
         run: dpkg-buildpackage -b -us -uc -d
 
-      - name: List built packages
-        run: ls -la ../*.deb
+      - name: Collect built packages
+        run: |
+          mkdir -p dist
+          cp ../*.deb dist/
+          ls -la dist/
 
       - uses: actions/upload-artifact@v4
         with:
           name: debswarm-deb-amd64
-          path: ../*.deb
+          path: dist/*.deb
