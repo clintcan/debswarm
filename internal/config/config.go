@@ -214,6 +214,12 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// Systemd environment variables always take precedence over config file
+	// This ensures CacheDirectory=/StateDirectory= work correctly
+	if cacheDir := os.Getenv("CACHE_DIRECTORY"); cacheDir != "" {
+		cfg.Cache.Path = cacheDir
+	}
+
 	return cfg, nil
 }
 
