@@ -49,8 +49,34 @@ type TransferConfig struct {
 
 // DHTConfig holds DHT-related settings
 type DHTConfig struct {
-	ProviderTTL      time.Duration `toml:"provider_ttl"`
-	AnnounceInterval time.Duration `toml:"announce_interval"`
+	ProviderTTL      string `toml:"provider_ttl"`
+	AnnounceInterval string `toml:"announce_interval"`
+}
+
+// ProviderTTLDuration returns the parsed provider TTL duration.
+// Returns 24h default if parsing fails or value is empty.
+func (c *DHTConfig) ProviderTTLDuration() time.Duration {
+	if c.ProviderTTL == "" {
+		return 24 * time.Hour
+	}
+	d, err := time.ParseDuration(c.ProviderTTL)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return d
+}
+
+// AnnounceIntervalDuration returns the parsed announce interval duration.
+// Returns 12h default if parsing fails or value is empty.
+func (c *DHTConfig) AnnounceIntervalDuration() time.Duration {
+	if c.AnnounceInterval == "" {
+		return 12 * time.Hour
+	}
+	d, err := time.ParseDuration(c.AnnounceInterval)
+	if err != nil {
+		return 12 * time.Hour
+	}
+	return d
 }
 
 // PrivacyConfig holds privacy-related settings
@@ -145,8 +171,8 @@ func DefaultConfig() *Config {
 			MaxConcurrentPeerDownloads: 10,
 		},
 		DHT: DHTConfig{
-			ProviderTTL:      24 * time.Hour,
-			AnnounceInterval: 12 * time.Hour,
+			ProviderTTL:      "24h",
+			AnnounceInterval: "12h",
 		},
 		Privacy: PrivacyConfig{
 			EnableMDNS:       true,

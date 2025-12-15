@@ -262,7 +262,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	proxyServer.SetDashboard(dash)
 
 	// Start periodic tasks
-	go runPeriodicTasks(ctx, proxyServer, pkgCache, p2pNode, m, logger, cfg.DHT.AnnounceInterval)
+	go runPeriodicTasks(ctx, proxyServer, pkgCache, p2pNode, m, logger, cfg.DHT.AnnounceIntervalDuration())
 
 	// Start proxy server in goroutine
 	errChan := make(chan error, 1)

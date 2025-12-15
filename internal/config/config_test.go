@@ -40,8 +40,8 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Check DHT defaults
-	if cfg.DHT.ProviderTTL != 24*time.Hour {
-		t.Errorf("ProviderTTL = %v, want 24h", cfg.DHT.ProviderTTL)
+	if cfg.DHT.ProviderTTLDuration() != 24*time.Hour {
+		t.Errorf("ProviderTTL = %v, want 24h", cfg.DHT.ProviderTTLDuration())
 	}
 
 	// Check privacy defaults
