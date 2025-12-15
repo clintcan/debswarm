@@ -20,8 +20,8 @@ type Metrics struct {
 	VerificationFailures *Counter
 
 	// Resume metrics
-	DownloadsResumed  *Counter
-	ChunksRecovered   *Counter
+	DownloadsResumed *Counter
+	ChunksRecovered  *Counter
 
 	// Error breakdown
 	Errors *CounterVec // labels: type (timeout, connection, verification)
@@ -31,12 +31,12 @@ type Metrics struct {
 	PeersLeft   *Counter
 
 	// Gauges
-	ConnectedPeers     *Gauge
-	RoutingTableSize   *Gauge
-	CacheSize          *Gauge
-	CacheCount         *Gauge
-	ActiveDownloads    *Gauge
-	ActiveUploads      *Gauge
+	ConnectedPeers   *Gauge
+	RoutingTableSize *Gauge
+	CacheSize        *Gauge
+	CacheCount       *Gauge
+	ActiveDownloads  *Gauge
+	ActiveUploads    *Gauge
 
 	// Bandwidth rates (bytes per second, updated periodically)
 	UploadRate   *Gauge

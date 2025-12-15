@@ -677,14 +677,14 @@ func TestScoreCategoryBoundaries(t *testing.T) {
 		score    float64
 		category string
 	}{
-		{0.8, "excellent"},  // Exactly at boundary
-		{0.79, "good"},      // Just below
-		{0.6, "good"},       // Exactly at boundary
-		{0.59, "fair"},      // Just below
-		{0.4, "fair"},       // Exactly at boundary
-		{0.39, "poor"},      // Just below
-		{0.2, "poor"},       // Exactly at boundary
-		{0.19, "bad"},       // Just below
+		{0.8, "excellent"}, // Exactly at boundary
+		{0.79, "good"},     // Just below
+		{0.6, "good"},      // Exactly at boundary
+		{0.59, "fair"},     // Just below
+		{0.4, "fair"},      // Exactly at boundary
+		{0.39, "poor"},     // Just below
+		{0.2, "poor"},      // Exactly at boundary
+		{0.19, "bad"},      // Just below
 	}
 
 	for _, tt := range tests {

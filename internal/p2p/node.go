@@ -80,21 +80,21 @@ type ContentGetter func(sha256Hash string) (io.ReadCloser, int64, error)
 
 // Config holds P2P node configuration
 type Config struct {
-	ListenPort      int
-	BootstrapPeers  []string
-	EnableMDNS      bool
-	PrivateKey      crypto.PrivKey
-	DataDir         string // Directory for persistent data (identity key, etc.)
-	PreferQUIC      bool   // Prefer QUIC over TCP
-	MaxUploadRate   int64  // bytes per second, 0 = unlimited
-	MaxDownloadRate int64  // bytes per second, 0 = unlimited
-	MaxConnections       int    // Maximum number of connections (0 = default 100)
-	MaxConcurrentUploads int    // Maximum concurrent uploads (0 = default 20)
-	PSK                  []byte // Pre-shared key for private swarm
-	PeerAllowlist   []string // Allowed peer IDs (empty = all allowed)
-	Scorer          *peers.Scorer
-	Timeouts        *timeouts.Manager
-	Metrics         *metrics.Metrics
+	ListenPort           int
+	BootstrapPeers       []string
+	EnableMDNS           bool
+	PrivateKey           crypto.PrivKey
+	DataDir              string   // Directory for persistent data (identity key, etc.)
+	PreferQUIC           bool     // Prefer QUIC over TCP
+	MaxUploadRate        int64    // bytes per second, 0 = unlimited
+	MaxDownloadRate      int64    // bytes per second, 0 = unlimited
+	MaxConnections       int      // Maximum number of connections (0 = default 100)
+	MaxConcurrentUploads int      // Maximum concurrent uploads (0 = default 20)
+	PSK                  []byte   // Pre-shared key for private swarm
+	PeerAllowlist        []string // Allowed peer IDs (empty = all allowed)
+	Scorer               *peers.Scorer
+	Timeouts             *timeouts.Manager
+	Metrics              *metrics.Metrics
 }
 
 // New creates a new P2P node with QUIC preference
@@ -173,7 +173,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	if maxConns <= 0 {
 		maxConns = 100 // default
 	}
-	lowWater := maxConns * 80 / 100  // Start pruning at 80% capacity
+	lowWater := maxConns * 80 / 100 // Start pruning at 80% capacity
 	highWater := maxConns
 
 	connMgr, err := connmgr.NewConnManager(
@@ -266,16 +266,16 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	}
 
 	node := &Node{
-		host:             h,
-		dht:              kadDHT,
-		routingDiscovery: drouting.NewRoutingDiscovery(kadDHT), // Reuse for all lookups
-		logger:           logger,
-		ctx:              ctx,
-		cancel:           cancel,
-		scorer:           scorer,
-		timeouts:         tm,
-		metrics:          cfg.Metrics,
-		bootstrapDone:    make(chan struct{}),
+		host:                 h,
+		dht:                  kadDHT,
+		routingDiscovery:     drouting.NewRoutingDiscovery(kadDHT), // Reuse for all lookups
+		logger:               logger,
+		ctx:                  ctx,
+		cancel:               cancel,
+		scorer:               scorer,
+		timeouts:             tm,
+		metrics:              cfg.Metrics,
+		bootstrapDone:        make(chan struct{}),
 		uploadsPerPeer:       make(map[peer.ID]int),
 		maxConcurrentUploads: cfg.MaxConcurrentUploads,
 		uploadLimiter:        ratelimit.New(cfg.MaxUploadRate),

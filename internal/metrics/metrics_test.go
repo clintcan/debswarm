@@ -185,12 +185,12 @@ func TestHistogram_Observe(t *testing.T) {
 	buckets := []float64{1, 5, 10, 50, 100}
 	h := NewHistogram(buckets)
 
-	h.Observe(0.5)  // <= 1
-	h.Observe(3)    // <= 5
-	h.Observe(7)    // <= 10
-	h.Observe(25)   // <= 50
-	h.Observe(75)   // <= 100
-	h.Observe(200)  // > 100 (+Inf bucket)
+	h.Observe(0.5) // <= 1
+	h.Observe(3)   // <= 5
+	h.Observe(7)   // <= 10
+	h.Observe(25)  // <= 50
+	h.Observe(75)  // <= 100
+	h.Observe(200) // > 100 (+Inf bucket)
 
 	count, sum, bucketCounts := h.Stats()
 

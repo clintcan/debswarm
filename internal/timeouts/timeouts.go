@@ -10,11 +10,11 @@ import (
 // Default timeout values
 const (
 	// Base timeouts
-	DefaultDHTLookup     = 100 * time.Millisecond
-	DefaultDHTLookupFull = 5 * time.Second
-	DefaultPeerConnect   = 2 * time.Second
-	DefaultPeerFirstByte = 5 * time.Second
-	DefaultPeerStall     = 10 * time.Second
+	DefaultDHTLookup      = 100 * time.Millisecond
+	DefaultDHTLookupFull  = 5 * time.Second
+	DefaultPeerConnect    = 2 * time.Second
+	DefaultPeerFirstByte  = 5 * time.Second
+	DefaultPeerStall      = 10 * time.Second
 	DefaultMirrorFallback = 200 * time.Millisecond
 
 	// Timeout bounds
@@ -22,7 +22,7 @@ const (
 	MaxTimeout = 60 * time.Second
 
 	// Adaptation parameters
-	AdaptationAlpha = 0.2  // EMA smoothing factor
+	AdaptationAlpha   = 0.2 // EMA smoothing factor
 	SuccessMultiplier = 0.9 // Reduce timeout on success
 	FailureMultiplier = 1.5 // Increase timeout on failure
 	TimeoutMultiplier = 2.0 // Double on timeout
@@ -53,12 +53,12 @@ type Manager struct {
 
 // Config holds timeout configuration
 type Config struct {
-	DHTLookup       time.Duration
-	DHTLookupFull   time.Duration
-	PeerConnect     time.Duration
-	PeerFirstByte   time.Duration
-	PeerStall       time.Duration
-	MirrorFallback  time.Duration
+	DHTLookup      time.Duration
+	DHTLookupFull  time.Duration
+	PeerConnect    time.Duration
+	PeerFirstByte  time.Duration
+	PeerStall      time.Duration
+	MirrorFallback time.Duration
 
 	// If true, timeouts adapt based on observed performance
 	AdaptiveEnabled bool
@@ -83,13 +83,13 @@ func DefaultConfig() *Config {
 
 // adaptiveTimeout tracks timeout statistics for an operation
 type adaptiveTimeout struct {
-	baseTimeout   time.Duration
+	baseTimeout    time.Duration
 	currentTimeout time.Duration
-	avgDuration   time.Duration
-	successCount  int64
-	failureCount  int64
-	timeoutCount  int64
-	lastUpdated   time.Time
+	avgDuration    time.Duration
+	successCount   int64
+	failureCount   int64
+	timeoutCount   int64
+	lastUpdated    time.Time
 }
 
 // NewManager creates a new timeout manager
@@ -363,8 +363,8 @@ func CalculateTransferTimeout(sizeBytes int64, bytesPerSecond int64, margin floa
 
 // PercentileTimeout calculates a timeout based on percentile of observed durations
 type DurationTracker struct {
-	mu        sync.Mutex
-	durations []time.Duration
+	mu         sync.Mutex
+	durations  []time.Duration
 	maxSamples int
 }
 
@@ -403,7 +403,7 @@ func (dt *DurationTracker) Percentile(p float64) time.Duration {
 	// Sort a copy
 	sorted := make([]time.Duration, len(dt.durations))
 	copy(sorted, dt.durations)
-	
+
 	// Simple insertion sort (small n)
 	for i := 1; i < len(sorted); i++ {
 		j := i

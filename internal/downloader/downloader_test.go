@@ -18,12 +18,12 @@ import (
 
 // mockSource is a test source implementation
 type mockSource struct {
-	id          string
-	sourceType  string
-	data        []byte
-	err         error
-	delay       time.Duration
-	callCount   int32
+	id           string
+	sourceType   string
+	data         []byte
+	err          error
+	delay        time.Duration
+	callCount    int32
 	rangeSupport bool
 }
 

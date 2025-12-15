@@ -192,9 +192,9 @@ func TestParseRate(t *testing.T) {
 		input    string
 		expected int64
 	}{
-		{"", 0},           // unlimited
-		{"0", 0},          // unlimited
-		{"unlimited", 0},  // unlimited
+		{"", 0},          // unlimited
+		{"0", 0},         // unlimited
+		{"unlimited", 0}, // unlimited
 		{"1MB/s", 1024 * 1024},
 		{"10MB/s", 10 * 1024 * 1024},
 		{"100KB/s", 100 * 1024},
@@ -352,8 +352,8 @@ func TestValidate_InvalidBootstrapPeers(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Network.BootstrapPeers = []string{
 		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN", // valid
-		"not-a-valid-multiaddr",                                                              // invalid
-		"/ip4/invalid",                                                                       // invalid
+		"not-a-valid-multiaddr", // invalid
+		"/ip4/invalid",          // invalid
 	}
 
 	err := cfg.Validate()

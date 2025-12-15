@@ -41,9 +41,9 @@ type PeerScore struct {
 	PeerID peer.ID
 
 	// Performance metrics (exponential moving averages)
-	AvgLatencyMs    float64 // Lower is better
-	AvgThroughput   float64 // Bytes per second, higher is better
-	SuccessRate     float64 // 0-1, higher is better
+	AvgLatencyMs  float64 // Lower is better
+	AvgThroughput float64 // Bytes per second, higher is better
+	SuccessRate   float64 // 0-1, higher is better
 
 	// Counters
 	TotalRequests   int64
@@ -64,14 +64,14 @@ type PeerScore struct {
 	BlacklistUntil  time.Time
 
 	// Computed score (cached)
-	cachedScore     float64
-	scoreCachedAt   time.Time
+	cachedScore   float64
+	scoreCachedAt time.Time
 }
 
 // Scorer manages peer scores and selection
 type Scorer struct {
-	peers    map[peer.ID]*PeerScore
-	mu       sync.RWMutex
+	peers map[peer.ID]*PeerScore
+	mu    sync.RWMutex
 
 	// Reference values for normalization
 	refLatencyMs  float64 // Expected good latency

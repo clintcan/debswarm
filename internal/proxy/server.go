@@ -76,11 +76,11 @@ type Server struct {
 
 // Config holds proxy server configuration
 type Config struct {
-	Addr           string
-	P2PTimeout     time.Duration
-	DHTLookupLimit int
-	MetricsPort    int
-	MetricsBind    string // Bind address for metrics server (default: 127.0.0.1)
+	Addr                       string
+	P2PTimeout                 time.Duration
+	DHTLookupLimit             int
+	MetricsPort                int
+	MetricsBind                string // Bind address for metrics server (default: 127.0.0.1)
 	CacheMaxSize               int64
 	MaxConcurrentPeerDownloads int // Maximum concurrent peer downloads (0 = default)
 	Metrics                    *metrics.Metrics
@@ -253,10 +253,10 @@ func setSecurityHeaders(w http.ResponseWriter) {
 
 // HealthStatus represents the health check response
 type HealthStatus struct {
-	Status      string            `json:"status"`
-	Checks      map[string]string `json:"checks"`
-	ConnectedPeers int           `json:"connected_peers"`
-	RoutingTableSize int         `json:"routing_table_size"`
+	Status           string            `json:"status"`
+	Checks           map[string]string `json:"checks"`
+	ConnectedPeers   int               `json:"connected_peers"`
+	RoutingTableSize int               `json:"routing_table_size"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

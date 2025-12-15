@@ -318,8 +318,8 @@ func TestNew_BurstCalculation(t *testing.T) {
 		name           string
 		bytesPerSecond int64
 	}{
-		{"below minimum burst", 1000},         // Should use 64KB burst
-		{"above minimum burst", 100 * 1024},   // Should use rate as burst
+		{"below minimum burst", 1000},             // Should use 64KB burst
+		{"above minimum burst", 100 * 1024},       // Should use rate as burst
 		{"above maximum burst", 10 * 1024 * 1024}, // Should be capped at 4MB
 	}
 

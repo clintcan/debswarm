@@ -57,9 +57,9 @@ type DHTConfig struct {
 type PrivacyConfig struct {
 	EnableMDNS       bool     `toml:"enable_mdns"`
 	AnnouncePackages bool     `toml:"announce_packages"`
-	PSKPath          string   `toml:"psk_path"`          // Path to PSK file for private swarm
-	PSK              string   `toml:"psk"`               // Inline PSK (hex), mutually exclusive with path
-	PeerAllowlist    []string `toml:"peer_allowlist"`    // List of allowed peer IDs
+	PSKPath          string   `toml:"psk_path"`       // Path to PSK file for private swarm
+	PSK              string   `toml:"psk"`            // Inline PSK (hex), mutually exclusive with path
+	PeerAllowlist    []string `toml:"peer_allowlist"` // List of allowed peer IDs
 }
 
 // MetricsConfig holds metrics/monitoring settings

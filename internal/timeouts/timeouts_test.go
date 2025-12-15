@@ -426,11 +426,11 @@ func TestClampTimeout(t *testing.T) {
 		input    time.Duration
 		expected time.Duration
 	}{
-		{10 * time.Millisecond, MinTimeout},    // Below min
-		{MinTimeout, MinTimeout},               // At min
-		{1 * time.Second, 1 * time.Second},     // In range
-		{MaxTimeout, MaxTimeout},               // At max
-		{120 * time.Second, MaxTimeout},        // Above max
+		{10 * time.Millisecond, MinTimeout}, // Below min
+		{MinTimeout, MinTimeout},            // At min
+		{1 * time.Second, 1 * time.Second},  // In range
+		{MaxTimeout, MaxTimeout},            // At max
+		{120 * time.Second, MaxTimeout},     // Above max
 	}
 
 	for _, tt := range tests {

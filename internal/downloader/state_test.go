@@ -73,7 +73,7 @@ func TestStateManager_CreateDownload(t *testing.T) {
 
 	hash := "abc123def456"
 	url := "http://example.com/package.deb"
-	size := int64(10 * 1024 * 1024) // 10MB
+	size := int64(10 * 1024 * 1024)     // 10MB
 	chunkSize := int64(4 * 1024 * 1024) // 4MB
 
 	err := sm.CreateDownload(hash, url, size, chunkSize)
@@ -106,7 +106,7 @@ func TestStateManager_CreateDownload_ChunkBoundaries(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "test_chunks"
-	size := int64(10 * 1024 * 1024) // 10MB
+	size := int64(10 * 1024 * 1024)     // 10MB
 	chunkSize := int64(4 * 1024 * 1024) // 4MB
 
 	err := sm.CreateDownload(hash, "http://example.com/test.deb", size, chunkSize)

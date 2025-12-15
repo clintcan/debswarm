@@ -49,10 +49,10 @@ const (
 )
 
 var (
-	ErrNoSources      = errors.New("no download sources available")
-	ErrHashMismatch   = errors.New("hash verification failed")
+	ErrNoSources        = errors.New("no download sources available")
+	ErrHashMismatch     = errors.New("hash verification failed")
 	ErrAllSourcesFailed = errors.New("all download sources failed")
-	ErrTimeout        = errors.New("download timeout")
+	ErrTimeout          = errors.New("download timeout")
 )
 
 // Source represents a download source (peer or mirror)
@@ -77,7 +77,7 @@ type PeerSource struct {
 	Downloader func(ctx context.Context, info peer.AddrInfo, hash string, start, end int64) ([]byte, error)
 }
 
-func (p *PeerSource) ID() string { return p.Info.ID.String() }
+func (p *PeerSource) ID() string   { return p.Info.ID.String() }
 func (p *PeerSource) Type() string { return SourceTypePeer }
 
 func (p *PeerSource) Download(ctx context.Context, hash string, start, end int64) ([]byte, error) {
@@ -90,11 +90,11 @@ func (p *PeerSource) DownloadFull(ctx context.Context, hash string) ([]byte, err
 
 // MirrorSource wraps an HTTP mirror as a download source
 type MirrorSource struct {
-	URL        string
-	Fetcher    func(ctx context.Context, url string, start, end int64) ([]byte, error)
+	URL     string
+	Fetcher func(ctx context.Context, url string, start, end int64) ([]byte, error)
 }
 
-func (m *MirrorSource) ID() string { return m.URL }
+func (m *MirrorSource) ID() string   { return m.URL }
 func (m *MirrorSource) Type() string { return SourceTypeMirror }
 
 func (m *MirrorSource) Download(ctx context.Context, hash string, start, end int64) ([]byte, error) {
@@ -126,7 +126,7 @@ type PartialCache interface {
 
 // Downloader handles parallel chunked downloads
 type Downloader struct {
-	scorer       *peers.Scorer
+	scorer         *peers.Scorer
 	metrics        *metrics.Metrics
 	chunkSize      int64
 	maxConc        int
@@ -137,13 +137,13 @@ type Downloader struct {
 
 // Config holds downloader configuration
 type Config struct {
-	ChunkSize       int64
-	MaxConcurrent   int
-	Scorer          *peers.Scorer
-	Metrics         *metrics.Metrics
-	StateManager    *StateManager
-	Cache           PartialCache
-	MinChunkedSize  int64 // Minimum file size for chunked downloads (default: MinChunkedSize constant)
+	ChunkSize      int64
+	MaxConcurrent  int
+	Scorer         *peers.Scorer
+	Metrics        *metrics.Metrics
+	StateManager   *StateManager
+	Cache          PartialCache
+	MinChunkedSize int64 // Minimum file size for chunked downloads (default: MinChunkedSize constant)
 }
 
 // New creates a new Downloader
@@ -187,14 +187,14 @@ func (d *Downloader) GetStateManager() *StateManager {
 
 // DownloadResult contains the result of a download
 type DownloadResult struct {
-	Data         []byte
-	Hash         string
-	Size         int64
-	Duration     time.Duration
-	Source       string // "peer", "mirror", or "mixed"
-	PeerBytes    int64
-	MirrorBytes  int64
-	ChunksTotal  int
+	Data          []byte
+	Hash          string
+	Size          int64
+	Duration      time.Duration
+	Source        string // "peer", "mirror", or "mixed"
+	PeerBytes     int64
+	MirrorBytes   int64
+	ChunksTotal   int
 	ChunksFromP2P int
 }
 
