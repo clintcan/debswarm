@@ -157,12 +157,17 @@ func NewServer(
 	// Start announcement worker (bounded goroutines)
 	go s.announcementWorker()
 
+	// Create state manager for download resume support
+	stateManager := downloader.NewStateManager(pkgCache.GetDB())
+
 	// Create downloader with all the goodies
 	s.downloader = downloader.New(&downloader.Config{
 		ChunkSize:     downloader.DefaultChunkSize,
 		MaxConcurrent: downloader.MaxConcurrentChunks,
 		Scorer:        scorer,
 		Metrics:       m,
+		StateManager:  stateManager,
+		Cache:         pkgCache,
 	})
 
 	mux := http.NewServeMux()

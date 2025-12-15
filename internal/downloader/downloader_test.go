@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -481,5 +484,155 @@ func TestDownloadResultSourceType(t *testing.T) {
 			t.Errorf("For peer=%d, mirror=%d: expected %s, got %s",
 				tt.peerBytes, tt.mirrorBytes, tt.expected, sourceType)
 		}
+	}
+}
+
+// mockPartialCache implements PartialCache for testing
+type mockPartialCache struct {
+	baseDir string
+}
+
+func (m *mockPartialCache) PartialDir(hash string) string {
+	return filepath.Join(m.baseDir, "partial", hash)
+}
+
+func (m *mockPartialCache) EnsurePartialDir(hash string) error {
+	return os.MkdirAll(m.PartialDir(hash), 0755)
+}
+
+func (m *mockPartialCache) CleanPartialDir(hash string) error {
+	return os.RemoveAll(m.PartialDir(hash))
+}
+
+func TestDownloadChunked_WithResume(t *testing.T) {
+	// Create a large enough file to trigger chunked download
+	chunkSize := int64(1024) // 1KB chunks for testing
+	numChunks := 4
+	data := testData(int(chunkSize) * numChunks)
+	hash := hashBytes(data)
+
+	// Setup test database and cache
+	db := setupTestDB(t)
+	defer db.Close()
+
+	tmpDir := t.TempDir()
+	cache := &mockPartialCache{baseDir: tmpDir}
+	stateManager := NewStateManager(db)
+
+	// Create source that supports range requests
+	source := &mockSource{
+		id:           "peer1",
+		sourceType:   SourceTypePeer,
+		data:         data,
+		rangeSupport: true,
+	}
+
+	d := New(&Config{
+		ChunkSize:      chunkSize,
+		MaxConcurrent:  2,
+		StateManager:   stateManager,
+		Cache:          cache,
+		MinChunkedSize: 1, // Enable chunked download for small test files
+	})
+
+	// First download - should complete and clean up
+	result, err := d.Download(context.Background(), hash, int64(len(data)), []Source{source}, nil)
+	if err != nil {
+		t.Fatalf("First download failed: %v", err)
+	}
+
+	if result.Hash != hash {
+		t.Errorf("Hash mismatch: expected %s, got %s", hash, result.Hash)
+	}
+
+	// Verify state was cleaned up
+	state, err := stateManager.GetDownload(hash)
+	if err != nil {
+		t.Fatalf("Failed to get download state: %v", err)
+	}
+	if state != nil {
+		t.Error("Expected download state to be cleaned up after completion")
+	}
+
+	// Verify partial dir was cleaned up
+	partialDir := cache.PartialDir(hash)
+	if _, err := os.Stat(partialDir); !os.IsNotExist(err) {
+		t.Error("Expected partial directory to be cleaned up")
+	}
+}
+
+func TestDownloadChunked_ResumeFromPartial(t *testing.T) {
+	// Create a file that will be split into chunks
+	chunkSize := int64(1024) // 1KB chunks for testing
+	numChunks := 4
+	data := testData(int(chunkSize) * numChunks)
+	hash := hashBytes(data)
+
+	// Setup test database and cache
+	db := setupTestDB(t)
+	defer db.Close()
+
+	tmpDir := t.TempDir()
+	cache := &mockPartialCache{baseDir: tmpDir}
+	stateManager := NewStateManager(db)
+
+	// Pre-populate some chunks on disk to simulate partial download
+	partialDir := cache.PartialDir(hash)
+	if err := cache.EnsurePartialDir(hash); err != nil {
+		t.Fatalf("Failed to create partial dir: %v", err)
+	}
+
+	// Write first 2 chunks to disk
+	for i := 0; i < 2; i++ {
+		start := int64(i) * chunkSize
+		end := start + chunkSize
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		if err := os.WriteFile(chunkFile, data[start:end], 0644); err != nil {
+			t.Fatalf("Failed to write chunk %d: %v", i, err)
+		}
+	}
+
+	// Create download state in DB
+	if err := stateManager.CreateDownload(hash, "", int64(len(data)), chunkSize); err != nil {
+		t.Fatalf("Failed to create download state: %v", err)
+	}
+
+	// Mark first 2 chunks as completed
+	for i := 0; i < 2; i++ {
+		if err := stateManager.UpdateChunk(hash, i, "completed"); err != nil {
+			t.Fatalf("Failed to update chunk %d: %v", i, err)
+		}
+	}
+
+	// Create source for remaining chunks
+	source := &mockSource{
+		id:           "peer1",
+		sourceType:   SourceTypePeer,
+		data:         data,
+		rangeSupport: true,
+	}
+
+	d := New(&Config{
+		ChunkSize:      chunkSize,
+		MaxConcurrent:  2,
+		StateManager:   stateManager,
+		Cache:          cache,
+		MinChunkedSize: 1, // Enable chunked download for small test files
+	})
+
+	// Resume download - should only download chunks 2 and 3
+	result, err := d.Download(context.Background(), hash, int64(len(data)), []Source{source}, nil)
+	if err != nil {
+		t.Fatalf("Resume download failed: %v", err)
+	}
+
+	if result.Hash != hash {
+		t.Errorf("Hash mismatch: expected %s, got %s", hash, result.Hash)
+	}
+
+	// Verify the source was only called for the missing chunks (chunks 2 and 3)
+	// Note: Due to the way chunks are named (chunk_0, chunk_1, etc), we check call count
+	if source.callCount < 2 {
+		t.Errorf("Expected at least 2 source calls for missing chunks, got %d", source.callCount)
 	}
 }

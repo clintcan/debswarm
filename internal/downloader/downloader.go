@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -115,13 +117,22 @@ type Chunk struct {
 	Duration time.Duration
 }
 
+// PartialCache provides methods for storing partial downloads
+type PartialCache interface {
+	PartialDir(hash string) string
+	EnsurePartialDir(hash string) error
+	CleanPartialDir(hash string) error
+}
+
 // Downloader handles parallel chunked downloads
 type Downloader struct {
 	scorer       *peers.Scorer
-	metrics      *metrics.Metrics
-	chunkSize    int64
-	maxConc      int
-	stateManager *StateManager
+	metrics        *metrics.Metrics
+	chunkSize      int64
+	maxConc        int
+	stateManager   *StateManager
+	cache          PartialCache
+	minChunkedSize int64
 }
 
 // Config holds downloader configuration
@@ -131,12 +142,15 @@ type Config struct {
 	Scorer          *peers.Scorer
 	Metrics         *metrics.Metrics
 	StateManager    *StateManager
+	Cache           PartialCache
+	MinChunkedSize  int64 // Minimum file size for chunked downloads (default: MinChunkedSize constant)
 }
 
 // New creates a new Downloader
 func New(cfg *Config) *Downloader {
 	chunkSize := int64(DefaultChunkSize)
 	maxConc := MaxConcurrentChunks
+	minChunked := int64(MinChunkedSize)
 
 	if cfg != nil {
 		if cfg.ChunkSize > 0 {
@@ -145,14 +159,19 @@ func New(cfg *Config) *Downloader {
 		if cfg.MaxConcurrent > 0 {
 			maxConc = cfg.MaxConcurrent
 		}
+		if cfg.MinChunkedSize > 0 {
+			minChunked = cfg.MinChunkedSize
+		}
 	}
 
 	return &Downloader{
-		scorer:       cfg.Scorer,
-		metrics:      cfg.Metrics,
-		chunkSize:    chunkSize,
-		maxConc:      maxConc,
-		stateManager: cfg.StateManager,
+		scorer:         cfg.Scorer,
+		metrics:        cfg.Metrics,
+		chunkSize:      chunkSize,
+		maxConc:        maxConc,
+		stateManager:   cfg.StateManager,
+		cache:          cfg.Cache,
+		minChunkedSize: minChunked,
 	}
 }
 
@@ -195,7 +214,7 @@ func (d *Downloader) Download(
 	}
 
 	// Choose strategy based on file size and available sources
-	if expectedSize > 0 && expectedSize >= MinChunkedSize && len(peerSources) > 0 {
+	if expectedSize > 0 && expectedSize >= d.minChunkedSize && len(peerSources) > 0 {
 		// Large file with peers available - use chunked parallel download
 		return d.downloadChunked(ctx, expectedHash, expectedSize, peerSources, mirrorSource, start)
 	}
@@ -205,6 +224,7 @@ func (d *Downloader) Download(
 }
 
 // downloadChunked performs parallel chunked download from multiple sources
+// with support for resuming interrupted downloads
 func (d *Downloader) downloadChunked(
 	ctx context.Context,
 	expectedHash string,
@@ -215,7 +235,38 @@ func (d *Downloader) downloadChunked(
 ) (*DownloadResult, error) {
 	// Calculate chunks
 	numChunks := int((expectedSize + d.chunkSize - 1) / d.chunkSize)
-	chunks := make([]*Chunk, numChunks)
+
+	// Check for existing download state (resume support)
+	var existingState *DownloadState
+	var partialDir string
+	resumeEnabled := d.stateManager != nil && d.cache != nil
+
+	if resumeEnabled {
+		var err error
+		existingState, err = d.stateManager.GetDownload(expectedHash)
+		if err != nil {
+			// Log error but continue without resume
+			resumeEnabled = false
+		}
+
+		if existingState == nil {
+			// Create new download state
+			if err := d.stateManager.CreateDownload(expectedHash, "", expectedSize, d.chunkSize); err != nil {
+				// Continue without persistence
+				resumeEnabled = false
+			}
+		}
+
+		// Create partial directory for chunks
+		partialDir = d.cache.PartialDir(expectedHash)
+		if err := d.cache.EnsurePartialDir(expectedHash); err != nil {
+			resumeEnabled = false
+		}
+	}
+
+	// Build list of chunks to download
+	chunks := make([]*Chunk, 0, numChunks)
+	completedFromDisk := make(map[int]bool)
 
 	for i := 0; i < numChunks; i++ {
 		start := int64(i) * d.chunkSize
@@ -223,22 +274,37 @@ func (d *Downloader) downloadChunked(
 		if end > expectedSize {
 			end = expectedSize
 		}
-		chunks[i] = &Chunk{
+
+		// Check if chunk already exists on disk (resume)
+		if resumeEnabled && existingState != nil {
+			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+			if info, err := os.Stat(chunkFile); err == nil && info.Size() == end-start {
+				completedFromDisk[i] = true
+				continue // Skip this chunk
+			}
+		}
+
+		chunks = append(chunks, &Chunk{
 			Index: i,
 			Start: start,
 			End:   end,
-		}
+		})
 	}
 
-	// Create work queue
-	pendingChunks := make(chan *Chunk, numChunks)
+	// If all chunks exist, just assemble
+	if len(chunks) == 0 && len(completedFromDisk) == numChunks {
+		return d.assembleFromDisk(expectedHash, expectedSize, numChunks, partialDir, startTime)
+	}
+
+	// Create work queue with only pending chunks
+	pendingChunks := make(chan *Chunk, len(chunks))
 	for _, c := range chunks {
 		pendingChunks <- c
 	}
 	close(pendingChunks)
 
 	// Results channel
-	results := make(chan *Chunk, numChunks)
+	results := make(chan *Chunk, len(chunks))
 
 	// Track source performance for adaptive assignment
 	sourceStats := &sourceTracker{
@@ -256,14 +322,22 @@ func (d *Downloader) downloadChunked(
 		return nil, ErrNoSources
 	}
 
+	// Update status to in_progress
+	if resumeEnabled {
+		_ = d.stateManager.UpdateDownloadStatus(expectedHash, "in_progress")
+	}
+
 	// Start workers
 	var wg sync.WaitGroup
 	workerCount := d.maxConc
 	if workerCount > len(allSources) {
 		workerCount = len(allSources)
 	}
-	if workerCount > numChunks {
-		workerCount = numChunks
+	if workerCount > len(chunks) {
+		workerCount = len(chunks)
+	}
+	if workerCount == 0 {
+		workerCount = 1
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -283,7 +357,7 @@ func (d *Downloader) downloadChunked(
 		close(results)
 	}()
 
-	// Collect results
+	// Collect results and persist chunks
 	completedChunks := make([]*Chunk, numChunks)
 	var peerBytes, mirrorBytes int64
 	var chunksFromP2P int
@@ -300,6 +374,14 @@ func (d *Downloader) downloadChunked(
 
 		completedChunks[chunk.Index] = chunk
 
+		// Persist chunk to disk
+		if resumeEnabled && partialDir != "" {
+			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", chunk.Index))
+			if err := os.WriteFile(chunkFile, chunk.Data, 0644); err == nil {
+				_ = d.stateManager.UpdateChunk(expectedHash, chunk.Index, "completed")
+			}
+		}
+
 		if chunk.Source.Type() == SourceTypePeer {
 			peerBytes += int64(len(chunk.Data))
 			chunksFromP2P++
@@ -310,20 +392,38 @@ func (d *Downloader) downloadChunked(
 
 	// Return error after all goroutines have finished
 	if firstError != nil {
+		if resumeEnabled {
+			_ = d.stateManager.FailDownload(expectedHash, firstError.Error())
+		}
 		return nil, firstError
 	}
 
-	// Verify all chunks received
-	for i, c := range completedChunks {
-		if c == nil {
+	// Verify all chunks received (including from disk)
+	for i := 0; i < numChunks; i++ {
+		if completedChunks[i] == nil && !completedFromDisk[i] {
 			return nil, fmt.Errorf("chunk %d missing", i)
 		}
 	}
 
-	// Assemble file - pre-allocate and copy directly to positions
+	// Assemble file
 	assembled := make([]byte, expectedSize)
+
+	// Copy chunks from memory
 	for _, c := range completedChunks {
-		copy(assembled[c.Start:], c.Data)
+		if c != nil {
+			copy(assembled[c.Start:], c.Data)
+		}
+	}
+
+	// Read chunks from disk (resumed chunks)
+	for i := range completedFromDisk {
+		start := int64(i) * d.chunkSize
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		data, err := os.ReadFile(chunkFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read resumed chunk %d: %w", i, err)
+		}
+		copy(assembled[start:], data)
 	}
 
 	// Verify hash
@@ -334,12 +434,23 @@ func (d *Downloader) downloadChunked(
 		if d.metrics != nil {
 			d.metrics.VerificationFailures.Inc()
 		}
+		if resumeEnabled {
+			_ = d.stateManager.FailDownload(expectedHash, "hash mismatch")
+			_ = d.cache.CleanPartialDir(expectedHash)
+		}
 		return nil, ErrHashMismatch
+	}
+
+	// Success - clean up state and partial files
+	if resumeEnabled {
+		_ = d.stateManager.CompleteDownload(expectedHash)
+		_ = d.stateManager.DeleteDownload(expectedHash)
+		_ = d.cache.CleanPartialDir(expectedHash)
 	}
 
 	// Determine source type
 	sourceType := SourceTypeMixed
-	if peerBytes == 0 {
+	if peerBytes == 0 && len(completedFromDisk) == 0 {
 		sourceType = SourceTypeMirror
 	} else if mirrorBytes == 0 {
 		sourceType = SourceTypePeer
@@ -355,6 +466,65 @@ func (d *Downloader) downloadChunked(
 		MirrorBytes:   mirrorBytes,
 		ChunksTotal:   numChunks,
 		ChunksFromP2P: chunksFromP2P,
+	}, nil
+}
+
+// assembleFromDisk assembles a file from all chunks on disk (full resume)
+func (d *Downloader) assembleFromDisk(
+	expectedHash string,
+	expectedSize int64,
+	numChunks int,
+	partialDir string,
+	startTime time.Time,
+) (*DownloadResult, error) {
+	assembled := make([]byte, expectedSize)
+
+	for i := 0; i < numChunks; i++ {
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		data, err := os.ReadFile(chunkFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read chunk %d: %w", i, err)
+		}
+		start := int64(i) * d.chunkSize
+		copy(assembled[start:], data)
+	}
+
+	// Verify hash
+	actualHash := sha256.Sum256(assembled)
+	actualHashHex := hex.EncodeToString(actualHash[:])
+
+	if actualHashHex != expectedHash {
+		if d.metrics != nil {
+			d.metrics.VerificationFailures.Inc()
+		}
+		if d.stateManager != nil {
+			_ = d.stateManager.FailDownload(expectedHash, "hash mismatch")
+		}
+		if d.cache != nil {
+			_ = d.cache.CleanPartialDir(expectedHash)
+		}
+		return nil, ErrHashMismatch
+	}
+
+	// Success - clean up
+	if d.stateManager != nil {
+		_ = d.stateManager.CompleteDownload(expectedHash)
+		_ = d.stateManager.DeleteDownload(expectedHash)
+	}
+	if d.cache != nil {
+		_ = d.cache.CleanPartialDir(expectedHash)
+	}
+
+	return &DownloadResult{
+		Data:          assembled,
+		Hash:          actualHashHex,
+		Size:          int64(len(assembled)),
+		Duration:      time.Since(startTime),
+		Source:        "resumed",
+		PeerBytes:     0,
+		MirrorBytes:   0,
+		ChunksTotal:   numChunks,
+		ChunksFromP2P: 0,
 	}, nil
 }
 
