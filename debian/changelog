@@ -2,6 +2,8 @@ debswarm (1.2.2-1) unstable; urgency=medium
 
   * Switch from DynamicUser to static debswarm user for reliable permissions
   * postinst creates debswarm system user/group and sets directory ownership
+  * Remove StateDirectory/CacheDirectory to avoid conflicts with manual setup
+  * Auto-detect /var/lib/debswarm for data directory on system installs
 
  -- debswarm developers <debswarm@example.com>  Mon, 16 Dec 2025 00:00:00 +0000
 

@@ -103,10 +103,22 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine data directory for persistent identity
-	// Priority: --data-dir flag > STATE_DIRECTORY env (systemd) > derived from cache path
+	// Priority: --data-dir flag > STATE_DIRECTORY env > /var/lib/debswarm > ~/.local/share/debswarm
 	p2pDataDir := os.Getenv("STATE_DIRECTORY")
 	if p2pDataDir == "" {
-		p2pDataDir = filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+		// Check standard system location first
+		info, statErr := os.Stat("/var/lib/debswarm")
+		if statErr == nil && info.IsDir() {
+			p2pDataDir = "/var/lib/debswarm"
+		} else {
+			// Fall back to user data directory
+			homeDir, _ := os.UserHomeDir()
+			if homeDir != "" {
+				p2pDataDir = filepath.Join(homeDir, ".local", "share", "debswarm")
+			} else {
+				p2pDataDir = filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+			}
+		}
 	}
 	if dataDir != "" {
 		p2pDataDir = dataDir
