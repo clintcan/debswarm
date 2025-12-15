@@ -165,6 +165,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		cfg.Metrics.Bind = metricsBind
 	}
 
+	// Determine data directory for persistent identity
+	p2pDataDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+	if dataDir != "" {
+		p2pDataDir = dataDir
+	}
+
+	// Pre-flight directory validation - fail fast if directories are unusable
+	if err := validateDirectories(cfg.Cache.Path, p2pDataDir); err != nil {
+		return fmt.Errorf("directory validation failed: %w", err)
+	}
+	logger.Debug("Directory validation passed",
+		zap.String("cachePath", cfg.Cache.Path),
+		zap.String("dataDir", p2pDataDir))
+
 	// Set up context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -245,13 +259,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		psk = loadedPSK
 		logger.Warn("Using inline PSK from config (consider using psk_path instead)",
 			zap.String("fingerprint", p2p.PSKFingerprint(loadedPSK)))
-	}
-
-	// Determine data directory for persistent identity
-	// Use parent of cache path + /data, or ~/.local/share/debswarm
-	p2pDataDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
-	if dataDir != "" {
-		p2pDataDir = dataDir
 	}
 
 	// Initialize P2P node with QUIC preference
@@ -1346,6 +1353,71 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// validateDirectories performs pre-flight checks on required directories.
+// This ensures the daemon fails fast with clear errors if directories are
+// missing or not writable, rather than failing later during operation.
+func validateDirectories(cachePath, dataDir string) error {
+	// Check cache directory
+	cacheDir := filepath.Dir(cachePath)
+	if err := checkDirectory(cacheDir, "cache parent"); err != nil {
+		return err
+	}
+	if err := checkDirectory(cachePath, "cache"); err != nil {
+		// Cache directory might not exist yet - check if we can create it
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(cachePath, 0755); err != nil {
+				return fmt.Errorf("cannot create cache directory %s: %w", cachePath, err)
+			}
+			// Clean up - let the cache package create it properly
+			_ = os.Remove(cachePath)
+		} else {
+			return err
+		}
+	}
+
+	// Check data directory (for identity keys, etc.)
+	if dataDir != "" {
+		if err := checkDirectory(dataDir, "data"); err != nil {
+			// Data directory might not exist yet - check if we can create it
+			if os.IsNotExist(err) {
+				if err := os.MkdirAll(dataDir, 0700); err != nil {
+					return fmt.Errorf("cannot create data directory %s: %w", dataDir, err)
+				}
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkDirectory verifies a directory exists and is writable.
+func checkDirectory(path, name string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return err
+		}
+		return fmt.Errorf("%s directory %s: %w", name, path, err)
+	}
+
+	if !info.IsDir() {
+		return fmt.Errorf("%s path %s is not a directory", name, path)
+	}
+
+	// Check if writable by attempting to create a temp file
+	testFile := filepath.Join(path, ".debswarm-write-test")
+	f, err := os.Create(testFile)
+	if err != nil {
+		return fmt.Errorf("%s directory %s is not writable: %w", name, path, err)
+	}
+	f.Close()
+	os.Remove(testFile)
+
+	return nil
 }
 
 // reloadConfig reloads configuration that can be changed at runtime.

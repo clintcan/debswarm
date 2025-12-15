@@ -26,7 +26,7 @@ This document tracks the gaps and improvements needed before a production-ready 
 | **IPv6 validation** | `internal/p2p/node.go` | Configured in libp2p but not tested on IPv6-only systems | Not started |
 | **E2E tests** | `tests/` | Only unit tests with simulated peers; no real APT integration tests | Not started |
 | **MaxConcurrentUploads enforcement** | `internal/config/config.go:43-44` | `transfer.max_concurrent_uploads` and `max_concurrent_peer_downloads` not fully enforced at daemon level | Not started |
-| **Systemd directory validation** | `cmd/debswarm/main.go` | No pre-flight check that StateDirectory exists and is writable | Not started |
+| **Systemd directory validation** | `cmd/debswarm/main.go` | No pre-flight check that StateDirectory exists and is writable | **Done** (v0.8.0) |
 
 ## Low Priority (Post-1.0)
 
@@ -100,8 +100,18 @@ Created in `docs/`:
 - `troubleshooting.md`: Common issues, diagnostics, debug info collection
 - `upgrading.md`: Version upgrade procedures, migration notes, rollback
 
+### Systemd Directory Validation (Done)
+Implemented in `cmd/debswarm/main.go`:
+- `validateDirectories()` runs pre-flight checks before daemon startup
+- Verifies cache directory parent exists
+- Checks cache and data directories are writable (or can be created)
+- Creates test file to verify write permissions
+- Fails fast with clear error messages if directories are unusable
+- Called after config validation, before component initialization
+
 ## Version History
 
+- **v0.8.0** (2025-12-15): Medium priority - systemd directory validation
 - **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation
 - **v0.6.2** (2025-12-15): Critical 1.0 blockers - MaxConnections, MinFreeSpace, health endpoint
 - **v0.6.1** (2025-12-15): Dashboard peers table, expanded metrics
