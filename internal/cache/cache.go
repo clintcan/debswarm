@@ -428,11 +428,11 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return mkdirErr
 	}
 
-	if err := os.Rename(pendingPath, finalPath); err != nil {
+	if renameErr := os.Rename(pendingPath, finalPath); renameErr != nil {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
 		}
-		return err
+		return renameErr
 	}
 
 	// Record in database - use ON CONFLICT to preserve access_count if re-adding

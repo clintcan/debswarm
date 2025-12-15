@@ -218,9 +218,9 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	if len(cfg.PeerAllowlist) > 0 {
 		peerIDs := make([]peer.ID, 0, len(cfg.PeerAllowlist))
 		for _, pidStr := range cfg.PeerAllowlist {
-			pid, err := peer.Decode(pidStr)
-			if err != nil {
-				logger.Warn("Invalid peer ID in allowlist", zap.String("peer", pidStr), zap.Error(err))
+			pid, decodeErr := peer.Decode(pidStr)
+			if decodeErr != nil {
+				logger.Warn("Invalid peer ID in allowlist", zap.String("peer", pidStr), zap.Error(decodeErr))
 				continue
 			}
 			peerIDs = append(peerIDs, pid)
@@ -328,7 +328,6 @@ func (n *Node) SetContentGetter(getter ContentGetter) {
 
 // bootstrap connects to bootstrap peers and initializes the DHT
 func (n *Node) bootstrap(ctx context.Context, bootstrapPeers []string) {
-	_ = ctx // passed for contextcheck linter compliance; internal operations use n.ctx
 	defer close(n.bootstrapDone)
 
 	n.logger.Info("Starting DHT bootstrap", zap.Int("bootstrapPeers", len(bootstrapPeers)))
@@ -349,30 +348,30 @@ func (n *Node) bootstrap(ctx context.Context, bootstrapPeers []string) {
 		}
 
 		wg.Add(1)
-		go func(pi *peer.AddrInfo) {
+		go func(connectCtx context.Context, pi *peer.AddrInfo) {
 			defer wg.Done()
 			timeout := n.timeouts.Get(timeouts.OpPeerConnect)
-			ctx, cancel := context.WithTimeout(n.ctx, timeout)
+			timeoutCtx, cancel := context.WithTimeout(connectCtx, timeout)
 			defer cancel()
 
 			start := time.Now()
-			if err := n.host.Connect(ctx, *pi); err != nil {
+			if connectErr := n.host.Connect(timeoutCtx, *pi); connectErr != nil {
 				n.logger.Debug("Failed to connect to bootstrap peer",
 					zap.String("peer", pi.ID.String()),
-					zap.Error(err))
+					zap.Error(connectErr))
 				n.timeouts.RecordFailure(timeouts.OpPeerConnect)
 			} else {
 				n.logger.Debug("Connected to bootstrap peer",
 					zap.String("peer", pi.ID.String()))
 				n.timeouts.RecordSuccess(timeouts.OpPeerConnect, time.Since(start))
 			}
-		}(peerInfo)
+		}(ctx, peerInfo)
 	}
 	wg.Wait()
 
 	// Bootstrap the DHT
-	if err := n.dht.Bootstrap(n.ctx); err != nil {
-		n.logger.Error("DHT bootstrap failed", zap.Error(err))
+	if bootstrapErr := n.dht.Bootstrap(ctx); bootstrapErr != nil {
+		n.logger.Error("DHT bootstrap failed", zap.Error(bootstrapErr))
 		return
 	}
 
