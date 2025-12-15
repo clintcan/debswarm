@@ -11,5 +11,6 @@ func (c *Cache) getDiskFreeSpace() (int64, error) {
 		return 0, err
 	}
 	// Available blocks * block size
-	return int64(stat.Bavail) * stat.Bsize, nil
+	// Both conversions needed for cross-platform compatibility (Bsize is int32 on arm, int64 on amd64)
+	return int64(stat.Bavail) * int64(stat.Bsize), nil //nolint:unconvert
 }
