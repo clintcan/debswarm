@@ -5,9 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/debswarm/debswarm/internal/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+
+	"github.com/debswarm/debswarm/internal/config"
 )
 
 // setupLogger creates a configured zap logger based on global flags.

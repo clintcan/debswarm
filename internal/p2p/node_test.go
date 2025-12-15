@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"go.uber.org/zap"
+
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/timeouts"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"go.uber.org/zap"
 )
 
 func newTestLogger() *zap.Logger {

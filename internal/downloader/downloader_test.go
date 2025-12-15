@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/debswarm/debswarm/internal/peers"
 )
 
 // mockSource is a test source implementation

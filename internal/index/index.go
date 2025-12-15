@@ -16,9 +16,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/debswarm/debswarm/internal/security"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
+
+	"github.com/debswarm/debswarm/internal/security"
 )
 
 // PackageInfo holds information about a single package
