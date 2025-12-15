@@ -1,3 +1,12 @@
+debswarm (0.8.2-1) unstable; urgency=medium
+
+  * Enforce MaxConcurrentUploads and MaxConcurrentPeerDownloads config options
+    - Wire transfer.max_concurrent_uploads to P2P upload handler
+    - Wire transfer.max_concurrent_peer_downloads to downloader
+  * Fix debian package build (remove redundant debian/install entries)
+
+ -- debswarm developers <debswarm@example.com>  Sun, 15 Dec 2025 00:00:00 +0000
+
 debswarm (0.8.0-1) unstable; urgency=medium
 
   * Add pre-flight directory validation for systemd compatibility
