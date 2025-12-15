@@ -172,7 +172,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Initialize cache
 	maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
-	pkgCache, err := cache.New(cfg.Cache.Path, maxSize, logger)
+	minFreeSpace, _ := config.ParseSize(cfg.Cache.MinFreeSpace)
+	pkgCache, err := cache.NewWithMinFreeSpace(cfg.Cache.Path, maxSize, minFreeSpace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
@@ -181,6 +182,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	logger.Info("Initialized cache",
 		zap.String("path", cfg.Cache.Path),
 		zap.Int64("maxSize", maxSize),
+		zap.Int64("minFreeSpace", minFreeSpace),
 		zap.Int("currentCount", pkgCache.Count()),
 		zap.Int64("currentSize", pkgCache.Size()))
 
@@ -250,6 +252,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		PreferQUIC:      preferQUIC,
 		MaxUploadRate:   parsedUploadRate,
 		MaxDownloadRate: parsedDownloadRate,
+		MaxConnections:  cfg.Network.MaxConnections,
 		PSK:             psk,
 		PeerAllowlist:   cfg.Privacy.PeerAllowlist,
 		Scorer:          scorer,

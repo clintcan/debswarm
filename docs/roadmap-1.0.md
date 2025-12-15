@@ -6,9 +6,9 @@ This document tracks the gaps and improvements needed before a production-ready 
 
 | Issue | Location | Description | Status |
 |-------|----------|-------------|--------|
-| **MaxConnections not enforced** | `internal/config/config.go:28` | Config option exists (`network.max_connections`) but P2P node doesn't limit connections - risk of resource exhaustion | Not started |
-| **MinFreeSpace not enforced** | `internal/config/config.go:36` | Cache can fill disk completely, ignoring `cache.min_free_space` setting | Not started |
-| **No health endpoint** | `internal/proxy/server.go` | Missing `/healthz` or `/ready` endpoint for monitoring/orchestration | Not started |
+| **MaxConnections not enforced** | `internal/p2p/node.go` | Config option exists (`network.max_connections`) but P2P node doesn't limit connections - risk of resource exhaustion | **Done** (v0.6.2) |
+| **MinFreeSpace not enforced** | `internal/cache/cache.go` | Cache can fill disk completely, ignoring `cache.min_free_space` setting | **Done** (v0.6.2) |
+| **No health endpoint** | `internal/proxy/server.go` | Missing `/health` endpoint for monitoring/orchestration | **Done** (v0.6.2) |
 
 ## High Priority
 
@@ -53,51 +53,31 @@ These areas are production-ready:
 
 ## Implementation Notes
 
-### MaxConnections Implementation
-The `p2p.Node` should use libp2p's connection manager:
-```go
-import "github.com/libp2p/go-libp2p/p2p/net/connmgr"
+### MaxConnections Implementation (Done)
+Implemented in `internal/p2p/node.go` using libp2p's connection manager:
+- Low water mark at 80% of max connections
+- High water mark at max connections (default 100)
+- 1 minute grace period before pruning
 
-cm, _ := connmgr.NewConnManager(
-    lowWater,   // e.g., 80
-    highWater,  // e.g., cfg.MaxConnections (100)
-    connmgr.WithGracePeriod(time.Minute),
-)
-host.New(ctx, libp2p.ConnectionManager(cm))
-```
+### MinFreeSpace Implementation (Done)
+Implemented in `internal/cache/cache.go`:
+- `NewWithMinFreeSpace()` constructor accepts minFreeSpace parameter
+- `ensureSpace()` checks disk free space using `syscall.Statfs`
+- Returns `ErrInsufficientDiskSpace` if write would violate minimum
 
-### MinFreeSpace Implementation
-Before cache operations in `cache.Put()`:
-```go
-var stat syscall.Statfs_t
-syscall.Statfs(c.path, &stat)
-freeBytes := stat.Bavail * uint64(stat.Bsize)
-if freeBytes < minFreeSpace {
-    return ErrInsufficientDiskSpace
-}
-```
-
-### Health Endpoint
-Add to proxy server:
-```go
-mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-    // Check DHT bootstrap status, cache accessibility, etc.
-    if s.p2pNode.IsBootstrapped() && s.cache.IsHealthy() {
-        w.WriteHeader(http.StatusOK)
-        w.Write([]byte("ok"))
-    } else {
-        w.WriteHeader(http.StatusServiceUnavailable)
-        w.Write([]byte("not ready"))
-    }
-})
-```
+### Health Endpoint (Done)
+Implemented at `/health` endpoint on metrics server:
+- Returns JSON with status, checks, connected_peers, routing_table_size
+- Checks P2P node initialization, DHT status, cache availability
+- Returns 200 OK when healthy, 503 Service Unavailable when not
 
 ## Version History
 
+- **v0.6.2** (2025-12-15): Critical 1.0 blockers - MaxConnections, MinFreeSpace, health endpoint
 - **v0.6.1** (2025-12-15): Dashboard peers table, expanded metrics
 - **v0.6.0** (2025-12-15): Download resume support, security fixes
 - **v0.5.x**: Core functionality, peer scoring, bandwidth limiting, benchmarking
 
 ## Target: v1.0.0
 
-Once all Critical and High Priority items are resolved, the project is ready for 1.0 release.
+All Critical items are now resolved. High Priority items remain for full production readiness.

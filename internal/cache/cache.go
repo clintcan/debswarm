@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -18,8 +19,9 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("package not found in cache")
-	ErrHashMismatch = errors.New("hash mismatch")
+	ErrNotFound              = errors.New("package not found in cache")
+	ErrHashMismatch          = errors.New("hash mismatch")
+	ErrInsufficientDiskSpace = errors.New("insufficient disk space")
 )
 
 // Package represents a cached package entry
@@ -35,12 +37,13 @@ type Package struct {
 
 // Cache manages local package storage
 type Cache struct {
-	basePath    string
-	maxSize     int64
-	db          *sql.DB
-	mu          sync.RWMutex
-	logger      *zap.Logger
-	currentSize int64
+	basePath     string
+	maxSize      int64
+	minFreeSpace int64 // Minimum free disk space to maintain
+	db           *sql.DB
+	mu           sync.RWMutex
+	logger       *zap.Logger
+	currentSize  int64
 
 	// Track active readers to prevent deletion during read
 	activeReaders   map[string]int
@@ -49,6 +52,11 @@ type Cache struct {
 
 // New creates a new cache instance
 func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
+	return NewWithMinFreeSpace(basePath, maxSize, 0, logger)
+}
+
+// NewWithMinFreeSpace creates a new cache instance with minimum free space enforcement
+func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, logger *zap.Logger) (*Cache, error) {
 	// Create directory structure
 	packagesDir := filepath.Join(basePath, "packages", "sha256")
 	pendingDir := filepath.Join(basePath, "packages", "pending")
@@ -78,6 +86,7 @@ func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
 	c := &Cache{
 		basePath:      basePath,
 		maxSize:       maxSize,
+		minFreeSpace:  minFreeSpace,
 		db:            db,
 		logger:        logger,
 		activeReaders: make(map[string]int),
@@ -88,7 +97,26 @@ func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
 		logger.Warn("Failed to calculate cache size", zap.Error(err))
 	}
 
+	if minFreeSpace > 0 {
+		logger.Info("Cache minimum free space enforcement enabled",
+			zap.String("minFreeSpace", formatBytes(minFreeSpace)))
+	}
+
 	return c, nil
+}
+
+// formatBytes formats bytes as human-readable string
+func formatBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 func createTables(db *sql.DB) error {
@@ -508,7 +536,31 @@ func (c *Cache) calculateSize() error {
 
 var ErrCacheFull = errors.New("cache full: unable to free enough space")
 
+// getDiskFreeSpace returns the available disk space in bytes for the cache path
+func (c *Cache) getDiskFreeSpace() (int64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(c.basePath, &stat); err != nil {
+		return 0, err
+	}
+	// Available blocks * block size
+	return int64(stat.Bavail) * int64(stat.Bsize), nil
+}
+
 func (c *Cache) ensureSpace(needed int64) error {
+	// Check minimum free space constraint first
+	if c.minFreeSpace > 0 {
+		freeSpace, err := c.getDiskFreeSpace()
+		if err != nil {
+			c.logger.Warn("Failed to check disk free space", zap.Error(err))
+		} else if freeSpace-needed < c.minFreeSpace {
+			return fmt.Errorf("%w: need %s but only %s available (min free: %s)",
+				ErrInsufficientDiskSpace,
+				formatBytes(needed),
+				formatBytes(freeSpace),
+				formatBytes(c.minFreeSpace))
+		}
+	}
+
 	if c.currentSize+needed <= c.maxSize {
 		return nil
 	}

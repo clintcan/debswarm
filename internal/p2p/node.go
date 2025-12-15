@@ -26,6 +26,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 )
@@ -86,6 +87,7 @@ type Config struct {
 	PreferQUIC      bool   // Prefer QUIC over TCP
 	MaxUploadRate   int64  // bytes per second, 0 = unlimited
 	MaxDownloadRate int64  // bytes per second, 0 = unlimited
+	MaxConnections  int    // Maximum number of connections (0 = default 100)
 	PSK             []byte   // Pre-shared key for private swarm
 	PeerAllowlist   []string // Allowed peer IDs (empty = all allowed)
 	Scorer          *peers.Scorer
@@ -164,10 +166,34 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		}
 	}
 
+	// Set up connection manager with limits
+	maxConns := cfg.MaxConnections
+	if maxConns <= 0 {
+		maxConns = 100 // default
+	}
+	lowWater := maxConns * 80 / 100  // Start pruning at 80% capacity
+	highWater := maxConns
+
+	connMgr, err := connmgr.NewConnManager(
+		lowWater,
+		highWater,
+		connmgr.WithGracePeriod(time.Minute),
+	)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to create connection manager: %w", err)
+	}
+
+	logger.Info("Connection limits configured",
+		zap.Int("maxConnections", maxConns),
+		zap.Int("lowWater", lowWater),
+		zap.Int("highWater", highWater))
+
 	// Build libp2p options with QUIC preference
 	opts := []libp2p.Option{
 		libp2p.Identity(privKey),
 		libp2p.ListenAddrs(listenAddrs...),
+		libp2p.ConnectionManager(connMgr),
 
 		// NAT traversal
 		libp2p.EnableNATService(),

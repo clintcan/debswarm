@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2025-12-15
+
+### Added
+- **Health endpoint**: `/health` endpoint on metrics server returns JSON with system health status
+  - Checks P2P node, DHT, and cache availability
+  - Returns 200 OK when healthy, 503 when not
+- **MaxConnections enforcement**: P2P node now enforces `network.max_connections` config using libp2p connection manager
+- **MinFreeSpace enforcement**: Cache now respects `cache.min_free_space` config, preventing disk exhaustion
+
+### Changed
+- Updated roadmap with completed critical items for 1.0 release
+
 ## [0.6.1] - 2025-12-15
 
 ### Added
@@ -205,7 +217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/clintcan/debswarm/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/clintcan/debswarm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/clintcan/debswarm/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/clintcan/debswarm/compare/v0.5.5...v0.5.6

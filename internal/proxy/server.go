@@ -198,11 +198,7 @@ func (s *Server) Start() error {
 func (s *Server) startMetricsServer() {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", s.metrics.Handler())
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		setSecurityHeaders(w)
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("OK"))
-	})
+	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/stats", s.handleStats)
 
 	// Add dashboard routes if dashboard is set
@@ -246,6 +242,68 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	w.Header().Set("X-XSS-Protection", "1; mode=block")
 	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+}
+
+// HealthStatus represents the health check response
+type HealthStatus struct {
+	Status      string            `json:"status"`
+	Checks      map[string]string `json:"checks"`
+	ConnectedPeers int           `json:"connected_peers"`
+	RoutingTableSize int         `json:"routing_table_size"`
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	setSecurityHeaders(w)
+	w.Header().Set("Content-Type", "application/json")
+
+	health := HealthStatus{
+		Status: "healthy",
+		Checks: make(map[string]string),
+	}
+
+	allHealthy := true
+
+	// Check P2P node
+	if s.p2pNode != nil {
+		health.ConnectedPeers = s.p2pNode.ConnectedPeers()
+		health.RoutingTableSize = s.p2pNode.RoutingTableSize()
+
+		if health.RoutingTableSize > 0 {
+			health.Checks["dht"] = "ok"
+		} else {
+			health.Checks["dht"] = "no_peers"
+			// Not a failure - DHT may still be bootstrapping
+		}
+
+		if health.ConnectedPeers > 0 {
+			health.Checks["p2p"] = "ok"
+		} else {
+			health.Checks["p2p"] = "no_connections"
+		}
+	} else {
+		health.Checks["p2p"] = "not_initialized"
+		allHealthy = false
+	}
+
+	// Check cache
+	if s.cache != nil {
+		health.Checks["cache"] = "ok"
+	} else {
+		health.Checks["cache"] = "not_initialized"
+		allHealthy = false
+	}
+
+	// Set overall status
+	if !allHealthy {
+		health.Status = "unhealthy"
+		w.WriteHeader(http.StatusServiceUnavailable)
+	} else {
+		w.WriteHeader(http.StatusOK)
+	}
+
+	if err := json.NewEncoder(w).Encode(health); err != nil {
+		s.logger.Warn("Failed to encode health response", zap.Error(err))
+	}
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
