@@ -153,7 +153,7 @@ func TestLimiter_ReaderContext(t *testing.T) {
 	}
 }
 
-func TestLimiter_ReaderContext_Cancelled(t *testing.T) {
+func TestLimiter_ReaderContext_Canceled(t *testing.T) {
 	// Use a very low rate to ensure rate limiting kicks in
 	limiter := New(1) // 1 byte/s
 
@@ -190,7 +190,7 @@ func TestLimiter_WriterContext(t *testing.T) {
 	}
 }
 
-func TestLimiter_WriterContext_Cancelled(t *testing.T) {
+func TestLimiter_WriterContext_Canceled(t *testing.T) {
 	limiter := New(1) // 1 byte/s - very slow
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,7 +202,7 @@ func TestLimiter_WriterContext_Cancelled(t *testing.T) {
 	data := strings.Repeat("x", 1000) // Large enough to trigger waiting
 	_, err := writer.Write([]byte(data))
 	if err == nil {
-		t.Error("Write should fail with cancelled context")
+		t.Error("Write should fail with canceled context")
 	}
 }
 

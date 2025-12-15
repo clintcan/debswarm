@@ -362,14 +362,14 @@ func TestNew_WithAllowlist(t *testing.T) {
 	}
 }
 
-func TestNew_CancelledContext(t *testing.T) {
+func TestNew_CanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately
 
 	cfg := newTestConfig(t)
 	logger := newTestLogger()
 
-	// Creating node with cancelled context may fail or succeed depending on timing
+	// Creating node with canceled context may fail or succeed depending on timing
 	node, err := New(ctx, cfg, logger)
 	if err == nil && node != nil {
 		node.Close()

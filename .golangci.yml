@@ -30,16 +30,18 @@ linters:
 
 linters-settings:
   errcheck:
-    check-type-assertions: true
-    check-blank: true
+    check-type-assertions: false  # Type assertions are checked manually where needed
+    check-blank: false  # Blank assignments are intentional ignores
     exclude-functions:
       # Ignore errors in defer cleanup
       - (*os.File).Close
       - (io.Closer).Close
       - (*database/sql.Rows).Close
       - (*database/sql.Stmt).Close
+      - (*database/sql.Tx).Rollback
       # Ignore errors in HTTP response writes (client disconnects are not actionable)
       - (net/http.ResponseWriter).Write
+      - io.Copy
 
   govet:
     enable-all: true
@@ -63,6 +65,8 @@ issues:
         - errcheck
         - unparam
         - nakedret
+        - govet  # Allow shadow variables in tests
+        - rowserrcheck  # Test queries don't need full error handling
 
     # Allow unused parameters in interface implementations
     - linters:

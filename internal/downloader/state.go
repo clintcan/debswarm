@@ -161,6 +161,9 @@ func (sm *StateManager) GetPendingDownloads() ([]*DownloadState, error) {
 			states = append(states, state)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating downloads: %w", err)
+	}
 
 	return states, nil
 }

@@ -373,7 +373,7 @@ func PrintResults(w io.Writer, results []*Result) {
 
 // ConcurrencyBenchmark tests different worker counts
 func (r *Runner) ConcurrencyBenchmark(ctx context.Context, fileSize int64, peerCount int, workerCounts []int) ([]*Result, error) {
-	var results []*Result
+	results := make([]*Result, 0, len(workerCounts))
 
 	// Create peer configs
 	peerConfigs := make([]PeerConfig, peerCount)

@@ -602,7 +602,6 @@ func isAllowedMirrorURL(url string) bool {
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
-	start := time.Now()
 
 	// Extract path for caching
 	path := index.ExtractPathFromURL(url)
@@ -649,7 +648,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	}
 
 	result, err, shared := s.downloadGroup.Do(coalescingKey, func() (interface{}, error) {
-		return s.downloadPackage(ctx, url, expectedHash, expectedSize, path, start)
+		return s.downloadPackage(ctx, url, expectedHash, expectedSize, path)
 	})
 
 	if shared {
@@ -678,7 +677,7 @@ type packageDownloadResult struct {
 }
 
 // downloadPackage performs the actual download (called via singleflight)
-func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string, start time.Time) (*packageDownloadResult, error) {
+func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string) (*packageDownloadResult, error) {
 	// Build download sources
 	var peerSources []downloader.Source
 	var mirrorSource downloader.Source
