@@ -288,5 +288,9 @@ func (sm *StateManager) GetPendingChunks(hash string) ([]*ChunkState, error) {
 		chunks = append(chunks, &cs)
 	}
 
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
 	return chunks, nil
 }

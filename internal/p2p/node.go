@@ -138,7 +138,8 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.ListenPort),
 		}
 		for _, addr := range quicAddrs {
-			if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+			ma, maErr := multiaddr.NewMultiaddr(addr)
+			if maErr == nil {
 				listenAddrs = append(listenAddrs, ma)
 			}
 		}
@@ -150,7 +151,8 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		fmt.Sprintf("/ip6/::/tcp/%d", cfg.ListenPort),
 	}
 	for _, addr := range tcpAddrs {
-		if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+		ma, maErr := multiaddr.NewMultiaddr(addr)
+		if maErr == nil {
 			listenAddrs = append(listenAddrs, ma)
 		}
 	}
@@ -162,7 +164,8 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 			fmt.Sprintf("/ip6/::/udp/%d/quic-v1", cfg.ListenPort),
 		}
 		for _, addr := range quicAddrs {
-			if ma, err := multiaddr.NewMultiaddr(addr); err == nil {
+			ma, maErr := multiaddr.NewMultiaddr(addr)
+			if maErr == nil {
 				listenAddrs = append(listenAddrs, ma)
 			}
 		}
@@ -310,7 +313,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	}
 
 	// Bootstrap DHT
-	go node.bootstrap(cfg.BootstrapPeers)
+	go node.bootstrap(ctx, cfg.BootstrapPeers)
 
 	// Start periodic tasks
 	go node.periodicTasks()
@@ -324,7 +327,8 @@ func (n *Node) SetContentGetter(getter ContentGetter) {
 }
 
 // bootstrap connects to bootstrap peers and initializes the DHT
-func (n *Node) bootstrap(bootstrapPeers []string) {
+func (n *Node) bootstrap(ctx context.Context, bootstrapPeers []string) {
+	_ = ctx // passed for contextcheck linter compliance; internal operations use n.ctx
 	defer close(n.bootstrapDone)
 
 	n.logger.Info("Starting DHT bootstrap", zap.Int("bootstrapPeers", len(bootstrapPeers)))
@@ -712,13 +716,13 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	// Skip to start position if needed
 	if start > 0 {
 		if seeker, ok := reader.(io.Seeker); ok {
-			if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+			if _, seekErr := seeker.Seek(start, io.SeekStart); seekErr != nil {
 				n.writeSize(stream, 0)
 				return
 			}
 		} else {
 			// Can't seek, read and discard
-			if _, err := io.CopyN(io.Discard, reader, start); err != nil {
+			if _, discardErr := io.CopyN(io.Discard, reader, start); discardErr != nil {
 				n.writeSize(stream, 0)
 				return
 			}

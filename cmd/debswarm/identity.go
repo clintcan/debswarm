@@ -49,7 +49,7 @@ func identityShowCmd() *cobra.Command {
 			fmt.Printf("══════════════════════════════════════\n")
 
 			// Check if identity file exists
-			if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+			if _, statErr := os.Stat(keyPath); os.IsNotExist(statErr) {
 				fmt.Printf("Status:      No persistent identity\n")
 				fmt.Printf("Key File:    %s (not created yet)\n", keyPath)
 				fmt.Printf("\nA persistent identity will be created when the daemon starts.\n")
@@ -102,18 +102,18 @@ need to be updated.`,
 			keyPath := filepath.Join(identityDir, p2p.IdentityKeyFile)
 
 			// Check if file exists and confirm
-			if _, err := os.Stat(keyPath); err == nil && !force {
+			if _, statErr := os.Stat(keyPath); statErr == nil && !force {
 				// Load current identity to show what we're replacing
-				privKey, err := p2p.LoadIdentity(keyPath)
-				if err == nil {
+				privKey, loadErr := p2p.LoadIdentity(keyPath)
+				if loadErr == nil {
 					fmt.Printf("Current Peer ID: %s\n\n", p2p.IdentityFingerprint(privKey))
 				}
 				return fmt.Errorf("identity file exists at %s\n\nUse --force to regenerate (this will change your peer ID)", keyPath)
 			}
 
 			// Ensure directory exists
-			if err := os.MkdirAll(identityDir, 0700); err != nil {
-				return fmt.Errorf("failed to create identity directory: %w", err)
+			if mkdirErr := os.MkdirAll(identityDir, 0700); mkdirErr != nil {
+				return fmt.Errorf("failed to create identity directory: %w", mkdirErr)
 			}
 
 			// Generate new identity

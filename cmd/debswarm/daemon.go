@@ -83,8 +83,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate configuration - fail fast on invalid settings
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid configuration: %w", err)
+	if validateErr := cfg.Validate(); validateErr != nil {
+		return fmt.Errorf("invalid configuration: %w", validateErr)
 	}
 
 	// Override with command-line flags
@@ -108,8 +108,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Pre-flight directory validation - fail fast if directories are unusable
-	if err := validateDirectories(cfg.Cache.Path, p2pDataDir); err != nil {
-		return fmt.Errorf("directory validation failed: %w", err)
+	if dirErr := validateDirectories(cfg.Cache.Path, p2pDataDir); dirErr != nil {
+		return fmt.Errorf("directory validation failed: %w", dirErr)
 	}
 	logger.Debug("Directory validation passed",
 		zap.String("cachePath", cfg.Cache.Path),
@@ -179,18 +179,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Load PSK for private swarm if configured
 	var psk []byte
 	if cfg.Privacy.PSKPath != "" {
-		loadedPSK, err := p2p.LoadPSK(cfg.Privacy.PSKPath)
-		if err != nil {
-			return fmt.Errorf("failed to load PSK: %w", err)
+		loadedPSK, pskErr := p2p.LoadPSK(cfg.Privacy.PSKPath)
+		if pskErr != nil {
+			return fmt.Errorf("failed to load PSK: %w", pskErr)
 		}
 		psk = loadedPSK
 		logger.Info("Loaded PSK from file",
 			zap.String("path", cfg.Privacy.PSKPath),
 			zap.String("fingerprint", p2p.PSKFingerprint(loadedPSK)))
 	} else if cfg.Privacy.PSK != "" {
-		loadedPSK, err := p2p.ParsePSKFromHex(cfg.Privacy.PSK)
-		if err != nil {
-			return fmt.Errorf("failed to parse inline PSK: %w", err)
+		loadedPSK, pskErr := p2p.ParsePSKFromHex(cfg.Privacy.PSK)
+		if pskErr != nil {
+			return fmt.Errorf("failed to parse inline PSK: %w", pskErr)
 		}
 		psk = loadedPSK
 		logger.Warn("Using inline PSK from config (consider using psk_path instead)",
@@ -355,29 +355,29 @@ func validateDirectories(cachePath, dataDir string) error {
 	if err := checkDirectory(cacheDir, "cache parent"); err != nil {
 		return err
 	}
-	if err := checkDirectory(cachePath, "cache"); err != nil {
+	if checkErr := checkDirectory(cachePath, "cache"); checkErr != nil {
 		// Cache directory might not exist yet - check if we can create it
-		if os.IsNotExist(err) {
-			if err := os.MkdirAll(cachePath, 0755); err != nil {
-				return fmt.Errorf("cannot create cache directory %s: %w", cachePath, err)
+		if os.IsNotExist(checkErr) {
+			if mkdirErr := os.MkdirAll(cachePath, 0755); mkdirErr != nil {
+				return fmt.Errorf("cannot create cache directory %s: %w", cachePath, mkdirErr)
 			}
 			// Clean up - let the cache package create it properly
 			_ = os.Remove(cachePath)
 		} else {
-			return err
+			return checkErr
 		}
 	}
 
 	// Check data directory (for identity keys, etc.)
 	if dataDir != "" {
-		if err := checkDirectory(dataDir, "data"); err != nil {
+		if checkErr := checkDirectory(dataDir, "data"); checkErr != nil {
 			// Data directory might not exist yet - check if we can create it
-			if os.IsNotExist(err) {
-				if err := os.MkdirAll(dataDir, 0700); err != nil {
-					return fmt.Errorf("cannot create data directory %s: %w", dataDir, err)
+			if os.IsNotExist(checkErr) {
+				if mkdirErr := os.MkdirAll(dataDir, 0700); mkdirErr != nil {
+					return fmt.Errorf("cannot create data directory %s: %w", dataDir, mkdirErr)
 				}
 			} else {
-				return err
+				return checkErr
 			}
 		}
 	}

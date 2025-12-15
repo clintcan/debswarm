@@ -313,9 +313,9 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) 
 		// If server returned 200 instead of 206, it doesn't support ranges
 		// We need to read and discard bytes before start, then read until end
 		if resp.StatusCode == http.StatusOK {
-			data, err := f.handleNonRangeResponse(resp, start, end)
-			if err != nil {
-				lastErr = err
+			data, handleErr := f.handleNonRangeResponse(resp, start, end)
+			if handleErr != nil {
+				lastErr = handleErr
 				f.recordError(url)
 				continue
 			}

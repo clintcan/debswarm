@@ -123,8 +123,8 @@ func openDatabaseWithRecovery(dbPath string, logger *zap.Logger) (*sql.DB, error
 			zap.String("path", dbPath))
 
 		// Close the corrupted database
-		if err := db.Close(); err != nil {
-			logger.Warn("Failed to close corrupted database", zap.Error(err))
+		if closeErr := db.Close(); closeErr != nil {
+			logger.Warn("Failed to close corrupted database", zap.Error(closeErr))
 		}
 
 		// Attempt recovery
@@ -395,11 +395,11 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		}
 		return fmt.Errorf("failed to write data: %w", err)
 	}
-	if err := f.Close(); err != nil {
+	if closeErr := f.Close(); closeErr != nil {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
 		}
-		return fmt.Errorf("failed to close file: %w", err)
+		return fmt.Errorf("failed to close file: %w", closeErr)
 	}
 
 	// Verify hash
@@ -412,20 +412,20 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 	}
 
 	// Ensure we have space
-	if err := c.ensureSpace(size); err != nil {
+	if spaceErr := c.ensureSpace(size); spaceErr != nil {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
 		}
-		return err
+		return spaceErr
 	}
 
 	// Move to final location
 	finalPath := c.packagePath(expectedHash)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0750); err != nil {
+	if mkdirErr := os.MkdirAll(filepath.Dir(finalPath), 0750); mkdirErr != nil {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
 		}
-		return err
+		return mkdirErr
 	}
 
 	if err := os.Rename(pendingPath, finalPath); err != nil {
@@ -489,8 +489,8 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 
 	// Delete file
 	path := c.packagePath(sha256Hash)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+		return removeErr
 	}
 
 	// Delete from database
