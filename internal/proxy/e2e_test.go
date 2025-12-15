@@ -64,8 +64,13 @@ SHA256: %s
 
 	// Test 1: Fetch Packages index directly from mock mirror
 	t.Run("FetchPackagesIndex", func(t *testing.T) {
+		ctx := context.Background()
 		url := mirrorServer.URL + "/dists/stable/main/binary-amd64/Packages"
-		resp, err := http.Get(url)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Failed to fetch Packages: %v", err)
 		}
@@ -86,8 +91,13 @@ SHA256: %s
 
 	// Test 2: Fetch package from mock mirror
 	t.Run("FetchPackageFromMirror", func(t *testing.T) {
+		ctx := context.Background()
 		url := mirrorServer.URL + "/pool/main/t/test-package/test-package_1.0.0_amd64.deb"
-		resp, err := http.Get(url)
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatalf("Failed to fetch package: %v", err)
 		}
@@ -141,7 +151,11 @@ SHA256: %s
 
 		// Request a package through the proxy (this will try to fetch from the URL)
 		// The proxy will forward requests to the actual URL in the request
-		req, _ := http.NewRequest("GET", proxyTestServer.URL+"/", nil)
+		ctx := context.Background()
+		req, err := http.NewRequestWithContext(ctx, "GET", proxyTestServer.URL+"/", nil)
+		if err != nil {
+			t.Fatalf("Failed to create request: %v", err)
+		}
 		req.Host = "example.com" // Simulate APT request to a host
 
 		resp, err := http.DefaultClient.Do(req)
