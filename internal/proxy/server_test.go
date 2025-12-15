@@ -452,3 +452,508 @@ func TestSetSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+// newTestServerWithMirror creates a test server for testing with mock mirrors
+func newTestServerWithMirror(t *testing.T) *Server {
+	t.Helper()
+	cfg := &Config{
+		Addr:           "127.0.0.1:0",
+		P2PTimeout:     5 * time.Second,
+		DHTLookupLimit: 10,
+		MetricsPort:    0,
+		Metrics:        metrics.New(),
+		Timeouts:       timeouts.NewManager(nil),
+		Scorer:         peers.NewScorer(),
+	}
+
+	pkgCache := newTestCache(t)
+	logger := newTestLogger()
+	idx := index.New(t.TempDir(), logger)
+
+	// Create fetcher - it will use the mock server URLs directly
+	fetcher := mirror.NewFetcher(nil, logger)
+
+	return NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+}
+
+func TestHandleIndexRequest(t *testing.T) {
+	// Create mock mirror server
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Return a minimal Packages file content
+		packagesContent := `Package: hello
+Version: 2.10-2
+Architecture: amd64
+Filename: pool/main/h/hello/hello_2.10-2_amd64.deb
+Size: 52832
+SHA256: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+
+`
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(packagesContent))
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Make request for index file
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/dists/jammy/main/binary-amd64/Packages", nil)
+	w := httptest.NewRecorder()
+
+	server.handleIndexRequest(w, req, mockMirror.URL+"/dists/jammy/main/binary-amd64/Packages")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if !strings.Contains(w.Body.String(), "Package: hello") {
+		t.Error("Response should contain package data")
+	}
+}
+
+func TestHandleIndexRequest_Error(t *testing.T) {
+	// Create mock server that returns error
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/Packages", nil)
+	w := httptest.NewRecorder()
+
+	server.handleIndexRequest(w, req, mockMirror.URL+"/Packages")
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusBadGateway)
+	}
+}
+
+func TestHandlePassthrough(t *testing.T) {
+	expectedContent := "Release file content"
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(expectedContent))
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/Release", nil)
+	w := httptest.NewRecorder()
+
+	server.handlePassthrough(w, req, mockMirror.URL+"/Release")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Body.String() != expectedContent {
+		t.Errorf("Body = %q, want %q", w.Body.String(), expectedContent)
+	}
+
+	// Verify stats updated
+	stats := server.GetStats()
+	if stats.RequestsMirror != 1 {
+		t.Errorf("RequestsMirror = %d, want 1", stats.RequestsMirror)
+	}
+	if stats.BytesFromMirror != int64(len(expectedContent)) {
+		t.Errorf("BytesFromMirror = %d, want %d", stats.BytesFromMirror, len(expectedContent))
+	}
+}
+
+func TestHandlePassthrough_Error(t *testing.T) {
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/Release", nil)
+	w := httptest.NewRecorder()
+
+	server.handlePassthrough(w, req, mockMirror.URL+"/Release")
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusBadGateway)
+	}
+}
+
+func TestHandleReleaseRequest(t *testing.T) {
+	expectedContent := "InRelease content"
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(expectedContent))
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/InRelease", nil)
+	w := httptest.NewRecorder()
+
+	server.handleReleaseRequest(w, req, mockMirror.URL+"/InRelease")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Body.String() != expectedContent {
+		t.Errorf("Body = %q, want %q", w.Body.String(), expectedContent)
+	}
+}
+
+func TestServeFromCache(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Pre-populate cache with test data
+	testData := []byte("test package content")
+	testHash := "5e724d7612dcfb976620c30f396459d3f5ccb9f750ba6f8251fc354ba8e9aa99"
+
+	err := server.cache.Put(strings.NewReader(string(testData)), testHash, "test.deb")
+	if err != nil {
+		t.Fatalf("Failed to populate cache: %v", err)
+	}
+
+	// Serve from cache
+	w := httptest.NewRecorder()
+	server.serveFromCache(w, testHash)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Header().Get("Content-Type") != "application/vnd.debian.binary-package" {
+		t.Errorf("Content-Type = %q, want debian package", w.Header().Get("Content-Type"))
+	}
+
+	if w.Header().Get("X-Debswarm-Source") != "cache" {
+		t.Errorf("X-Debswarm-Source = %q, want cache", w.Header().Get("X-Debswarm-Source"))
+	}
+
+	if w.Body.String() != string(testData) {
+		t.Errorf("Body = %q, want %q", w.Body.String(), string(testData))
+	}
+}
+
+func TestServeFromCache_NotFound(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	w := httptest.NewRecorder()
+	server.serveFromCache(w, "nonexistent_hash_1234567890abcdef1234567890abcdef")
+
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestHandlePackageRequest_CacheHit(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Pre-populate cache
+	testData := []byte("cached package data")
+	testHash := "ed4fadeed15018a95148883178b673dcbf15d03a5a77c92d2d82827fac612b51"
+
+	err := server.cache.Put(strings.NewReader(string(testData)), testHash, "pool/main/h/hello/hello.deb")
+	if err != nil {
+		t.Fatalf("Failed to populate cache: %v", err)
+	}
+
+	// Add package to index so it can be found
+	packagesContent := `Package: hello
+Version: 2.10
+Filename: pool/main/h/hello/hello.deb
+Size: 19
+SHA256: ed4fadeed15018a95148883178b673dcbf15d03a5a77c92d2d82827fac612b51
+
+`
+	err = server.index.LoadFromData([]byte(packagesContent), "http://archive.ubuntu.com/ubuntu")
+	if err != nil {
+		t.Fatalf("Failed to load index: %v", err)
+	}
+
+	// Make request
+	req := httptest.NewRequest("GET", "/http://archive.ubuntu.com/ubuntu/pool/main/h/hello/hello.deb", nil)
+	w := httptest.NewRecorder()
+
+	server.handlePackageRequest(w, req, "http://archive.ubuntu.com/ubuntu/pool/main/h/hello/hello.deb")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Header().Get("X-Debswarm-Source") != "cache" {
+		t.Errorf("X-Debswarm-Source = %q, want cache", w.Header().Get("X-Debswarm-Source"))
+	}
+
+	// Verify cache hit stats
+	stats := server.GetStats()
+	if stats.CacheHits != 1 {
+		t.Errorf("CacheHits = %d, want 1", stats.CacheHits)
+	}
+}
+
+func TestHandlePackageRequest_MirrorFallback(t *testing.T) {
+	packageContent := []byte("package binary content")
+
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(packageContent)
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Request without hash in index - will fall back to mirror
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/pool/main/h/hello/hello.deb", nil)
+	w := httptest.NewRecorder()
+
+	server.handlePackageRequest(w, req, mockMirror.URL+"/pool/main/h/hello/hello.deb")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Body.String() != string(packageContent) {
+		t.Errorf("Body mismatch")
+	}
+
+	// Should count as mirror request
+	stats := server.GetStats()
+	if stats.RequestsMirror != 1 {
+		t.Errorf("RequestsMirror = %d, want 1", stats.RequestsMirror)
+	}
+}
+
+func TestHandlePackageRequest_MirrorError(t *testing.T) {
+	mockMirror := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	req := httptest.NewRequest("GET", "/"+mockMirror.URL+"/nonexistent.deb", nil)
+	w := httptest.NewRecorder()
+
+	server.handlePackageRequest(w, req, mockMirror.URL+"/nonexistent.deb")
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusBadGateway)
+	}
+}
+
+func TestHandleRequest_StatsTracking(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Make request - will fail due to invalid URL but should still track stats
+	req := httptest.NewRequest("GET", "/invalid", nil)
+	w := httptest.NewRecorder()
+
+	server.handleRequest(w, req)
+
+	// Verify request was counted even for invalid requests
+	stats := server.GetStats()
+	if stats.RequestsTotal != 1 {
+		t.Errorf("RequestsTotal = %d, want 1", stats.RequestsTotal)
+	}
+}
+
+func TestHandleRequest_ActiveConnTracking(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	// Before request
+	stats := server.GetStats()
+	if stats.ActiveConnections != 0 {
+		t.Errorf("Initial ActiveConnections = %d, want 0", stats.ActiveConnections)
+	}
+
+	// Make request
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	server.handleRequest(w, req)
+
+	// After request completes, connections should be back to 0
+	stats = server.GetStats()
+	if stats.ActiveConnections != 0 {
+		t.Errorf("Final ActiveConnections = %d, want 0", stats.ActiveConnections)
+	}
+}
+
+func TestServePackageResult(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	result := &packageDownloadResult{
+		data:        []byte("test data"),
+		hash:        "testhash",
+		source:      "peer",
+		contentType: "application/vnd.debian.binary-package",
+	}
+
+	w := httptest.NewRecorder()
+	server.servePackageResult(w, result)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	if w.Header().Get("Content-Type") != "application/vnd.debian.binary-package" {
+		t.Errorf("Content-Type mismatch")
+	}
+
+	if w.Header().Get("X-Debswarm-Source") != "peer" {
+		t.Errorf("X-Debswarm-Source = %q, want peer", w.Header().Get("X-Debswarm-Source"))
+	}
+
+	if w.Body.String() != "test data" {
+		t.Errorf("Body mismatch")
+	}
+}
+
+func TestCacheAndAnnounce(t *testing.T) {
+	server := newTestServer(t)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	testData := []byte("test content")
+	testHash := "6ae8a75555209fd6c44157c0aed8016e763ff435a19cf186f76863140143ff72"
+
+	// Should not panic without p2p node
+	server.cacheAndAnnounce(testData, testHash, "test.deb")
+
+	// Verify data was cached
+	if !server.cache.Has(testHash) {
+		t.Error("Data should be cached")
+	}
+}
+
+func TestGetDashboardStats_WithCacheMaxSize(t *testing.T) {
+	cfg := &Config{
+		Addr:           "127.0.0.1:0",
+		P2PTimeout:     5 * time.Second,
+		DHTLookupLimit: 10,
+		MetricsPort:    0,
+		CacheMaxSize:   1024 * 1024 * 100, // 100MB
+		Metrics:        metrics.New(),
+		Timeouts:       timeouts.NewManager(nil),
+		Scorer:         peers.NewScorer(),
+	}
+
+	pkgCache := newTestCache(t)
+	logger := newTestLogger()
+	idx := index.New(t.TempDir(), logger)
+	fetcher := mirror.NewFetcher(nil, logger)
+
+	server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	stats := server.GetDashboardStats()
+
+	if stats.CacheMaxSize == "" {
+		t.Error("CacheMaxSize should be formatted")
+	}
+
+	// With empty cache, usage should be 0
+	if stats.CacheUsagePercent != 0 {
+		t.Errorf("CacheUsagePercent = %f, want 0", stats.CacheUsagePercent)
+	}
+}
+
+func TestAnnouncementWorker_ChannelFull(t *testing.T) {
+	server := newTestServer(t)
+
+	// Fill up announcement channel (capacity is 100)
+	for i := 0; i < 150; i++ {
+		server.announceAsync("hash" + string(rune(i)))
+	}
+
+	// Should not block or panic
+	server.announceAsync("final_hash")
+
+	// Shutdown properly
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
+}
+
+func TestUpdateMetrics_NilMetrics(t *testing.T) {
+	server := newTestServer(t)
+	server.metrics = nil
+
+	// Should not panic
+	server.UpdateMetrics()
+}
