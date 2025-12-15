@@ -1,4 +1,4 @@
-# debswarm
+# Debswarm
 
 **Peer-to-peer package distribution for Debian/Ubuntu**
 
