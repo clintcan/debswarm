@@ -891,8 +891,8 @@ distributed to all nodes that should participate in the private swarm.`,
 				outputPath = filepath.Join(homeDir, ".config", "debswarm", "swarm.key")
 			}
 
-			// Create parent directory
-			if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+			// Create parent directory with restricted permissions
+			if err := os.MkdirAll(filepath.Dir(outputPath), 0750); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 

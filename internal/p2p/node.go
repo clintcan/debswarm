@@ -219,7 +219,9 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		dht.ProtocolPrefix("/debswarm"),
 	)
 	if err != nil {
-		h.Close()
+		if closeErr := h.Close(); closeErr != nil {
+			logger.Debug("Failed to close host during cleanup", zap.Error(closeErr))
+		}
 		cancel()
 		return nil, fmt.Errorf("failed to create DHT: %w", err)
 	}
@@ -791,7 +793,9 @@ func (n *Node) Close() error {
 	n.cancel()
 
 	if n.mdnsService != nil {
-		n.mdnsService.Close()
+		if err := n.mdnsService.Close(); err != nil {
+			n.logger.Warn("Failed to close mDNS service", zap.Error(err))
+		}
 	}
 
 	if err := n.dht.Close(); err != nil {

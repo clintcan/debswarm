@@ -55,7 +55,7 @@ func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
 	indicesDir := filepath.Join(basePath, "indices")
 
 	for _, dir := range []string{packagesDir, pendingDir, indicesDir} {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
 	}
@@ -69,7 +69,9 @@ func New(basePath string, maxSize int64, logger *zap.Logger) (*Cache, error) {
 
 	// Create tables
 	if err := createTables(db); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, fmt.Errorf("failed to create tables: %w (also failed to close db: %v)", err, closeErr)
+		}
 		return nil, fmt.Errorf("failed to create tables: %w", err)
 	}
 
@@ -222,7 +224,9 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	// Get package info
 	pkg, err := c.getPackageInfo(sha256Hash)
 	if err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			c.logger.Warn("Failed to close file during cleanup", zap.Error(closeErr))
+		}
 		c.activeReadersMu.Lock()
 		c.activeReaders[sha256Hash]--
 		if c.activeReaders[sha256Hash] <= 0 {
@@ -252,34 +256,51 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 
 	size, err := io.Copy(writer, data)
 	if err != nil {
-		f.Close()
-		os.Remove(pendingPath)
+		if closeErr := f.Close(); closeErr != nil {
+			c.logger.Warn("Failed to close file during cleanup", zap.Error(closeErr))
+		}
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
 		return fmt.Errorf("failed to write data: %w", err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
+		return fmt.Errorf("failed to close file: %w", err)
+	}
 
 	// Verify hash
 	actualHash := hex.EncodeToString(hasher.Sum(nil))
 	if actualHash != expectedHash {
-		os.Remove(pendingPath)
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
 		return fmt.Errorf("%w: expected %s, got %s", ErrHashMismatch, expectedHash, actualHash)
 	}
 
 	// Ensure we have space
 	if err := c.ensureSpace(size); err != nil {
-		os.Remove(pendingPath)
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
 		return err
 	}
 
 	// Move to final location
 	finalPath := c.packagePath(expectedHash)
-	if err := os.MkdirAll(filepath.Dir(finalPath), 0755); err != nil {
-		os.Remove(pendingPath)
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0750); err != nil {
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
 		return err
 	}
 
 	if err := os.Rename(pendingPath, finalPath); err != nil {
-		os.Remove(pendingPath)
+		if removeErr := os.Remove(pendingPath); removeErr != nil {
+			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
+		}
 		return err
 	}
 
@@ -545,7 +566,7 @@ func (c *Cache) PartialDir(hash string) string {
 // EnsurePartialDir creates the partial download directory for a hash
 func (c *Cache) EnsurePartialDir(hash string) error {
 	dir := c.PartialDir(hash)
-	return os.MkdirAll(dir, 0755)
+	return os.MkdirAll(dir, 0750)
 }
 
 // CleanPartialDir removes the partial download directory for a hash
