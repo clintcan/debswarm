@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+	"go.uber.org/zap"
+
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/config"
 	"github.com/debswarm/debswarm/internal/dashboard"
@@ -19,8 +22,6 @@ import (
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/proxy"
 	"github.com/debswarm/debswarm/internal/timeouts"
-	"github.com/spf13/cobra"
-	"go.uber.org/zap"
 )
 
 func daemonCmd() *cobra.Command {

@@ -11,9 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/p2p"
-	"github.com/spf13/cobra"
 )
 
 func seedCmd() *cobra.Command {

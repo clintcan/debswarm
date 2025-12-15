@@ -14,9 +14,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
-	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // Configuration constants

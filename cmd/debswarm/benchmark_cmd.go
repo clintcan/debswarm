@@ -8,9 +8,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/debswarm/debswarm/internal/benchmark"
 	"github.com/debswarm/debswarm/internal/config"
-	"github.com/spf13/cobra"
 )
 
 func benchmarkCmd() *cobra.Command {

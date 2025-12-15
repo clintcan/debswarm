@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/debswarm/debswarm/internal/config"
 	"github.com/spf13/cobra"
+
+	"github.com/debswarm/debswarm/internal/config"
 )
 
 func configCmd() *cobra.Command {

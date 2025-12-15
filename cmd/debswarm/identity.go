@@ -5,8 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/spf13/cobra"
+
+	"github.com/debswarm/debswarm/internal/p2p"
 )
 
 func identityCmd() *cobra.Command {

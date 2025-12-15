@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/debswarm/debswarm/internal/cache"
@@ -27,8 +29,6 @@ import (
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
-	"github.com/libp2p/go-libp2p/core/peer"
-	"go.uber.org/zap"
 )
 
 // Server is the HTTP proxy server

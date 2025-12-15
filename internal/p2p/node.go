@@ -12,10 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/debswarm/debswarm/internal/metrics"
-	"github.com/debswarm/debswarm/internal/peers"
-	"github.com/debswarm/debswarm/internal/ratelimit"
-	"github.com/debswarm/debswarm/internal/timeouts"
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -29,6 +25,11 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
+
+	"github.com/debswarm/debswarm/internal/metrics"
+	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/ratelimit"
+	"github.com/debswarm/debswarm/internal/timeouts"
 )
 
 const (

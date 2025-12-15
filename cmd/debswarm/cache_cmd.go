@@ -3,8 +3,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/spf13/cobra"
+
+	"github.com/debswarm/debswarm/internal/cache"
 )
 
 func cacheCmd() *cobra.Command {
