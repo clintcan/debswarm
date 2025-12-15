@@ -81,10 +81,11 @@ type Config struct {
 	DHTLookupLimit int
 	MetricsPort    int
 	MetricsBind    string // Bind address for metrics server (default: 127.0.0.1)
-	CacheMaxSize   int64
-	Metrics        *metrics.Metrics
-	Timeouts       *timeouts.Manager
-	Scorer         *peers.Scorer
+	CacheMaxSize               int64
+	MaxConcurrentPeerDownloads int // Maximum concurrent peer downloads (0 = default)
+	Metrics                    *metrics.Metrics
+	Timeouts                   *timeouts.Manager
+	Scorer                     *peers.Scorer
 }
 
 // DefaultConfig returns default configuration
@@ -160,10 +161,16 @@ func NewServer(
 	// Create state manager for download resume support
 	stateManager := downloader.NewStateManager(pkgCache.GetDB())
 
+	// Determine max concurrent downloads (use config or default)
+	maxConcurrentDownloads := cfg.MaxConcurrentPeerDownloads
+	if maxConcurrentDownloads <= 0 {
+		maxConcurrentDownloads = downloader.MaxConcurrentChunks
+	}
+
 	// Create downloader with all the goodies
 	s.downloader = downloader.New(&downloader.Config{
 		ChunkSize:     downloader.DefaultChunkSize,
-		MaxConcurrent: downloader.MaxConcurrentChunks,
+		MaxConcurrent: maxConcurrentDownloads,
 		Scorer:        scorer,
 		Metrics:       m,
 		StateManager:  stateManager,

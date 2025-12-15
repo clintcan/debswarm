@@ -25,7 +25,7 @@ This document tracks the gaps and improvements needed before a production-ready 
 |-------|----------|-------------|--------|
 | **IPv6 validation** | `internal/p2p/node.go` | Configured in libp2p but not tested on IPv6-only systems | Not started |
 | **E2E tests** | `tests/` | Only unit tests with simulated peers; no real APT integration tests | Not started |
-| **MaxConcurrentUploads enforcement** | `internal/config/config.go:43-44` | `transfer.max_concurrent_uploads` and `max_concurrent_peer_downloads` not fully enforced at daemon level | Not started |
+| **MaxConcurrentUploads enforcement** | `internal/config/config.go:43-44` | `transfer.max_concurrent_uploads` and `max_concurrent_peer_downloads` not fully enforced at daemon level | **Done** (v0.8.1) |
 | **Systemd directory validation** | `cmd/debswarm/main.go` | No pre-flight check that StateDirectory exists and is writable | **Done** (v0.8.0) |
 
 ## Low Priority (Post-1.0)
@@ -109,8 +109,16 @@ Implemented in `cmd/debswarm/main.go`:
 - Fails fast with clear error messages if directories are unusable
 - Called after config validation, before component initialization
 
+### MaxConcurrentUploads Enforcement (Done)
+Implemented across multiple files:
+- `internal/p2p/node.go`: Added `MaxConcurrentUploads` to Config, wired to `canAcceptUpload()`
+- `internal/proxy/server.go`: Added `MaxConcurrentPeerDownloads` to Config, passed to downloader
+- `cmd/debswarm/main.go`: Wired `cfg.Transfer.MaxConcurrentUploads` and `cfg.Transfer.MaxConcurrentPeerDownloads`
+- Both options use sensible defaults (20 uploads, 10 downloads) when not configured
+
 ## Version History
 
+- **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
 - **v0.8.0** (2025-12-15): Medium priority - systemd directory validation
 - **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation
 - **v0.6.2** (2025-12-15): Critical 1.0 blockers - MaxConnections, MinFreeSpace, health endpoint

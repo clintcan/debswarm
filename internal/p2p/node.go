@@ -69,9 +69,10 @@ type Node struct {
 	downloadLimiter *ratelimit.Limiter
 
 	// Upload tracking
-	uploadsMu      sync.Mutex
-	activeUploads  int
-	uploadsPerPeer map[peer.ID]int
+	uploadsMu            sync.Mutex
+	activeUploads        int
+	uploadsPerPeer       map[peer.ID]int
+	maxConcurrentUploads int
 }
 
 // ContentGetter is a function that retrieves content by hash
@@ -87,8 +88,9 @@ type Config struct {
 	PreferQUIC      bool   // Prefer QUIC over TCP
 	MaxUploadRate   int64  // bytes per second, 0 = unlimited
 	MaxDownloadRate int64  // bytes per second, 0 = unlimited
-	MaxConnections  int    // Maximum number of connections (0 = default 100)
-	PSK             []byte   // Pre-shared key for private swarm
+	MaxConnections       int    // Maximum number of connections (0 = default 100)
+	MaxConcurrentUploads int    // Maximum concurrent uploads (0 = default 20)
+	PSK                  []byte // Pre-shared key for private swarm
 	PeerAllowlist   []string // Allowed peer IDs (empty = all allowed)
 	Scorer          *peers.Scorer
 	Timeouts        *timeouts.Manager
@@ -274,9 +276,15 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		timeouts:         tm,
 		metrics:          cfg.Metrics,
 		bootstrapDone:    make(chan struct{}),
-		uploadsPerPeer:   make(map[peer.ID]int),
-		uploadLimiter:    ratelimit.New(cfg.MaxUploadRate),
-		downloadLimiter:  ratelimit.New(cfg.MaxDownloadRate),
+		uploadsPerPeer:       make(map[peer.ID]int),
+		maxConcurrentUploads: cfg.MaxConcurrentUploads,
+		uploadLimiter:        ratelimit.New(cfg.MaxUploadRate),
+		downloadLimiter:      ratelimit.New(cfg.MaxDownloadRate),
+	}
+
+	// Apply default for max concurrent uploads if not set
+	if node.maxConcurrentUploads <= 0 {
+		node.maxConcurrentUploads = MaxConcurrentUploads
 	}
 
 	if cfg.MaxUploadRate > 0 {
@@ -756,7 +764,7 @@ func (n *Node) canAcceptUpload(peerID peer.ID) bool {
 	n.uploadsMu.Lock()
 	defer n.uploadsMu.Unlock()
 
-	if n.activeUploads >= MaxConcurrentUploads {
+	if n.activeUploads >= n.maxConcurrentUploads {
 		return false
 	}
 

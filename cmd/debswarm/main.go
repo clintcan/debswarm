@@ -263,19 +263,20 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Initialize P2P node with QUIC preference
 	p2pCfg := &p2p.Config{
-		ListenPort:      cfg.Network.ListenPort,
-		BootstrapPeers:  cfg.Network.BootstrapPeers,
-		EnableMDNS:      cfg.Privacy.EnableMDNS,
-		DataDir:         p2pDataDir,
-		PreferQUIC:      preferQUIC,
-		MaxUploadRate:   parsedUploadRate,
-		MaxDownloadRate: parsedDownloadRate,
-		MaxConnections:  cfg.Network.MaxConnections,
-		PSK:             psk,
-		PeerAllowlist:   cfg.Privacy.PeerAllowlist,
-		Scorer:          scorer,
-		Timeouts:        tm,
-		Metrics:         m,
+		ListenPort:           cfg.Network.ListenPort,
+		BootstrapPeers:       cfg.Network.BootstrapPeers,
+		EnableMDNS:           cfg.Privacy.EnableMDNS,
+		DataDir:              p2pDataDir,
+		PreferQUIC:           preferQUIC,
+		MaxUploadRate:        parsedUploadRate,
+		MaxDownloadRate:      parsedDownloadRate,
+		MaxConnections:       cfg.Network.MaxConnections,
+		MaxConcurrentUploads: cfg.Transfer.MaxConcurrentUploads,
+		PSK:                  psk,
+		PeerAllowlist:        cfg.Privacy.PeerAllowlist,
+		Scorer:               scorer,
+		Timeouts:             tm,
+		Metrics:              m,
 	}
 
 	p2pNode, err := p2p.New(ctx, p2pCfg, logger)
@@ -298,15 +299,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
-		Addr:           fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
-		P2PTimeout:     5 * time.Second,
-		DHTLookupLimit: 10,
-		MetricsPort:    cfg.Metrics.Port,
-		MetricsBind:    cfg.Metrics.Bind,
-		CacheMaxSize:   maxSize,
-		Metrics:        m,
-		Timeouts:       tm,
-		Scorer:         scorer,
+		Addr:                       fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
+		P2PTimeout:                 5 * time.Second,
+		DHTLookupLimit:             10,
+		MetricsPort:                cfg.Metrics.Port,
+		MetricsBind:                cfg.Metrics.Bind,
+		CacheMaxSize:               maxSize,
+		MaxConcurrentPeerDownloads: cfg.Transfer.MaxConcurrentPeerDownloads,
+		Metrics:                    m,
+		Timeouts:                   tm,
+		Scorer:                     scorer,
 	}
 
 	proxyServer := proxy.NewServer(proxyCfg, pkgCache, idx, p2pNode, fetcher, logger)
