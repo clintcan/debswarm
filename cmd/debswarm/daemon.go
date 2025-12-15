@@ -103,7 +103,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine data directory for persistent identity
-	p2pDataDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+	// Priority: --data-dir flag > STATE_DIRECTORY env (systemd) > derived from cache path
+	p2pDataDir := os.Getenv("STATE_DIRECTORY")
+	if p2pDataDir == "" {
+		p2pDataDir = filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
+	}
 	if dataDir != "" {
 		p2pDataDir = dataDir
 	}
@@ -351,19 +355,17 @@ func runPeriodicTasks(
 // This ensures the daemon fails fast with clear errors if directories are
 // missing or not writable, rather than failing later during operation.
 func validateDirectories(cachePath, dataDir string) error {
-	// Check cache directory
-	cacheDir := filepath.Dir(cachePath)
-	if err := checkDirectory(cacheDir, "cache parent"); err != nil {
-		return err
-	}
+	// Check cache directory - try to use it directly first
 	if checkErr := checkDirectory(cachePath, "cache"); checkErr != nil {
-		// Cache directory might not exist yet - check if we can create it
 		if os.IsNotExist(checkErr) {
+			// Cache directory doesn't exist - try to create it
 			if mkdirErr := os.MkdirAll(cachePath, 0755); mkdirErr != nil {
 				return fmt.Errorf("cannot create cache directory %s: %w", cachePath, mkdirErr)
 			}
-			// Clean up - let the cache package create it properly
-			_ = os.Remove(cachePath)
+			// Verify it's now writable
+			if verifyErr := checkDirectory(cachePath, "cache"); verifyErr != nil {
+				return verifyErr
+			}
 		} else {
 			return checkErr
 		}
@@ -372,8 +374,8 @@ func validateDirectories(cachePath, dataDir string) error {
 	// Check data directory (for identity keys, etc.)
 	if dataDir != "" {
 		if checkErr := checkDirectory(dataDir, "data"); checkErr != nil {
-			// Data directory might not exist yet - check if we can create it
 			if os.IsNotExist(checkErr) {
+				// Data directory doesn't exist - try to create it
 				if mkdirErr := os.MkdirAll(dataDir, 0700); mkdirErr != nil {
 					return fmt.Errorf("cannot create data directory %s: %w", dataDir, mkdirErr)
 				}

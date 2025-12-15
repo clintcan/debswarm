@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2025-12-16
+
+### Added
+- **Systemd compatibility**: Automatic detection of `CACHE_DIRECTORY` and `STATE_DIRECTORY` environment variables
+  - Running under systemd with `CacheDirectory=` and `StateDirectory=` now works out-of-box
+  - No manual config file changes needed for systemd deployments
+
+### Fixed
+- Fix directory validation to not check parent directory writability (fixes systemd `ProtectSystem=strict`)
+
 ## [1.1.1] - 2025-12-16
 
 ### Fixed

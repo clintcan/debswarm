@@ -140,12 +140,21 @@ func (c *TransferConfig) MaxDownloadRateBytes() int64 {
 	return rate
 }
 
-// DefaultConfig returns a configuration with sensible defaults
+// DefaultConfig returns a configuration with sensible defaults.
+// When running under systemd with CacheDirectory=, the CACHE_DIRECTORY
+// environment variable is used automatically.
 func DefaultConfig() *Config {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "/tmp" // Fallback for systems without a home directory
+	// Check for systemd environment variable first (set when using CacheDirectory=)
+	cachePath := os.Getenv("CACHE_DIRECTORY")
+	if cachePath == "" {
+		// Fall back to user's home directory
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			homeDir = "/tmp" // Fallback for systems without a home directory
+		}
+		cachePath = filepath.Join(homeDir, ".cache", "debswarm")
 	}
+
 	return &Config{
 		Network: NetworkConfig{
 			ListenPort:     4001,
@@ -161,7 +170,7 @@ func DefaultConfig() *Config {
 		},
 		Cache: CacheConfig{
 			MaxSize:      "10GB",
-			Path:         filepath.Join(homeDir, ".cache", "debswarm"),
+			Path:         cachePath,
 			MinFreeSpace: "1GB",
 		},
 		Transfer: TransferConfig{
