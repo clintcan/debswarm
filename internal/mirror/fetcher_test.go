@@ -473,3 +473,198 @@ func TestConcurrentFetch(t *testing.T) {
 		t.Errorf("Expected 10 successes in stats")
 	}
 }
+
+func TestFetchRange_PartialContent(t *testing.T) {
+	// Test data: "0123456789" (10 bytes)
+	fullContent := []byte("0123456789")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rangeHeader := r.Header.Get("Range")
+		if rangeHeader == "" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(fullContent)
+			return
+		}
+
+		// Parse Range header: "bytes=start-end"
+		var start, end int
+		_, err := io.WriteString(io.Discard, rangeHeader) // Just to use rangeHeader
+		if err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		// Simple parsing for "bytes=X-Y"
+		if _, err := strings.NewReader(rangeHeader).Read([]byte{}); err != nil && err != io.EOF {
+			t.Logf("Range header: %s", rangeHeader)
+		}
+
+		n, _ := strings.CutPrefix(rangeHeader, "bytes=")
+		parts := strings.Split(n, "-")
+		if len(parts) == 2 {
+			start = 0
+			end = len(fullContent) - 1
+			if parts[0] != "" {
+				var s int
+				_, _ = strings.NewReader(parts[0]).Read([]byte{})
+				for _, c := range parts[0] {
+					s = s*10 + int(c-'0')
+				}
+				start = s
+			}
+			if parts[1] != "" {
+				var e int
+				for _, c := range parts[1] {
+					e = e*10 + int(c-'0')
+				}
+				end = e
+			}
+		}
+
+		if start > len(fullContent)-1 {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if end >= len(fullContent) {
+			end = len(fullContent) - 1
+		}
+
+		w.Header().Set("Content-Range", "bytes "+parts[0]+"-"+parts[1]+"/"+string(rune('0'+len(fullContent))))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(fullContent[start : end+1])
+	}))
+	defer server.Close()
+
+	f := NewFetcher(nil, testLogger())
+
+	// Request bytes 2-5 (inclusive): "2345"
+	data, err := f.FetchRange(context.Background(), server.URL, 2, 5)
+	if err != nil {
+		t.Fatalf("FetchRange failed: %v", err)
+	}
+
+	expected := []byte("2345")
+	if !bytes.Equal(data, expected) {
+		t.Errorf("Expected %q, got %q", expected, data)
+	}
+}
+
+func TestFetchRange_FullFile(t *testing.T) {
+	expectedBody := []byte("full file content")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// When requesting full file (start=0, end=-1), FetchRange calls Fetch
+		// which doesn't set Range header
+		if r.Header.Get("Range") != "" {
+			t.Error("Expected no Range header for full file request")
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(expectedBody)
+	}))
+	defer server.Close()
+
+	f := NewFetcher(nil, testLogger())
+
+	// Request full file with start=0, end=-1
+	data, err := f.FetchRange(context.Background(), server.URL, 0, -1)
+	if err != nil {
+		t.Fatalf("FetchRange for full file failed: %v", err)
+	}
+
+	if !bytes.Equal(data, expectedBody) {
+		t.Errorf("Expected %q, got %q", expectedBody, data)
+	}
+}
+
+func TestFetchRange_ServerNoRangeSupport(t *testing.T) {
+	// Server that ignores Range header and returns 200 OK with full content
+	fullContent := []byte("0123456789ABCDEF")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Ignore Range header, return full content
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(fullContent)
+	}))
+	defer server.Close()
+
+	f := NewFetcher(nil, testLogger())
+
+	// Request bytes 4-7 (inclusive): "4567"
+	data, err := f.FetchRange(context.Background(), server.URL, 4, 7)
+	if err != nil {
+		t.Fatalf("FetchRange failed: %v", err)
+	}
+
+	expected := []byte("4567")
+	if !bytes.Equal(data, expected) {
+		t.Errorf("Expected %q, got %q", expected, data)
+	}
+}
+
+func TestFetchRange_404(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	cfg := &Config{MaxRetries: 1}
+	f := NewFetcher(cfg, testLogger())
+
+	_, err := f.FetchRange(context.Background(), server.URL, 0, 100)
+	if err == nil {
+		t.Fatal("Expected error for 404")
+	}
+	if !strings.Contains(err.Error(), "404") {
+		t.Errorf("Expected 404 in error, got: %v", err)
+	}
+}
+
+func TestFetchRange_OpenEnded(t *testing.T) {
+	// Test open-ended range: "bytes=5-" (from byte 5 to end)
+	fullContent := []byte("0123456789")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rangeHeader := r.Header.Get("Range")
+		if rangeHeader != "bytes=5-" {
+			t.Errorf("Expected Range header 'bytes=5-', got '%s'", rangeHeader)
+		}
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(fullContent[5:]) // "56789"
+	}))
+	defer server.Close()
+
+	f := NewFetcher(nil, testLogger())
+
+	// Request from byte 5 to end (open-ended: end=-1 but start>0)
+	data, err := f.FetchRange(context.Background(), server.URL, 5, -1)
+	if err != nil {
+		t.Fatalf("FetchRange failed: %v", err)
+	}
+
+	expected := []byte("56789")
+	if !bytes.Equal(data, expected) {
+		t.Errorf("Expected %q, got %q", expected, data)
+	}
+}
+
+func TestFetchRange_StatsTracking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("partial"))
+	}))
+	defer server.Close()
+
+	f := NewFetcher(nil, testLogger())
+
+	_, err := f.FetchRange(context.Background(), server.URL, 0, 6)
+	if err != nil {
+		t.Fatalf("FetchRange failed: %v", err)
+	}
+
+	stats := f.GetStats()
+	if len(stats) != 1 {
+		t.Fatalf("Expected 1 stats entry, got %d", len(stats))
+	}
+	if stats[0].SuccessCount != 1 {
+		t.Errorf("Expected 1 success, got %d", stats[0].SuccessCount)
+	}
+}

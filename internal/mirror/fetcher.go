@@ -244,6 +244,129 @@ func (f *Fetcher) Head(ctx context.Context, url string) (*http.Response, error) 
 	return f.client.Do(req)
 }
 
+// FetchRange downloads a specific byte range from a URL using HTTP Range headers.
+// If start is 0 and end is -1, it fetches the entire content.
+// The range is inclusive: bytes start-end (both included).
+func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) ([]byte, error) {
+	// If fetching full file, use regular Fetch
+	if start == 0 && end < 0 {
+		return f.Fetch(ctx, url)
+	}
+
+	startTime := time.Now()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", f.userAgent)
+
+	// Set Range header (HTTP ranges are inclusive)
+	if end < 0 {
+		// Open-ended range: from start to end of file
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+	} else {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < f.maxRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(attempt*attempt) * time.Second):
+			}
+		}
+
+		resp, err := f.client.Do(req)
+		if err != nil {
+			lastErr = err
+			f.recordError(url)
+			continue
+		}
+
+		// Accept both 200 OK (server doesn't support range) and 206 Partial Content
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				f.recordError(url)
+				return nil, lastErr
+			}
+			f.recordError(url)
+			continue
+		}
+
+		// If server returned 200 instead of 206, it doesn't support ranges
+		// We need to read and discard bytes before start, then read until end
+		if resp.StatusCode == http.StatusOK {
+			data, err := f.handleNonRangeResponse(resp, start, end)
+			if err != nil {
+				lastErr = err
+				f.recordError(url)
+				continue
+			}
+			duration := time.Since(startTime)
+			f.recordSuccess(url, int64(len(data)), duration)
+			return data, nil
+		}
+
+		// Server supports ranges - read the response
+		expectedSize := end - start + 1
+		if end < 0 {
+			expectedSize = f.maxResponseSize // Use max as limit for open-ended ranges
+		}
+
+		limitedReader := io.LimitReader(resp.Body, expectedSize+1)
+		data, err := io.ReadAll(limitedReader)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			f.recordError(url)
+			continue
+		}
+
+		duration := time.Since(startTime)
+		f.recordSuccess(url, int64(len(data)), duration)
+		return data, nil
+	}
+
+	return nil, fmt.Errorf("failed after %d retries: %w", f.maxRetries, lastErr)
+}
+
+// handleNonRangeResponse handles the case where server doesn't support Range requests
+func (f *Fetcher) handleNonRangeResponse(resp *http.Response, start, end int64) ([]byte, error) {
+	defer resp.Body.Close()
+
+	// Discard bytes before start
+	if start > 0 {
+		discarded, err := io.CopyN(io.Discard, resp.Body, start)
+		if err != nil {
+			return nil, fmt.Errorf("failed to skip %d bytes: %w", start, err)
+		}
+		if discarded < start {
+			return nil, fmt.Errorf("file too short: wanted to skip %d bytes, only got %d", start, discarded)
+		}
+	}
+
+	// Read the requested range
+	var toRead int64
+	if end < 0 {
+		toRead = f.maxResponseSize
+	} else {
+		toRead = end - start + 1
+	}
+
+	limitedReader := io.LimitReader(resp.Body, toRead)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil, err
+	}
+
+	return data, nil
+}
+
 func (f *Fetcher) recordSuccess(url string, bytes int64, duration time.Duration) {
 	host := extractHost(url)
 

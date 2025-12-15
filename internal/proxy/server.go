@@ -634,13 +634,11 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		}
 	}
 
-	// Add mirror source
+	// Add mirror source with range request support
 	mirrorSource = &downloader.MirrorSource{
 		URL: url,
 		Fetcher: func(ctx context.Context, url string, start, end int64) ([]byte, error) {
-			// For now, only full downloads from mirror
-			// TODO: Add range request support to mirror fetcher
-			return s.fetcher.Fetch(ctx, url)
+			return s.fetcher.FetchRange(ctx, url, start, end)
 		},
 	}
 
