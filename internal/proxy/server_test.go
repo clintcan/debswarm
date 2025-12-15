@@ -8,13 +8,14 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/timeouts"
-	"go.uber.org/zap"
 )
 
 func newTestLogger() *zap.Logger {
