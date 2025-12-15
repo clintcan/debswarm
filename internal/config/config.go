@@ -74,6 +74,46 @@ type LoggingConfig struct {
 	File  string `toml:"file"`
 }
 
+// MaxSizeBytes returns the parsed max size in bytes.
+// Returns 10GB default if parsing fails or value is 0.
+func (c *CacheConfig) MaxSizeBytes() int64 {
+	size, err := ParseSize(c.MaxSize)
+	if err != nil || size == 0 {
+		return 10 * 1024 * 1024 * 1024 // 10GB default
+	}
+	return size
+}
+
+// MinFreeSpaceBytes returns the parsed min free space in bytes.
+// Returns 0 if parsing fails (no minimum requirement).
+func (c *CacheConfig) MinFreeSpaceBytes() int64 {
+	size, err := ParseSize(c.MinFreeSpace)
+	if err != nil {
+		return 0 // no minimum requirement
+	}
+	return size
+}
+
+// MaxUploadRateBytes returns the parsed max upload rate in bytes/sec.
+// Returns 0 (unlimited) if parsing fails (should not happen after Validate).
+func (c *TransferConfig) MaxUploadRateBytes() int64 {
+	rate, err := ParseRate(c.MaxUploadRate)
+	if err != nil {
+		return 0 // unlimited
+	}
+	return rate
+}
+
+// MaxDownloadRateBytes returns the parsed max download rate in bytes/sec.
+// Returns 0 (unlimited) if parsing fails (should not happen after Validate).
+func (c *TransferConfig) MaxDownloadRateBytes() int64 {
+	rate, err := ParseRate(c.MaxDownloadRate)
+	if err != nil {
+		return 0 // unlimited
+	}
+	return rate
+}
+
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
 	homeDir, _ := os.UserHomeDir()

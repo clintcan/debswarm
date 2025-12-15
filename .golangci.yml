@@ -1,0 +1,76 @@
+# golangci-lint configuration for debswarm
+# Run with: golangci-lint run
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - govet         # Reports suspicious constructs
+    - ineffassign   # Detects ineffective assignments
+    - staticcheck   # Static analysis checks
+    - unused        # Finds unused code
+    - gosimple      # Suggests code simplifications
+    - gofmt         # Checks code formatting
+    - goimports     # Checks import ordering
+    - misspell      # Finds misspelled words
+    - unconvert     # Removes unnecessary type conversions
+    - unparam       # Reports unused function parameters
+    - nakedret      # Finds naked returns in large functions
+    - prealloc      # Suggests preallocations
+    - exportloopref # Checks for pointers to loop variables
+    - nilerr        # Finds code returning nil after checking error
+    - bodyclose     # Checks HTTP response body is closed
+    - contextcheck  # Checks context.Context usage
+    - noctx         # Finds HTTP requests without context
+    - rowserrcheck  # Checks sql.Rows.Err is checked
+    - sqlclosecheck # Checks sql.Rows and sql.Stmt are closed
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+    exclude-functions:
+      # Ignore errors in defer cleanup
+      - (*os.File).Close
+      - (io.Closer).Close
+      - (*database/sql.Rows).Close
+      - (*database/sql.Stmt).Close
+
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Too noisy for this project
+
+  nakedret:
+    max-func-lines: 30
+
+  misspell:
+    locale: US
+
+  goimports:
+    local-prefixes: github.com/debswarm/debswarm
+
+issues:
+  exclude-rules:
+    # Test files can have longer functions and less strict checks
+    - path: _test\.go
+      linters:
+        - errcheck
+        - unparam
+        - nakedret
+
+    # Allow unused parameters in interface implementations
+    - linters:
+        - unparam
+      text: "always receives"
+
+    # Benchmark files have different requirements
+    - path: benchmark
+      linters:
+        - errcheck
+
+  max-issues-per-linter: 50
+  max-same-issues: 3

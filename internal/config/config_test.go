@@ -444,3 +444,100 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+func TestCacheConfig_MaxSizeBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		maxSize  string
+		expected int64
+	}{
+		{"10GB", "10GB", 10 * 1024 * 1024 * 1024},
+		{"1GB", "1GB", 1024 * 1024 * 1024},
+		{"500MB", "500MB", 500 * 1024 * 1024},
+		{"invalid falls back to 10GB", "invalid", 10 * 1024 * 1024 * 1024},
+		{"empty falls back to 10GB", "", 10 * 1024 * 1024 * 1024},
+		{"zero falls back to 10GB", "0", 10 * 1024 * 1024 * 1024},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &CacheConfig{MaxSize: tt.maxSize}
+			got := cfg.MaxSizeBytes()
+			if got != tt.expected {
+				t.Errorf("MaxSizeBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCacheConfig_MinFreeSpaceBytes(t *testing.T) {
+	tests := []struct {
+		name         string
+		minFreeSpace string
+		expected     int64
+	}{
+		{"1GB", "1GB", 1024 * 1024 * 1024},
+		{"500MB", "500MB", 500 * 1024 * 1024},
+		{"zero means no minimum", "0", 0},
+		{"invalid parses as 0 (no min)", "invalid", 0},
+		{"empty parses as 0 (no min)", "", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &CacheConfig{MinFreeSpace: tt.minFreeSpace}
+			got := cfg.MinFreeSpaceBytes()
+			if got != tt.expected {
+				t.Errorf("MinFreeSpaceBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_MaxUploadRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"10MB/s", "10MB/s", 10 * 1024 * 1024},
+		{"1MB/s", "1MB/s", 1024 * 1024},
+		{"0 (unlimited)", "0", 0},
+		{"invalid falls back to 0", "invalid", 0},
+		{"empty falls back to 0", "", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{MaxUploadRate: tt.rate}
+			got := cfg.MaxUploadRateBytes()
+			if got != tt.expected {
+				t.Errorf("MaxUploadRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_MaxDownloadRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"10MB/s", "10MB/s", 10 * 1024 * 1024},
+		{"1MB/s", "1MB/s", 1024 * 1024},
+		{"0 (unlimited)", "0", 0},
+		{"invalid falls back to 0", "invalid", 0},
+		{"empty falls back to 0", "", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{MaxDownloadRate: tt.rate}
+			got := cfg.MaxDownloadRateBytes()
+			if got != tt.expected {
+				t.Errorf("MaxDownloadRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}

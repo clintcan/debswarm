@@ -196,8 +196,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	tm := timeouts.NewManager(timeouts.DefaultConfig())
 
 	// Initialize cache
-	maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
-	minFreeSpace, _ := config.ParseSize(cfg.Cache.MinFreeSpace)
+	maxSize := cfg.Cache.MaxSizeBytes()
+	minFreeSpace := cfg.Cache.MinFreeSpaceBytes()
 	pkgCache, err := cache.NewWithMinFreeSpace(cfg.Cache.Path, maxSize, minFreeSpace, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
@@ -451,7 +451,7 @@ func cacheCmd() *cobra.Command {
 				return err
 			}
 
-			maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
+			maxSize := cfg.Cache.MaxSizeBytes()
 			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
 			if err != nil {
 				return err
@@ -488,7 +488,7 @@ func cacheCmd() *cobra.Command {
 				return err
 			}
 
-			maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
+			maxSize := cfg.Cache.MaxSizeBytes()
 			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
 			if err != nil {
 				return err
@@ -521,15 +521,21 @@ func cacheCmd() *cobra.Command {
 				return err
 			}
 
-			maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
+			maxSize := cfg.Cache.MaxSizeBytes()
 			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
 			if err != nil {
 				return err
 			}
 			defer c.Close()
 
-			packages, _ := c.List()
-			unannounced, _ := c.GetUnannounced()
+			packages, err := c.List()
+			if err != nil {
+				return fmt.Errorf("failed to list packages: %w", err)
+			}
+			unannounced, err := c.GetUnannounced()
+			if err != nil {
+				return fmt.Errorf("failed to get unannounced packages: %w", err)
+			}
 
 			fmt.Printf("Cache Statistics\n")
 			fmt.Printf("══════════════════════════════════════\n")
@@ -669,7 +675,7 @@ Examples:
 				return err
 			}
 
-			maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
+			maxSize := cfg.Cache.MaxSizeBytes()
 			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
 			if err != nil {
 				return err
@@ -710,7 +716,7 @@ func runSeedImport(args []string, recursive, announce, syncMode bool) error {
 	}
 
 	// Initialize cache
-	maxSize, _ := config.ParseSize(cfg.Cache.MaxSize)
+	maxSize := cfg.Cache.MaxSizeBytes()
 	pkgCache, err := cache.New(cfg.Cache.Path, maxSize, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
@@ -1303,44 +1309,30 @@ func setupLogger() (*zap.Logger, error) {
 	return cfg.Build()
 }
 
-func loadConfig() (*config.Config, error) {
+// configPaths returns the list of config file paths to search
+func configPaths() []string {
 	if cfgFile != "" {
-		return config.Load(cfgFile)
+		return []string{cfgFile}
 	}
-
 	homeDir, _ := os.UserHomeDir()
-	paths := []string{
+	return []string{
 		"/etc/debswarm/config.toml",
 		filepath.Join(homeDir, ".config", "debswarm", "config.toml"),
 	}
+}
 
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return config.Load(path)
-		}
-	}
-
-	return config.DefaultConfig(), nil
+func loadConfig() (*config.Config, error) {
+	cfg, _, err := loadConfigWithWarnings()
+	return cfg, err
 }
 
 // loadConfigWithWarnings loads config and returns security warnings for sensitive settings
 func loadConfigWithWarnings() (*config.Config, []config.SecurityWarning, error) {
-	if cfgFile != "" {
-		return config.LoadWithWarnings(cfgFile)
-	}
-
-	homeDir, _ := os.UserHomeDir()
-	paths := []string{
-		"/etc/debswarm/config.toml",
-		filepath.Join(homeDir, ".config", "debswarm", "config.toml"),
-	}
-
-	for _, path := range paths {
+	for _, path := range configPaths() {
 		if _, err := os.Stat(path); err == nil {
 			return config.LoadWithWarnings(path)
 		}
 	}
-
 	return config.DefaultConfig(), nil, nil
 }
 
@@ -1442,8 +1434,8 @@ func reloadConfig(logger *zap.Logger, p2pNode *p2p.Node, pkgCache *cache.Cache) 
 	}
 
 	// Reload rate limits (if p2p node supports it)
-	newUploadRate, _ := config.ParseRate(newCfg.Transfer.MaxUploadRate)
-	newDownloadRate, _ := config.ParseRate(newCfg.Transfer.MaxDownloadRate)
+	newUploadRate := newCfg.Transfer.MaxUploadRateBytes()
+	newDownloadRate := newCfg.Transfer.MaxDownloadRateBytes()
 
 	if newUploadRate > 0 || newDownloadRate > 0 {
 		logger.Info("Rate limits updated",
