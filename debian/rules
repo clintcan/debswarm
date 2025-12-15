@@ -39,7 +39,7 @@ override_dh_auto_install:
 		$(CURDIR)/debian/debswarm/usr/bin/debswarm
 
 	# APT configuration
-	install -D -m 0644 90debswarm.conf \
+	install -D -m 0644 packaging/90debswarm.conf \
 		$(CURDIR)/debian/debswarm/etc/apt/apt.conf.d/90debswarm.conf
 
 	# System configuration (paths for systemd service)

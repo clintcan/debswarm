@@ -1,3 +1,48 @@
+debswarm (0.8.0-1) unstable; urgency=medium
+
+  * Add pre-flight directory validation for systemd compatibility
+    - Validates cache and data directories exist or can be created
+    - Tests write permissions before daemon startup
+    - Catches StateDirectory/CacheDirectory issues early
+
+ -- debswarm developers <debswarm@example.com>  Sun, 15 Dec 2025 00:00:00 +0000
+
+debswarm (0.7.0-1) unstable; urgency=medium
+
+  * Add config file validation on startup with detailed error messages
+  * Add crash recovery for corrupted partial download state
+  * Add SIGHUP handler for config reload without restart
+  * Improve documentation with troubleshooting guide
+
+ -- debswarm developers <debswarm@example.com>  Sun, 15 Dec 2025 00:00:00 +0000
+
+debswarm (0.6.2-1) unstable; urgency=medium
+
+  * Add MaxConnections config option for connection limits
+  * Add MinFreeSpace config option for disk space management
+  * Add /health endpoint for monitoring
+  * Add 1.0 release roadmap documentation
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
+debswarm (0.6.1-1) unstable; urgency=medium
+
+  * Add peers table to web dashboard
+  * Expand metrics collection
+  * Dashboard and metrics improvements
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
+debswarm (0.6.0-1) unstable; urgency=medium
+
+  * Add download resume support with chunk persistence
+  * Add HTTP Range request support for mirror fetcher
+  * Fix gosec security issues
+  * Improve test coverage across all packages
+  * Improve CI/CD workflows
+
+ -- debswarm developers <debswarm@example.com>  Sat, 14 Dec 2025 00:00:00 +0000
+
 debswarm (0.5.6-1) unstable; urgency=medium
 
   * Fix shutdown hang from context leak in DHT announcement worker
