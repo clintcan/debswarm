@@ -256,7 +256,9 @@ func TestStateManager_UpdateDownloadStatus(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "status_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	err := sm.UpdateDownloadStatus(hash, "in_progress")
 	if err != nil {
@@ -276,7 +278,9 @@ func TestStateManager_UpdateChunk(t *testing.T) {
 	hash := "chunk_test"
 	size := int64(8 * 1024 * 1024)
 	chunkSize := int64(4 * 1024 * 1024)
-	sm.CreateDownload(hash, "http://example.com/test.deb", size, chunkSize)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", size, chunkSize); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	// Complete first chunk
 	err := sm.UpdateChunk(hash, 0, "completed")
@@ -312,11 +316,17 @@ func TestStateManager_UpdateChunk_AllCompleted(t *testing.T) {
 	hash := "all_chunks_test"
 	size := int64(8 * 1024 * 1024)
 	chunkSize := int64(4 * 1024 * 1024)
-	sm.CreateDownload(hash, "http://example.com/test.deb", size, chunkSize)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", size, chunkSize); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	// Complete both chunks
-	sm.UpdateChunk(hash, 0, "completed")
-	sm.UpdateChunk(hash, 1, "completed")
+	if err := sm.UpdateChunk(hash, 0, "completed"); err != nil {
+		t.Fatalf("UpdateChunk 0 failed: %v", err)
+	}
+	if err := sm.UpdateChunk(hash, 1, "completed"); err != nil {
+		t.Fatalf("UpdateChunk 1 failed: %v", err)
+	}
 
 	state, _ := sm.GetDownload(hash)
 
@@ -331,7 +341,9 @@ func TestStateManager_CompleteDownload(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "complete_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	err := sm.CompleteDownload(hash)
 	if err != nil {
@@ -349,7 +361,9 @@ func TestStateManager_FailDownload(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "fail_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	errMsg := "connection timeout"
 	err := sm.FailDownload(hash, errMsg)
@@ -371,7 +385,9 @@ func TestStateManager_DeleteDownload(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "delete_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	// Verify it exists
 	state, _ := sm.GetDownload(hash)
@@ -392,7 +408,9 @@ func TestStateManager_DeleteDownload(t *testing.T) {
 
 	// Verify chunks are also deleted
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM download_chunks WHERE download_id = ?", hash).Scan(&count)
+	if err := db.QueryRow("SELECT COUNT(*) FROM download_chunks WHERE download_id = ?", hash).Scan(&count); err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
 	if count != 0 {
 		t.Errorf("Expected 0 chunks after delete, got %d", count)
 	}
@@ -403,17 +421,31 @@ func TestStateManager_CleanupStale(t *testing.T) {
 	sm := NewStateManager(db)
 
 	// Create downloads
-	sm.CreateDownload("old_pending", "http://example.com/1.deb", 1024, 512)
-	sm.CreateDownload("old_failed", "http://example.com/2.deb", 1024, 512)
-	sm.CreateDownload("recent_pending", "http://example.com/3.deb", 1024, 512)
-	sm.CreateDownload("completed", "http://example.com/4.deb", 1024, 512)
+	if err := sm.CreateDownload("old_pending", "http://example.com/1.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload old_pending failed: %v", err)
+	}
+	if err := sm.CreateDownload("old_failed", "http://example.com/2.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload old_failed failed: %v", err)
+	}
+	if err := sm.CreateDownload("recent_pending", "http://example.com/3.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload recent_pending failed: %v", err)
+	}
+	if err := sm.CreateDownload("completed", "http://example.com/4.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload completed failed: %v", err)
+	}
 
-	sm.FailDownload("old_failed", "error")
-	sm.CompleteDownload("completed")
+	if err := sm.FailDownload("old_failed", "error"); err != nil {
+		t.Fatalf("FailDownload failed: %v", err)
+	}
+	if err := sm.CompleteDownload("completed"); err != nil {
+		t.Fatalf("CompleteDownload failed: %v", err)
+	}
 
 	// Make old downloads stale by updating their timestamp
 	oldTime := time.Now().Add(-48 * time.Hour).Unix()
-	db.Exec("UPDATE downloads SET updated_at = ? WHERE id IN ('old_pending', 'old_failed')", oldTime)
+	if _, err := db.Exec("UPDATE downloads SET updated_at = ? WHERE id IN ('old_pending', 'old_failed')", oldTime); err != nil {
+		t.Fatalf("Update timestamp failed: %v", err)
+	}
 
 	cleaned, err := sm.CleanupStale(24 * time.Hour)
 	if err != nil {
@@ -450,10 +482,14 @@ func TestStateManager_GetPendingChunks(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "pending_chunks_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 12*1024*1024, 4*1024*1024) // 3 chunks
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 12*1024*1024, 4*1024*1024); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	// Complete first chunk
-	sm.UpdateChunk(hash, 0, "completed")
+	if err := sm.UpdateChunk(hash, 0, "completed"); err != nil {
+		t.Fatalf("UpdateChunk failed: %v", err)
+	}
 
 	chunks, err := sm.GetPendingChunks(hash)
 	if err != nil {
@@ -480,10 +516,16 @@ func TestStateManager_GetPendingChunks_AllCompleted(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "all_done_test"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 8*1024*1024, 4*1024*1024) // 2 chunks
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 8*1024*1024, 4*1024*1024); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
-	sm.UpdateChunk(hash, 0, "completed")
-	sm.UpdateChunk(hash, 1, "completed")
+	if err := sm.UpdateChunk(hash, 0, "completed"); err != nil {
+		t.Fatalf("UpdateChunk 0 failed: %v", err)
+	}
+	if err := sm.UpdateChunk(hash, 1, "completed"); err != nil {
+		t.Fatalf("UpdateChunk 1 failed: %v", err)
+	}
 
 	chunks, err := sm.GetPendingChunks(hash)
 	if err != nil {
@@ -525,7 +567,9 @@ func TestStateManager_InProgressChunk(t *testing.T) {
 	sm := NewStateManager(db)
 
 	hash := "in_progress_chunk"
-	sm.CreateDownload(hash, "http://example.com/test.deb", 8*1024*1024, 4*1024*1024)
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 8*1024*1024, 4*1024*1024); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
 
 	// Mark chunk as in_progress (not completed)
 	err := sm.UpdateChunk(hash, 0, "in_progress")

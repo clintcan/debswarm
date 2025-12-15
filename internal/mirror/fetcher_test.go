@@ -72,7 +72,7 @@ func TestFetchSuccess(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(expectedBody)
+		_, _ = w.Write(expectedBody)
 	}))
 	defer server.Close()
 
@@ -93,7 +93,7 @@ func TestFetchUserAgent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedUA = r.Header.Get("User-Agent")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer server.Close()
 
@@ -140,7 +140,7 @@ func TestFetch500WithRetry(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("success"))
+		_, _ = w.Write([]byte("success"))
 	}))
 	defer server.Close()
 
@@ -208,7 +208,7 @@ func TestFetchMaxResponseSize(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(largeBody)
+		_, _ = w.Write(largeBody)
 	}))
 	defer server.Close()
 
@@ -229,7 +229,7 @@ func TestFetchToWriter(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write(expectedBody)
+		_, _ = w.Write(expectedBody)
 	}))
 	defer server.Close()
 
@@ -270,7 +270,7 @@ func TestStream(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "17")
 		w.WriteHeader(http.StatusOK)
-		w.Write(expectedBody)
+		_, _ = w.Write(expectedBody)
 	}))
 	defer server.Close()
 
@@ -338,7 +338,7 @@ func TestHead(t *testing.T) {
 func TestStatsTracking(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test"))
+		_, _ = w.Write([]byte("test"))
 	}))
 	defer server.Close()
 
@@ -419,7 +419,7 @@ func TestExtractHost(t *testing.T) {
 func TestStatsCopyOnReturn(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test"))
+		_, _ = w.Write([]byte("test"))
 	}))
 	defer server.Close()
 
@@ -442,7 +442,7 @@ func TestConcurrentFetch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&requests, 1)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		_, _ = w.Write([]byte("ok"))
 	}))
 	defer server.Close()
 
