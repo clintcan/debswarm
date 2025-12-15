@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2025-12-15
+
+### Added
+- Enforce `transfer.max_concurrent_uploads` config option in P2P upload handler
+- Enforce `transfer.max_concurrent_peer_downloads` config option in downloader
+
+### Fixed
+- Fix debian package build (remove redundant debian/install entries)
+- Fix golangci-lint errors (shadow, contextcheck, unconvert, rowserrcheck)
+- Fix goimports import ordering across codebase
+
+### Changed
+- CI now tests deb package building on every push
+
+## [0.8.0] - 2025-12-15
+
+### Added
+- Pre-flight directory validation for systemd compatibility
+  - Validates cache and data directories exist or can be created
+  - Tests write permissions before daemon startup
+  - Catches StateDirectory/CacheDirectory issues early with clear error messages
+
+## [0.7.0] - 2025-12-15
+
+### Added
+- Config file validation on startup with detailed error messages
+- Crash recovery for corrupted partial download state
+- SIGHUP handler for config reload without restart
+- Troubleshooting guide in documentation
+
 ## [0.6.2] - 2025-12-15
 
 ### Added
@@ -217,7 +247,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/clintcan/debswarm/compare/v0.8.0...v0.8.2
+[0.8.0]: https://github.com/clintcan/debswarm/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/clintcan/debswarm/compare/v0.6.2...v0.7.0
 [0.6.2]: https://github.com/clintcan/debswarm/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/clintcan/debswarm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/clintcan/debswarm/compare/v0.5.6...v0.6.0
