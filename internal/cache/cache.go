@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"go.uber.org/zap"
+	_ "modernc.org/sqlite"
 )
 
 var (
