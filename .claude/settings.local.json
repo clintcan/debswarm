@@ -6,7 +6,9 @@
       "Bash(go build:*)",
       "Bash(go vet:*)",
       "Bash(xargs -I {} sh -c 'head -30 {} | grep -q \"\"github.com/debswarm/debswarm\"\" && head -30 {} | grep -A1 \"\"github.com/debswarm/debswarm\"\" | grep -v \"\"github.com/debswarm\"\" | grep -v \"\"^--$\"\" | grep \"\"github.com\"\" && echo \"\"FILE: {}\"\"')",
-      "Bash(go test:*)"
+      "Bash(go test:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }
