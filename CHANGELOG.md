@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-12-16
+
+### Changed
+- **Pure Go SQLite**: Replaced `mattn/go-sqlite3` with `modernc.org/sqlite`
+  - No longer requires CGO or a C compiler to build
+  - Enables cross-compilation without CGO toolchain
+  - Works out-of-box on Windows without MinGW/TDM-GCC
+
 ## [1.0.1] - 2025-12-15
 
 ### Fixed

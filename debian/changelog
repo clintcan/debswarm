@@ -1,3 +1,12 @@
+debswarm (1.1.0-1) unstable; urgency=medium
+
+  * Replace mattn/go-sqlite3 with modernc.org/sqlite (pure Go implementation)
+    - No longer requires CGO or C compiler to build
+    - Enables cross-compilation without CGO toolchain
+    - Works out-of-box on Windows without MinGW/TDM-GCC
+
+ -- debswarm developers <debswarm@example.com>  Mon, 16 Dec 2025 00:00:00 +0000
+
 debswarm (1.0.1-1) unstable; urgency=medium
 
   * Fix TOML config parsing for DHT duration fields (provider_ttl, announce_interval)

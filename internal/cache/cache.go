@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 	"go.uber.org/zap"
 )
 
@@ -108,7 +108,7 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 // openDatabaseWithRecovery opens the SQLite database with corruption detection and recovery.
 // If the database is corrupted, it attempts to back it up and create a fresh database.
 func openDatabaseWithRecovery(dbPath string, logger *zap.Logger) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -181,7 +181,7 @@ func recoverDatabase(dbPath string, logger *zap.Logger) (*sql.DB, error) {
 	}
 
 	// Create fresh database
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new database: %w", err)
 	}

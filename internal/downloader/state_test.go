@@ -6,14 +6,14 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	// Use a temp file-based database for better isolation
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open test database: %v", err)
 	}
