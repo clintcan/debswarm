@@ -27,9 +27,9 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Private Swarms (PSK)** - Create isolated networks using pre-shared keys for corporate deployments
 - **Peer Allowlist** - Restrict connections to specific peer IDs
 - **Persistent Identity** - Stable peer IDs across restarts with Ed25519 key persistence
-- **Download Resume** - Infrastructure for resuming interrupted downloads (state persistence)
+- **Download Resume** - Interrupted chunked downloads resume automatically from saved state
 
-### Security (v0.5.x)
+### Security (v0.6.x)
 - **SSRF Protection** - Block requests to localhost, cloud metadata, private networks
 - **Response Size Limits** - Prevent memory exhaustion from malicious mirrors (500MB max)
 - **HTTP Security Headers** - CSP, X-Frame-Options, X-Content-Type-Options on dashboard
@@ -257,11 +257,18 @@ Files larger than 10MB are split into 4MB chunks and downloaded from multiple pe
 ```
 File: linux-image-6.1.deb (80MB)
 ├── Chunk 0 [0-4MB]     ← Peer A (fastest)
-├── Chunk 1 [4-8MB]     ← Peer B  
+├── Chunk 1 [4-8MB]     ← Peer B
 ├── Chunk 2 [8-12MB]    ← Peer A
 ├── ...
 └── Chunk 19 [76-80MB]  ← Peer C
 ```
+
+### Download Resume
+If a chunked download is interrupted (daemon restart, network failure), it automatically resumes:
+- Completed chunks are persisted to disk during download
+- Download state tracked in SQLite database
+- On restart, only missing chunks are fetched
+- Partial downloads cleaned up after successful completion
 
 ### Peer Scoring
 Peers are scored based on weighted factors:
@@ -408,8 +415,8 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o debswarm-arm6
 Releases are automated via GitHub Actions. To create a release:
 
 ```bash
-git tag -a v0.5.6 -m "Release v0.5.6"
-git push origin v0.5.6
+git tag -a v0.6.0 -m "Release v0.6.0"
+git push origin v0.6.0
 ```
 
 This triggers the release workflow which builds:

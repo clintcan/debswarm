@@ -95,19 +95,23 @@ Content-addressed storage with SQLite metadata:
 
 ### Downloader (`internal/downloader/`)
 
-Parallel chunked download engine:
+Parallel chunked download engine with resume support:
 
 - **Chunk Management**: Splits large files into 4MB chunks
 - **Source Tracking**: Monitors performance of each source
 - **Racing**: Small files race P2P vs mirror
 - **Assembly**: Reassembles chunks and verifies hash
+- **Resume Support**: Persists chunks to disk, tracks state in SQLite
+- **State Manager**: Tracks download progress for crash recovery
 
 ```go
 type Downloader struct {
-    scorer    *peers.Scorer
-    metrics   *metrics.Metrics
-    chunkSize int64
-    maxConc   int
+    scorer       *peers.Scorer
+    metrics      *metrics.Metrics
+    chunkSize    int64
+    maxConc      int
+    stateManager *StateManager
+    cache        PartialCache
 }
 ```
 
@@ -220,6 +224,30 @@ Chunks: 20
     └─────┘ └─────┘ └─────┘ └─────┘
 ```
 
+### Download Resume (v0.6.0+)
+
+Chunked downloads can survive interruptions:
+
+```
+During Download:
+┌─────────────────────────────────────────────────┐
+│ SQLite: downloads table                          │
+│   id: "abc123...", status: "in_progress"        │
+│   chunks: 20, completed: 12                     │
+└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│ Disk: ~/.cache/debswarm/packages/partial/abc123 │
+│   chunk_0, chunk_1, ... chunk_11 (completed)    │
+└─────────────────────────────────────────────────┘
+
+On Resume:
+1. Check SQLite for pending downloads
+2. Read completed chunks from disk
+3. Download only missing chunks (12-19)
+4. Assemble and verify hash
+5. Clean up partial directory
+```
+
 ## Network Protocols
 
 ### Transfer Protocol
@@ -296,7 +324,7 @@ Provider Key: /debswarm/pkg/{sha256_hash}
 └─────────────────────────────────────────────────────┘
 ```
 
-### Security Hardening (v0.5.x)
+### Security Hardening (v0.6.x)
 
 Additional security measures beyond content verification:
 
@@ -306,3 +334,5 @@ Additional security measures beyond content verification:
 - **Error Disclosure**: Dashboard hides internal error details from users
 - **Identity Protection**: Ed25519 keys stored with 0600 permissions
 - **PSK Security**: Only fingerprints logged, never full keys
+- **File Permissions**: Directories use 0750, files use 0600 for sensitive data
+- **Error Handling**: All Close/Remove operations properly handle errors
