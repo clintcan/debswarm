@@ -211,7 +211,11 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 		case "Filename":
 			pkg.Filename = value
 		case "Size":
-			pkg.Size, _ = strconv.ParseInt(value, 10, 64)
+			// Ignore parse error; size defaults to 0 if invalid
+			size, err := strconv.ParseInt(value, 10, 64)
+			if err == nil {
+				pkg.Size = size
+			}
 		case "SHA256":
 			pkg.SHA256 = value
 		case "SHA512":

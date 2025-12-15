@@ -459,12 +459,12 @@ func (r *Runner) StressBenchmark(ctx context.Context, scenario Scenario, concurr
 	totalDuration := time.Since(start)
 
 	// Collect results
-	var durations []time.Duration
+	durations := make([]time.Duration, 0, concurrentDownloads)
 	for d := range results {
 		durations = append(durations, d)
 	}
 
-	var errs []error
+	errs := make([]error, 0, concurrentDownloads)
 	for e := range errors {
 		errs = append(errs, e)
 	}

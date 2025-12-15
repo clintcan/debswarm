@@ -151,6 +151,9 @@ func isDatabaseCorrupted(db *sql.DB) (bool, error) {
 			return false, fmt.Errorf("failed to read integrity check result: %w", err)
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("integrity check iteration error: %w", err)
+	}
 
 	// "ok" means no corruption found
 	return result != "ok", nil
@@ -684,6 +687,9 @@ func (c *Cache) ensureSpace(needed int64) error {
 			// Log but continue - file might be in use, try next candidate
 			c.logger.Warn("Failed to evict package", zap.Error(err))
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error iterating eviction candidates: %w", err)
 	}
 
 	// Check if we freed enough space

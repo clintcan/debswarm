@@ -3,6 +3,7 @@ package downloader
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -128,6 +129,9 @@ func (sm *StateManager) GetDownload(hash string) (*DownloadState, error) {
 			cs.CompletedAt = time.Unix(completedAt.Int64, 0)
 		}
 		state.Chunks = append(state.Chunks, &cs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating chunks: %w", err)
 	}
 
 	return &state, nil

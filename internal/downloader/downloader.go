@@ -539,7 +539,7 @@ func (d *Downloader) assembleFromDisk(
 // chunkWorker downloads chunks from the work queue
 func (d *Downloader) chunkWorker(
 	ctx context.Context,
-	workerID int,
+	_ int, // workerID - reserved for future logging/debugging
 	pending <-chan *Chunk,
 	results chan<- *Chunk,
 	sources []Source,

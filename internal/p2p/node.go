@@ -459,7 +459,7 @@ func (n *Node) FindProviders(ctx context.Context, sha256Hash string, limit int) 
 		return nil, fmt.Errorf("failed to find providers: %w", err)
 	}
 
-	var providers []peer.AddrInfo
+	providers := make([]peer.AddrInfo, 0, limit)
 	for p := range peerChan {
 		if p.ID == n.host.ID() {
 			continue // Skip ourselves

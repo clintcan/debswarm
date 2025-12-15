@@ -116,7 +116,10 @@ func (c *TransferConfig) MaxDownloadRateBytes() int64 {
 
 // DefaultConfig returns a configuration with sensible defaults
 func DefaultConfig() *Config {
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		homeDir = "/tmp" // Fallback for systems without a home directory
+	}
 	return &Config{
 		Network: NetworkConfig{
 			ListenPort:     4001,
@@ -199,10 +202,7 @@ func ParseSize(s string) (int64, error) {
 	var size int64
 	var unit string
 
-	_, err := parseWithUnit(s, &size, &unit)
-	if err != nil {
-		return 0, err
-	}
+	parseWithUnit(s, &size, &unit)
 
 	multiplier := int64(1)
 	switch unit {
@@ -219,7 +219,7 @@ func ParseSize(s string) (int64, error) {
 	return size * multiplier, nil
 }
 
-func parseWithUnit(s string, size *int64, unit *string) (int, error) {
+func parseWithUnit(s string, size *int64, unit *string) int {
 	var n int
 	for i, c := range s {
 		if c >= '0' && c <= '9' {
@@ -230,7 +230,7 @@ func parseWithUnit(s string, size *int64, unit *string) (int, error) {
 		}
 	}
 	*unit = s[n:]
-	return n, nil
+	return n
 }
 
 // ParseRate parses a rate string like "10MB/s" or "100KB" into bytes per second
@@ -330,7 +330,7 @@ func (e ValidationErrors) Error() string {
 	if len(e) == 1 {
 		return e[0].Error()
 	}
-	var msgs []string
+	msgs := make([]string, 0, len(e))
 	for _, err := range e {
 		msgs = append(msgs, fmt.Sprintf("  - %s: %s", err.Field, err.Message))
 	}

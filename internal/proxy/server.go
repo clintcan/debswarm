@@ -717,7 +717,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	if expectedHash != "" && expectedSize > 0 && len(peerSources) > 0 {
 		result, err := s.downloader.Download(ctx, expectedHash, expectedSize, peerSources, mirrorSource)
 		if err == nil {
-			return s.processDownloadSuccess(result, expectedHash, path, start), nil
+			return s.processDownloadSuccess(result, expectedHash, path), nil
 		}
 		s.logger.Debug("Parallel download failed, falling back to mirror", zap.Error(err))
 	}
@@ -802,7 +802,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 }
 
 // processDownloadSuccess processes a successful parallel download result
-func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expectedHash, path string, start time.Time) *packageDownloadResult {
+func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expectedHash, path string) *packageDownloadResult {
 	// Update stats
 	atomic.AddInt64(&s.bytesFromP2P, result.PeerBytes)
 	atomic.AddInt64(&s.bytesFromMirror, result.MirrorBytes)

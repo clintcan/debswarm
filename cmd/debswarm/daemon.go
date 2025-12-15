@@ -413,7 +413,7 @@ func checkDirectory(path, name string) error {
 
 // reloadConfig reloads configuration that can be changed at runtime.
 // Some settings (ports, cache path) require a full restart.
-func reloadConfig(logger *zap.Logger, p2pNode *p2p.Node, pkgCache *cache.Cache) error {
+func reloadConfig(logger *zap.Logger, _ *p2p.Node, pkgCache *cache.Cache) error {
 	// Load new configuration
 	newCfg, warnings, err := loadConfigWithWarnings()
 	if err != nil {

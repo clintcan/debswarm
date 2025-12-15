@@ -20,7 +20,7 @@ linters:
     - unparam       # Reports unused function parameters
     - nakedret      # Finds naked returns in large functions
     - prealloc      # Suggests preallocations
-    - exportloopref # Checks for pointers to loop variables
+    # Note: exportloopref was removed as it's deprecated since Go 1.22 (loopvar)
     - nilerr        # Finds code returning nil after checking error
     - bodyclose     # Checks HTTP response body is closed
     - contextcheck  # Checks context.Context usage
@@ -38,6 +38,8 @@ linters-settings:
       - (io.Closer).Close
       - (*database/sql.Rows).Close
       - (*database/sql.Stmt).Close
+      # Ignore errors in HTTP response writes (client disconnects are not actionable)
+      - (net/http.ResponseWriter).Write
 
   govet:
     enable-all: true
