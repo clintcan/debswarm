@@ -1,5 +1,5 @@
 [Unit]
-Description=debswarm Peer-to-Peer Package Distribution
+Description=debswarm P2P APT package distribution daemon
 Documentation=https://github.com/clintcan/debswarm
 After=network-online.target
 Wants=network-online.target
@@ -12,14 +12,26 @@ Restart=on-failure
 RestartSec=5
 
 # Security hardening
-User=debswarm
-Group=debswarm
 DynamicUser=yes
 StateDirectory=debswarm
 CacheDirectory=debswarm
-PrivateTmp=yes
+ConfigurationDirectory=debswarm
+
+# Filesystem restrictions
 ProtectSystem=strict
 ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadWritePaths=/var/cache/debswarm /var/lib/debswarm
+
+# Network
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+
+# Capabilities
+CapabilityBoundingSet=
 NoNewPrivileges=yes
 
 # Resource limits

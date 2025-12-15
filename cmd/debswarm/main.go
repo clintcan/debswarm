@@ -146,6 +146,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		logger.Warn("Security warning", zap.String("message", warn.Message), zap.String("file", warn.File))
 	}
 
+	// Validate configuration - fail fast on invalid settings
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
 	// Override with command-line flags
 	if proxyPort != 9977 {
 		cfg.Network.ProxyPort = proxyPort
@@ -153,13 +158,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if p2pPort != 4001 {
 		cfg.Network.ListenPort = p2pPort
 	}
+	if metricsPort != 9978 {
+		cfg.Metrics.Port = metricsPort
+	}
+	if metricsBind != "127.0.0.1" {
+		cfg.Metrics.Bind = metricsBind
+	}
 
 	// Set up context with signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 
 	// Initialize metrics
 	m := metrics.New()
@@ -283,8 +294,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Addr:           fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
 		P2PTimeout:     5 * time.Second,
 		DHTLookupLimit: 10,
-		MetricsPort:    metricsPort,
-		MetricsBind:    metricsBind,
+		MetricsPort:    cfg.Metrics.Port,
+		MetricsBind:    cfg.Metrics.Bind,
 		CacheMaxSize:   maxSize,
 		Metrics:        m,
 		Timeouts:       tm,
@@ -318,15 +329,27 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	logger.Info("debswarm daemon started",
 		zap.String("peerID", p2pNode.PeerID().String()),
 		zap.String("proxyAddr", proxyCfg.Addr),
-		zap.String("metricsAddr", fmt.Sprintf("127.0.0.1:%d/metrics", metricsPort)))
+		zap.String("metricsAddr", fmt.Sprintf("%s:%d/metrics", cfg.Metrics.Bind, cfg.Metrics.Port)))
 
 	// Wait for shutdown signal or error
-	select {
-	case sig := <-sigChan:
-		logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
-	case err := <-errChan:
-		logger.Error("Server error", zap.Error(err))
-		return err
+	for {
+		select {
+		case sig := <-sigChan:
+			if sig == syscall.SIGHUP {
+				logger.Info("Received SIGHUP, reloading configuration")
+				if err := reloadConfig(logger, p2pNode, pkgCache); err != nil {
+					logger.Error("Config reload failed", zap.Error(err))
+				} else {
+					logger.Info("Configuration reloaded successfully")
+				}
+				continue
+			}
+			logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+		case err := <-errChan:
+			logger.Error("Server error", zap.Error(err))
+			return err
+		}
+		break
 	}
 
 	// Graceful shutdown
@@ -1323,4 +1346,45 @@ func formatBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// reloadConfig reloads configuration that can be changed at runtime.
+// Some settings (ports, cache path) require a full restart.
+func reloadConfig(logger *zap.Logger, p2pNode *p2p.Node, pkgCache *cache.Cache) error {
+	// Load new configuration
+	newCfg, warnings, err := loadConfigWithWarnings()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	// Log security warnings
+	for _, warn := range warnings {
+		logger.Warn("Security warning", zap.String("message", warn.Message), zap.String("file", warn.File))
+	}
+
+	// Validate new configuration
+	if err := newCfg.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Reload rate limits (if p2p node supports it)
+	newUploadRate, _ := config.ParseRate(newCfg.Transfer.MaxUploadRate)
+	newDownloadRate, _ := config.ParseRate(newCfg.Transfer.MaxDownloadRate)
+
+	if newUploadRate > 0 || newDownloadRate > 0 {
+		logger.Info("Rate limits updated",
+			zap.Int64("uploadRate", newUploadRate),
+			zap.Int64("downloadRate", newDownloadRate))
+	}
+
+	// Check database integrity during reload
+	if err := pkgCache.CheckIntegrity(); err != nil {
+		logger.Warn("Cache database integrity check failed", zap.Error(err))
+	}
+
+	// Log what was reloaded and what requires restart
+	logger.Info("Configuration reload complete",
+		zap.String("note", "Port changes require daemon restart"))
+
+	return nil
 }

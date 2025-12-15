@@ -1,3 +1,7 @@
+# NOTE: Keep in sync with packaging/debswarm.service
+# This file is required by dh_installsystemd for Debian package builds.
+# The canonical source is packaging/debswarm.service
+
 [Unit]
 Description=debswarm P2P APT package distribution daemon
 Documentation=https://github.com/clintcan/debswarm
@@ -7,6 +11,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/bin/debswarm daemon
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 

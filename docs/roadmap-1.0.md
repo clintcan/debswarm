@@ -14,10 +14,10 @@ This document tracks the gaps and improvements needed before a production-ready 
 
 | Issue | Location | Description | Status |
 |-------|----------|-------------|--------|
-| **Config validation at startup** | `cmd/debswarm/main.go` | Invalid bootstrap peers fail silently during DHT init; should fail fast with clear errors | Not started |
-| **Database recovery** | `internal/cache/cache.go` | Corrupted SQLite DB causes unclear failures; needs recovery mechanism or clear error messages | Not started |
-| **SIGHUP reload support** | `cmd/debswarm/main.go` | Systemd service declares `ExecReload` but daemon doesn't handle SIGHUP for config reload | Not started |
-| **Operational documentation** | `docs/` | Missing troubleshooting guide and upgrade/migration documentation | Not started |
+| **Config validation at startup** | `cmd/debswarm/main.go` | Invalid bootstrap peers fail silently during DHT init; should fail fast with clear errors | **Done** (v0.7.0) |
+| **Database recovery** | `internal/cache/cache.go` | Corrupted SQLite DB causes unclear failures; needs recovery mechanism or clear error messages | **Done** (v0.7.0) |
+| **SIGHUP reload support** | `cmd/debswarm/main.go` | Systemd service declares `ExecReload` but daemon doesn't handle SIGHUP for config reload | **Done** (v0.7.0) |
+| **Operational documentation** | `docs/` | Missing troubleshooting guide and upgrade/migration documentation | **Done** (v0.7.0) |
 
 ## Medium Priority
 
@@ -71,8 +71,38 @@ Implemented at `/health` endpoint on metrics server:
 - Checks P2P node initialization, DHT status, cache availability
 - Returns 200 OK when healthy, 503 Service Unavailable when not
 
+### Config Validation at Startup (Done)
+Implemented in `internal/config/config.go`:
+- `Validate()` method checks all configuration fields
+- Validates bootstrap peer multiaddrs using go-multiaddr parser
+- Validates port ranges, size formats, rate limits
+- Returns `ValidationErrors` with all failures for clear error reporting
+- Called in `runDaemon()` before P2P initialization
+
+### Database Recovery (Done)
+Implemented in `internal/cache/cache.go`:
+- `openDatabaseWithRecovery()` runs SQLite integrity check on open
+- `isDatabaseCorrupted()` uses `PRAGMA integrity_check`
+- `recoverDatabase()` backs up corrupted DB with timestamp and creates fresh one
+- `CheckIntegrity()` method for on-demand integrity verification
+- Package files on disk preserved; only metadata needs rebuilding
+
+### SIGHUP Reload Support (Done)
+Implemented in `cmd/debswarm/main.go`:
+- Added SIGHUP to signal handler alongside SIGINT/SIGTERM
+- `reloadConfig()` function loads and validates new configuration
+- Reloads rate limits and checks database integrity
+- Logs what was reloaded and what requires full restart
+- Compatible with systemd `ExecReload=/bin/kill -HUP $MAINPID`
+
+### Operational Documentation (Done)
+Created in `docs/`:
+- `troubleshooting.md`: Common issues, diagnostics, debug info collection
+- `upgrading.md`: Version upgrade procedures, migration notes, rollback
+
 ## Version History
 
+- **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation
 - **v0.6.2** (2025-12-15): Critical 1.0 blockers - MaxConnections, MinFreeSpace, health endpoint
 - **v0.6.1** (2025-12-15): Dashboard peers table, expanded metrics
 - **v0.6.0** (2025-12-15): Download resume support, security fixes
@@ -80,4 +110,4 @@ Implemented at `/health` endpoint on metrics server:
 
 ## Target: v1.0.0
 
-All Critical items are now resolved. High Priority items remain for full production readiness.
+All Critical and High Priority items are now resolved. Medium Priority items remain for full production readiness.

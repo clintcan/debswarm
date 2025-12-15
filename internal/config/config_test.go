@@ -340,3 +340,107 @@ func TestParseSize_EdgeCases(t *testing.T) {
 		t.Errorf("ParseSize(\"12345\") = %d, want 12345", size)
 	}
 }
+
+func TestValidate_ValidConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("DefaultConfig().Validate() should not error, got: %v", err)
+	}
+}
+
+func TestValidate_InvalidBootstrapPeers(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Network.BootstrapPeers = []string{
+		"/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN", // valid
+		"not-a-valid-multiaddr",                                                              // invalid
+		"/ip4/invalid",                                                                       // invalid
+	}
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Expected validation error for invalid bootstrap peers")
+	}
+
+	// Should contain errors for the invalid entries
+	errStr := err.Error()
+	if !contains(errStr, "bootstrap_peers[1]") {
+		t.Errorf("Error should mention bootstrap_peers[1], got: %s", errStr)
+	}
+}
+
+func TestValidate_InvalidPort(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Network.ListenPort = 0
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Expected validation error for invalid port")
+	}
+
+	if !contains(err.Error(), "listen_port") {
+		t.Errorf("Error should mention listen_port, got: %s", err.Error())
+	}
+}
+
+func TestValidate_MutuallyExclusivePSK(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Privacy.PSK = "some-hex-value"
+	cfg.Privacy.PSKPath = "/path/to/psk"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Expected validation error for mutually exclusive PSK settings")
+	}
+
+	if !contains(err.Error(), "mutually exclusive") {
+		t.Errorf("Error should mention mutually exclusive, got: %s", err.Error())
+	}
+}
+
+func TestValidate_InvalidLogLevel(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Logging.Level = "invalid-level"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Expected validation error for invalid log level")
+	}
+
+	if !contains(err.Error(), "logging.level") {
+		t.Errorf("Error should mention logging.level, got: %s", err.Error())
+	}
+}
+
+func TestValidationErrors_MultipleErrors(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Network.ListenPort = -1
+	cfg.Network.ProxyPort = 99999
+	cfg.Logging.Level = "bad"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Expected multiple validation errors")
+	}
+
+	errs, ok := err.(ValidationErrors)
+	if !ok {
+		t.Fatalf("Expected ValidationErrors type, got %T", err)
+	}
+
+	if len(errs) < 3 {
+		t.Errorf("Expected at least 3 errors, got %d: %v", len(errs), errs)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

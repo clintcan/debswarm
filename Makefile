@@ -49,11 +49,11 @@ clean:
 install: build
 	@echo "Installing debswarm..."
 	sudo install -m 755 build/debswarm /usr/local/bin/debswarm
-	sudo install -m 644 dist/90debswarm.conf /etc/apt/apt.conf.d/90debswarm.conf
-	sudo install -m 644 dist/debswarm.service /etc/systemd/system/debswarm.service
+	sudo install -m 644 packaging/90debswarm.conf /etc/apt/apt.conf.d/90debswarm.conf
+	sudo install -m 644 packaging/debswarm.service /etc/systemd/system/debswarm.service
 	sudo mkdir -p /etc/debswarm
 	@if [ ! -f /etc/debswarm/config.toml ]; then \
-		sudo install -m 644 dist/config.example.toml /etc/debswarm/config.toml; \
+		sudo install -m 644 packaging/config.example.toml /etc/debswarm/config.toml; \
 	fi
 	sudo systemctl daemon-reload
 	@echo ""

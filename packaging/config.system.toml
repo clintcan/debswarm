@@ -37,6 +37,10 @@ announce_packages = true
 # psk_path = "/etc/debswarm/swarm.key"
 # peer_allowlist = []
 
+[metrics]
+port = 9978
+bind = "127.0.0.1"
+
 [logging]
 level = "info"
 file = ""

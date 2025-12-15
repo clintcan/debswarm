@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -22,6 +21,7 @@ var (
 	ErrNotFound              = errors.New("package not found in cache")
 	ErrHashMismatch          = errors.New("hash mismatch")
 	ErrInsufficientDiskSpace = errors.New("insufficient disk space")
+	ErrDatabaseCorrupted     = errors.New("database corrupted")
 )
 
 // Package represents a cached package entry
@@ -68,11 +68,11 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 		}
 	}
 
-	// Open database
+	// Open database with corruption detection
 	dbPath := filepath.Join(basePath, "state.db")
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	db, err := openDatabaseWithRecovery(dbPath, logger)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
+		return nil, err
 	}
 
 	// Create tables
@@ -103,6 +103,106 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 	}
 
 	return c, nil
+}
+
+// openDatabaseWithRecovery opens the SQLite database with corruption detection and recovery.
+// If the database is corrupted, it attempts to back it up and create a fresh database.
+func openDatabaseWithRecovery(dbPath string, logger *zap.Logger) (*sql.DB, error) {
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Run integrity check
+	corrupted, checkErr := isDatabaseCorrupted(db)
+	if checkErr != nil {
+		// Can't determine integrity - try to proceed but warn
+		logger.Warn("Could not verify database integrity", zap.Error(checkErr))
+	} else if corrupted {
+		logger.Error("Database corruption detected, attempting recovery",
+			zap.String("path", dbPath))
+
+		// Close the corrupted database
+		if err := db.Close(); err != nil {
+			logger.Warn("Failed to close corrupted database", zap.Error(err))
+		}
+
+		// Attempt recovery
+		db, err = recoverDatabase(dbPath, logger)
+		if err != nil {
+			return nil, fmt.Errorf("%w: recovery failed: %v", ErrDatabaseCorrupted, err)
+		}
+	}
+
+	return db, nil
+}
+
+// isDatabaseCorrupted runs SQLite integrity check and returns true if database is corrupted
+func isDatabaseCorrupted(db *sql.DB) (bool, error) {
+	rows, err := db.Query("PRAGMA integrity_check")
+	if err != nil {
+		return false, fmt.Errorf("integrity check failed: %w", err)
+	}
+	defer rows.Close()
+
+	var result string
+	if rows.Next() {
+		if err := rows.Scan(&result); err != nil {
+			return false, fmt.Errorf("failed to read integrity check result: %w", err)
+		}
+	}
+
+	// "ok" means no corruption found
+	return result != "ok", nil
+}
+
+// recoverDatabase backs up the corrupted database and creates a fresh one.
+// Cached package files on disk are preserved; only metadata is lost.
+func recoverDatabase(dbPath string, logger *zap.Logger) (*sql.DB, error) {
+	// Create backup with timestamp
+	backupPath := dbPath + fmt.Sprintf(".corrupted.%d", time.Now().Unix())
+	if err := os.Rename(dbPath, backupPath); err != nil {
+		return nil, fmt.Errorf("failed to backup corrupted database: %w", err)
+	}
+	logger.Info("Backed up corrupted database",
+		zap.String("backup", backupPath))
+
+	// Also backup WAL and SHM files if they exist
+	for _, suffix := range []string{"-wal", "-shm"} {
+		walPath := dbPath + suffix
+		if _, err := os.Stat(walPath); err == nil {
+			if err := os.Rename(walPath, backupPath+suffix); err != nil {
+				logger.Warn("Failed to backup WAL/SHM file", zap.String("file", walPath), zap.Error(err))
+			}
+		}
+	}
+
+	// Create fresh database
+	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create new database: %w", err)
+	}
+
+	logger.Warn("Created fresh database after corruption recovery",
+		zap.String("note", "Package files preserved on disk; run 'debswarm cache rebuild' to restore metadata"))
+
+	return db, nil
+}
+
+// CheckIntegrity verifies database integrity and returns any errors found.
+// This can be called periodically or on-demand to detect issues early.
+func (c *Cache) CheckIntegrity() error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	corrupted, err := isDatabaseCorrupted(c.db)
+	if err != nil {
+		return fmt.Errorf("integrity check failed: %w", err)
+	}
+	if corrupted {
+		return ErrDatabaseCorrupted
+	}
+	return nil
 }
 
 // formatBytes formats bytes as human-readable string
@@ -535,16 +635,6 @@ func (c *Cache) calculateSize() error {
 }
 
 var ErrCacheFull = errors.New("cache full: unable to free enough space")
-
-// getDiskFreeSpace returns the available disk space in bytes for the cache path
-func (c *Cache) getDiskFreeSpace() (int64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(c.basePath, &stat); err != nil {
-		return 0, err
-	}
-	// Available blocks * block size
-	return int64(stat.Bavail) * int64(stat.Bsize), nil
-}
 
 func (c *Cache) ensureSpace(needed int64) error {
 	// Check minimum free space constraint first

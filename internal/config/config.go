@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
+	"github.com/multiformats/go-multiaddr"
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -18,6 +20,7 @@ type Config struct {
 	Transfer TransferConfig `toml:"transfer"`
 	DHT      DHTConfig      `toml:"dht"`
 	Privacy  PrivacyConfig  `toml:"privacy"`
+	Metrics  MetricsConfig  `toml:"metrics"`
 	Logging  LoggingConfig  `toml:"logging"`
 }
 
@@ -57,6 +60,12 @@ type PrivacyConfig struct {
 	PSKPath          string   `toml:"psk_path"`          // Path to PSK file for private swarm
 	PSK              string   `toml:"psk"`               // Inline PSK (hex), mutually exclusive with path
 	PeerAllowlist    []string `toml:"peer_allowlist"`    // List of allowed peer IDs
+}
+
+// MetricsConfig holds metrics/monitoring settings
+type MetricsConfig struct {
+	Port int    `toml:"port"` // Metrics endpoint port (0 to disable)
+	Bind string `toml:"bind"` // Metrics endpoint bind address
 }
 
 // LoggingConfig holds logging-related settings
@@ -99,6 +108,10 @@ func DefaultConfig() *Config {
 		Privacy: PrivacyConfig{
 			EnableMDNS:       true,
 			AnnouncePackages: true,
+		},
+		Metrics: MetricsConfig{
+			Port: 9978,
+			Bind: "127.0.0.1",
 		},
 		Logging: LoggingConfig{
 			Level: "info",
@@ -254,5 +267,132 @@ func checkFilePermissions(path string) *SecurityWarning {
 		}
 	}
 
+	return nil
+}
+
+// ValidationError represents a configuration validation error
+type ValidationError struct {
+	Field   string
+	Message string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("config validation failed: %s: %s", e.Field, e.Message)
+}
+
+// ValidationErrors collects multiple validation errors
+type ValidationErrors []ValidationError
+
+func (e ValidationErrors) Error() string {
+	if len(e) == 0 {
+		return ""
+	}
+	if len(e) == 1 {
+		return e[0].Error()
+	}
+	var msgs []string
+	for _, err := range e {
+		msgs = append(msgs, fmt.Sprintf("  - %s: %s", err.Field, err.Message))
+	}
+	return fmt.Sprintf("config validation failed with %d errors:\n%s", len(e), strings.Join(msgs, "\n"))
+}
+
+// Validate checks configuration for errors and returns all validation failures.
+// This should be called at startup to fail fast on invalid configuration.
+func (c *Config) Validate() error {
+	var errs ValidationErrors
+
+	// Validate bootstrap peers
+	for i, addr := range c.Network.BootstrapPeers {
+		if addr == "" {
+			continue
+		}
+		_, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("network.bootstrap_peers[%d]", i),
+				Message: fmt.Sprintf("invalid multiaddr %q: %v", addr, err),
+			})
+		}
+	}
+
+	// Validate port numbers
+	if c.Network.ListenPort < 1 || c.Network.ListenPort > 65535 {
+		errs = append(errs, ValidationError{
+			Field:   "network.listen_port",
+			Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Network.ListenPort),
+		})
+	}
+	if c.Network.ProxyPort < 1 || c.Network.ProxyPort > 65535 {
+		errs = append(errs, ValidationError{
+			Field:   "network.proxy_port",
+			Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Network.ProxyPort),
+		})
+	}
+
+	// Validate cache settings
+	if c.Cache.MaxSize != "" {
+		if _, err := ParseSize(c.Cache.MaxSize); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "cache.max_size",
+				Message: fmt.Sprintf("invalid size %q: %v", c.Cache.MaxSize, err),
+			})
+		}
+	}
+	if c.Cache.MinFreeSpace != "" {
+		if _, err := ParseSize(c.Cache.MinFreeSpace); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "cache.min_free_space",
+				Message: fmt.Sprintf("invalid size %q: %v", c.Cache.MinFreeSpace, err),
+			})
+		}
+	}
+
+	// Validate rate limits
+	if c.Transfer.MaxUploadRate != "" {
+		if _, err := ParseRate(c.Transfer.MaxUploadRate); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "transfer.max_upload_rate",
+				Message: fmt.Sprintf("invalid rate %q: %v", c.Transfer.MaxUploadRate, err),
+			})
+		}
+	}
+	if c.Transfer.MaxDownloadRate != "" {
+		if _, err := ParseRate(c.Transfer.MaxDownloadRate); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "transfer.max_download_rate",
+				Message: fmt.Sprintf("invalid rate %q: %v", c.Transfer.MaxDownloadRate, err),
+			})
+		}
+	}
+
+	// Validate PSK configuration (mutually exclusive)
+	if c.Privacy.PSKPath != "" && c.Privacy.PSK != "" {
+		errs = append(errs, ValidationError{
+			Field:   "privacy.psk/psk_path",
+			Message: "psk and psk_path are mutually exclusive; use only one",
+		})
+	}
+
+	// Validate metrics port
+	if c.Metrics.Port < 0 || c.Metrics.Port > 65535 {
+		errs = append(errs, ValidationError{
+			Field:   "metrics.port",
+			Message: fmt.Sprintf("must be between 0 and 65535, got %d", c.Metrics.Port),
+		})
+	}
+
+	// Validate log level
+	validLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true, "": true}
+	if !validLevels[strings.ToLower(c.Logging.Level)] {
+		errs = append(errs, ValidationError{
+			Field:   "logging.level",
+			Message: fmt.Sprintf("invalid level %q; must be debug, info, warn, or error", c.Logging.Level),
+		})
+	}
+
+	if len(errs) > 0 {
+		return errs
+	}
 	return nil
 }
