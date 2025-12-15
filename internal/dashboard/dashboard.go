@@ -50,6 +50,12 @@ type Stats struct {
 
 	// Recent activity
 	RecentDownloads []RecentDownload `json:"recent_downloads"`
+
+	// Peers
+	Peers []PeerInfo `json:"peers"`
+
+	// Errors
+	VerificationFailures int64 `json:"verification_failures"`
 }
 
 // RecentDownload represents a recent download entry
@@ -201,6 +207,11 @@ func (d *Dashboard) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	stats.RecentDownloads = make([]RecentDownload, len(d.recentDLs))
 	copy(stats.RecentDownloads, d.recentDLs)
 	d.recentMu.RUnlock()
+
+	// Add peers
+	if d.getPeers != nil {
+		stats.Peers = d.getPeers()
+	}
 
 	// Format byte values
 	stats.BytesFromP2PStr = formatBytes(stats.BytesFromP2P)
@@ -356,6 +367,12 @@ const dashboardHTML = `<!DOCTYPE html>
         .stat-value.highlight { color: #58a6ff; }
         .stat-value.success { color: #3fb950; }
         .stat-value.warning { color: #d29922; }
+        .stat-value.error { color: #f85149; }
+        .score-excellent { color: #3fb950; }
+        .score-good { color: #58a6ff; }
+        .score-fair { color: #d29922; }
+        .score-poor { color: #f85149; }
+        .blacklisted { color: #f85149; text-decoration: line-through; }
         .progress-bar {
             height: 8px;
             background: #21262d;
@@ -432,6 +449,10 @@ const dashboardHTML = `<!DOCTYPE html>
                 <div class="stat-row">
                     <span class="stat-label">Cache Hits</span>
                     <span class="stat-value">{{.CacheHits}}</span>
+                </div>
+                <div class="stat-row">
+                    <span class="stat-label">Verification Failures</span>
+                    <span class="stat-value{{if gt .VerificationFailures 0}} error{{end}}">{{.VerificationFailures}}</span>
                 </div>
             </div>
 
@@ -514,6 +535,40 @@ const dashboardHTML = `<!DOCTYPE html>
             </table>
             {{else}}
             <div class="empty-state">No recent downloads</div>
+            {{end}}
+        </div>
+
+        <div class="card">
+            <h2>Connected Peers</h2>
+            {{if .Peers}}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Peer ID</th>
+                        <th>Score</th>
+                        <th>Latency</th>
+                        <th>Throughput</th>
+                        <th>Downloaded</th>
+                        <th>Uploaded</th>
+                        <th>Last Seen</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Peers}}
+                    <tr{{if .Blacklisted}} class="blacklisted"{{end}}>
+                        <td title="{{.ID}}">{{.ShortID}}</td>
+                        <td class="score-{{.Category}}">{{printf "%.1f" .Score}}</td>
+                        <td>{{.Latency}}</td>
+                        <td>{{.Throughput}}</td>
+                        <td>{{.Downloaded}}</td>
+                        <td>{{.Uploaded}}</td>
+                        <td>{{.LastSeen}}</td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+            {{else}}
+            <div class="empty-state">No connected peers</div>
             {{end}}
         </div>
     </div>

@@ -10,14 +10,25 @@ import (
 // Metrics holds all application metrics
 type Metrics struct {
 	// Counters
-	DownloadsTotal      *CounterVec
-	BytesDownloaded     *CounterVec
-	BytesUploaded       *CounterVec
-	PeerConnections     *CounterVec
-	DHTQueries          *CounterVec
-	CacheHits           *Counter
-	CacheMisses         *Counter
+	DownloadsTotal       *CounterVec
+	BytesDownloaded      *CounterVec
+	BytesUploaded        *CounterVec
+	PeerConnections      *CounterVec
+	DHTQueries           *CounterVec
+	CacheHits            *Counter
+	CacheMisses          *Counter
 	VerificationFailures *Counter
+
+	// Resume metrics
+	DownloadsResumed  *Counter
+	ChunksRecovered   *Counter
+
+	// Error breakdown
+	Errors *CounterVec // labels: type (timeout, connection, verification)
+
+	// Peer churn
+	PeersJoined *Counter
+	PeersLeft   *Counter
 
 	// Gauges
 	ConnectedPeers     *Gauge
@@ -27,11 +38,15 @@ type Metrics struct {
 	ActiveDownloads    *Gauge
 	ActiveUploads      *Gauge
 
+	// Bandwidth rates (bytes per second, updated periodically)
+	UploadRate   *Gauge
+	DownloadRate *Gauge
+
 	// Histograms
-	DownloadDuration   *HistogramVec
-	PeerLatency        *HistogramVec
-	ChunkDownloadTime  *Histogram
-	DHTLookupDuration  *Histogram
+	DownloadDuration  *HistogramVec
+	PeerLatency       *HistogramVec
+	ChunkDownloadTime *Histogram
+	DHTLookupDuration *Histogram
 }
 
 // Counter is a simple counter metric
@@ -225,12 +240,27 @@ func New() *Metrics {
 		CacheMisses:          &Counter{},
 		VerificationFailures: &Counter{},
 
+		// Resume metrics
+		DownloadsResumed: &Counter{},
+		ChunksRecovered:  &Counter{},
+
+		// Error breakdown
+		Errors: NewCounterVec(),
+
+		// Peer churn
+		PeersJoined: &Counter{},
+		PeersLeft:   &Counter{},
+
 		ConnectedPeers:   &Gauge{},
 		RoutingTableSize: &Gauge{},
 		CacheSize:        &Gauge{},
 		CacheCount:       &Gauge{},
 		ActiveDownloads:  &Gauge{},
 		ActiveUploads:    &Gauge{},
+
+		// Bandwidth rates
+		UploadRate:   &Gauge{},
+		DownloadRate: &Gauge{},
 
 		DownloadDuration:  NewHistogramVec(DurationBuckets),
 		PeerLatency:       NewHistogramVec(LatencyBuckets),
@@ -249,6 +279,14 @@ func (m *Metrics) Handler() http.Handler {
 		writeCounter(w, "debswarm_cache_misses_total", m.CacheMisses.Value())
 		writeCounter(w, "debswarm_verification_failures_total", m.VerificationFailures.Value())
 
+		// Resume metrics
+		writeCounter(w, "debswarm_downloads_resumed_total", m.DownloadsResumed.Value())
+		writeCounter(w, "debswarm_chunks_recovered_total", m.ChunksRecovered.Value())
+
+		// Peer churn
+		writeCounter(w, "debswarm_peers_joined_total", m.PeersJoined.Value())
+		writeCounter(w, "debswarm_peers_left_total", m.PeersLeft.Value())
+
 		for label, value := range m.DownloadsTotal.Values() {
 			writeCounterWithLabel(w, "debswarm_downloads_total", "source", label, value)
 		}
@@ -258,6 +296,10 @@ func (m *Metrics) Handler() http.Handler {
 		for label, value := range m.BytesUploaded.Values() {
 			writeCounterWithLabel(w, "debswarm_bytes_uploaded_total", "peer", label, value)
 		}
+		// Error breakdown
+		for label, value := range m.Errors.Values() {
+			writeCounterWithLabel(w, "debswarm_errors_total", "type", label, value)
+		}
 
 		// Gauges
 		writeGauge(w, "debswarm_connected_peers", m.ConnectedPeers.Value())
@@ -266,6 +308,10 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(w, "debswarm_cache_count", m.CacheCount.Value())
 		writeGauge(w, "debswarm_active_downloads", m.ActiveDownloads.Value())
 		writeGauge(w, "debswarm_active_uploads", m.ActiveUploads.Value())
+
+		// Bandwidth rates
+		writeGauge(w, "debswarm_upload_bytes_per_second", m.UploadRate.Value())
+		writeGauge(w, "debswarm_download_bytes_per_second", m.DownloadRate.Value())
 
 		// Histograms
 		writeHistogram(w, "debswarm_chunk_download_seconds", m.ChunkDownloadTime)

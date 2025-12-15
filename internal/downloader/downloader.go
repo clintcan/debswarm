@@ -267,6 +267,7 @@ func (d *Downloader) downloadChunked(
 	// Build list of chunks to download
 	chunks := make([]*Chunk, 0, numChunks)
 	completedFromDisk := make(map[int]bool)
+	chunksRecovered := 0
 
 	for i := 0; i < numChunks; i++ {
 		start := int64(i) * d.chunkSize
@@ -280,6 +281,7 @@ func (d *Downloader) downloadChunked(
 			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
 			if info, err := os.Stat(chunkFile); err == nil && info.Size() == end-start {
 				completedFromDisk[i] = true
+				chunksRecovered++
 				continue // Skip this chunk
 			}
 		}
@@ -289,6 +291,12 @@ func (d *Downloader) downloadChunked(
 			Start: start,
 			End:   end,
 		})
+	}
+
+	// Record resume metrics
+	if chunksRecovered > 0 && d.metrics != nil {
+		d.metrics.DownloadsResumed.Inc()
+		d.metrics.ChunksRecovered.Add(int64(chunksRecovered))
 	}
 
 	// If all chunks exist, just assemble

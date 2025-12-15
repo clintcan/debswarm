@@ -356,21 +356,22 @@ func (s *Server) GetDashboardStats() *dashboard.Stats {
 	}
 
 	return &dashboard.Stats{
-		RequestsTotal:     stats.RequestsTotal,
-		RequestsP2P:       stats.RequestsP2P,
-		RequestsMirror:    stats.RequestsMirror,
-		BytesFromP2P:      stats.BytesFromP2P,
-		BytesFromMirror:   stats.BytesFromMirror,
-		CacheHits:         stats.CacheHits,
-		P2PRatioPercent:   p2pRatio,
-		CacheSizeBytes:    s.cache.Size(),
-		CacheCount:        s.cache.Count(),
-		CacheMaxSize:      formatBytes(s.cacheMaxSize),
-		CacheUsagePercent: cacheUsage,
-		ConnectedPeers:    connectedPeers,
-		RoutingTableSize:  routingTableSize,
-		ActiveDownloads:   int(s.metrics.ActiveDownloads.Value()),
-		ActiveUploads:     int(s.metrics.ActiveUploads.Value()),
+		RequestsTotal:        stats.RequestsTotal,
+		RequestsP2P:          stats.RequestsP2P,
+		RequestsMirror:       stats.RequestsMirror,
+		BytesFromP2P:         stats.BytesFromP2P,
+		BytesFromMirror:      stats.BytesFromMirror,
+		CacheHits:            stats.CacheHits,
+		P2PRatioPercent:      p2pRatio,
+		CacheSizeBytes:       s.cache.Size(),
+		CacheCount:           s.cache.Count(),
+		CacheMaxSize:         formatBytes(s.cacheMaxSize),
+		CacheUsagePercent:    cacheUsage,
+		ConnectedPeers:       connectedPeers,
+		RoutingTableSize:     routingTableSize,
+		ActiveDownloads:      int(s.metrics.ActiveDownloads.Value()),
+		ActiveUploads:        int(s.metrics.ActiveUploads.Value()),
+		VerificationFailures: s.metrics.VerificationFailures.Value(),
 	}
 }
 
