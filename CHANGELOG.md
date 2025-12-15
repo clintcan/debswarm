@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.2] - 2025-12-16
+## [1.2.3] - 2025-12-16
 
 ### Fixed
 - **Systemd service**: Switch from `DynamicUser=yes` to static `debswarm` user for reliable directory permissions
