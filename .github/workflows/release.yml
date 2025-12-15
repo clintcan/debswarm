@@ -10,18 +10,20 @@ permissions:
 
 env:
   GOTOOLCHAIN: auto
+  GO_VERSION: '1.24'
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.6'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install dependencies
         run: sudo apt-get install -y libsqlite3-dev
@@ -48,13 +50,14 @@ jobs:
             go_arch: arm64
           - arch: armhf
             go_arch: arm
-    
-    steps:
-      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v6
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.6'
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
 
       - name: Install build dependencies
         run: |
@@ -64,12 +67,12 @@ jobs:
             debhelper \
             libsqlite3-dev \
             pkg-config
-      
+
       - name: Prepare source
         run: |
           go mod download
           go mod vendor
-      
+
       - name: Build package
         env:
           DEB_BUILD_OPTIONS: nocheck
