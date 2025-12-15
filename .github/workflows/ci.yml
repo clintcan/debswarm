@@ -118,3 +118,40 @@ jobs:
         with:
           name: debswarm-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
           path: debswarm-*
+
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            devscripts \
+            debhelper \
+            libsqlite3-dev \
+            pkg-config
+
+      - name: Prepare source
+        run: |
+          go mod download
+          go mod vendor
+
+      - name: Build deb package (amd64)
+        env:
+          DEB_BUILD_OPTIONS: nocheck
+        run: dpkg-buildpackage -b -us -uc -d
+
+      - name: List built packages
+        run: ls -la ../*.deb
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: debswarm-deb-amd64
+          path: ../*.deb
