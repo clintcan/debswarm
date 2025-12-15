@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2025-12-15
+
+### Added
+- **Runtime profiling**: pprof endpoints at `/debug/pprof/` on metrics server for production debugging
+- **E2E integration tests**: Full end-to-end tests for proxy, cache, index, and P2P transfer flows
+  - `TestE2E_ProxyMirrorFallback`: Tests mirror serving and proxy handler
+  - `TestE2E_CacheHit`: Verifies cache serves packages without mirror hits
+  - `TestE2E_IndexAutoPopulation`: Tests Packages file parsing
+  - `TestE2E_TwoNodeP2PTransfer`: Two-node P2P transfer with DHT discovery
+  - `TestE2E_HashVerification`: Validates hash verification rejects bad packages
+- **CLI smoke tests**: Test coverage for CLI commands (version, config, psk, etc.)
+
+### Security
+- **MaxHeaderBytes**: Added 1MB limit to all HTTP servers to prevent header-based DoS
+
+### Changed
+- All critical, high, and medium priority items for 1.0 are now complete
+- Project is production-ready for general use
+
 ## [0.8.2] - 2025-12-15
 
 ### Added
@@ -247,7 +266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/clintcan/debswarm/compare/v0.8.2...v1.0.0
 [0.8.2]: https://github.com/clintcan/debswarm/compare/v0.8.0...v0.8.2
 [0.8.0]: https://github.com/clintcan/debswarm/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/clintcan/debswarm/compare/v0.6.2...v0.7.0

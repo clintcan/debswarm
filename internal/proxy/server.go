@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -181,11 +182,12 @@ func NewServer(
 	mux.HandleFunc("/", s.handleRequest)
 
 	s.server = &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      mux,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 5 * time.Minute,
-		IdleTimeout:  120 * time.Second,
+		Addr:           cfg.Addr,
+		Handler:        mux,
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   5 * time.Minute,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 
 	return s
@@ -221,6 +223,13 @@ func (s *Server) startMetricsServer() {
 		})
 	}
 
+	// Add pprof endpoints for runtime profiling
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	addr := fmt.Sprintf("%s:%d", s.metricsBind, s.metricsPort)
 	s.logger.Info("Starting metrics server", zap.String("addr", addr))
 
@@ -231,11 +240,12 @@ func (s *Server) startMetricsServer() {
 	}
 
 	server := &http.Server{
-		Addr:         addr,
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           addr,
+		Handler:        mux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    60 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1MB
 	}
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.logger.Error("Metrics server failed", zap.Error(err))

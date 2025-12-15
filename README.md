@@ -29,16 +29,19 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Persistent Identity** - Stable peer IDs across restarts with Ed25519 key persistence
 - **Download Resume** - Interrupted chunked downloads resume automatically from saved state
 
-### Security (v0.6.x)
+### Security
 - **SSRF Protection** - Block requests to localhost, cloud metadata, private networks
 - **Response Size Limits** - Prevent memory exhaustion from malicious mirrors (500MB max)
 - **HTTP Security Headers** - CSP, X-Frame-Options, X-Content-Type-Options on dashboard
 - **Error Disclosure Prevention** - Hide internal errors from dashboard users
+- **Request Size Limits** - MaxHeaderBytes (1MB) on all HTTP servers
 
 ### Monitoring
 - **Web Dashboard** - Real-time HTML dashboard at `http://localhost:9978/dashboard`
 - **Prometheus Metrics** - Full observability at `http://localhost:9978/metrics`
 - **JSON Stats** - Quick status check at `http://localhost:9978/stats`
+- **Health Endpoint** - `/health` endpoint for orchestration and monitoring
+- **Runtime Profiling** - pprof endpoints at `/debug/pprof/` for production debugging
 - **Detailed Logging** - Configurable log levels for debugging
 
 ## Quick Start
