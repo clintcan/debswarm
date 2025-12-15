@@ -3,6 +3,20 @@ set -e
 
 case "$1" in
     configure)
+        # Create system user and group if they don't exist
+        if ! getent group debswarm > /dev/null 2>&1; then
+            addgroup --system debswarm
+        fi
+        if ! getent passwd debswarm > /dev/null 2>&1; then
+            adduser --system --ingroup debswarm --home /var/lib/debswarm \
+                --no-create-home --disabled-password debswarm
+        fi
+
+        # Create and set ownership of directories
+        mkdir -p /var/cache/debswarm /var/lib/debswarm /etc/debswarm
+        chown -R debswarm:debswarm /var/cache/debswarm /var/lib/debswarm
+        chmod 750 /var/cache/debswarm /var/lib/debswarm
+
         # Create default configuration if it doesn't exist
         if [ ! -f /etc/debswarm/config.toml ]; then
             mkdir -p /etc/debswarm

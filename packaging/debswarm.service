@@ -11,11 +11,9 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 
-# Security hardening
-DynamicUser=yes
-StateDirectory=debswarm
-CacheDirectory=debswarm
-ConfigurationDirectory=debswarm
+# Run as dedicated system user (created by package postinst)
+User=debswarm
+Group=debswarm
 
 # Filesystem restrictions
 ProtectSystem=strict
