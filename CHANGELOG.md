@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2025-12-15
+
+### Added
+- **Peers table in dashboard**: Connected peers now displayed with score, latency, throughput, and bytes transferred
+- **Score color coding**: Visual indicators for peer quality (excellent/good/fair/poor/blacklisted)
+- **Verification failures display**: Hash verification failures shown in dashboard overview
+
+### Changed
+- New Prometheus metrics:
+  - `debswarm_downloads_resumed_total`: Count of resumed downloads
+  - `debswarm_chunks_recovered_total`: Chunks recovered from disk
+  - `debswarm_errors_total{type}`: Error breakdown by type (timeout, connection, verification)
+  - `debswarm_peers_joined_total` / `debswarm_peers_left_total`: Peer churn tracking
+  - `debswarm_upload_bytes_per_second` / `debswarm_download_bytes_per_second`: Bandwidth rates
+
 ## [0.6.0] - 2025-12-15
 
 ### Added
@@ -190,7 +205,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/clintcan/debswarm/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/clintcan/debswarm/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/clintcan/debswarm/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/clintcan/debswarm/compare/v0.5.3...v0.5.5

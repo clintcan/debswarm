@@ -415,8 +415,8 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o debswarm-arm6
 Releases are automated via GitHub Actions. To create a release:
 
 ```bash
-git tag -a v0.6.0 -m "Release v0.6.0"
-git push origin v0.6.0
+git tag -a v0.6.1 -m "Release v0.6.1"
+git push origin v0.6.1
 ```
 
 This triggers the release workflow which builds:
