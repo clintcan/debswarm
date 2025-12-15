@@ -1,2 +1,1 @@
-build/debswarm usr/bin
-90debswarm.conf etc/apt/apt.conf.d
+# Installation handled by override_dh_auto_install in debian/rules
