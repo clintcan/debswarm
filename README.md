@@ -66,17 +66,17 @@ sudo apt install vim
 ## How It Works
 
 ```
-┌─────────┐     ┌──────────────┐     ┌─────────────┐
+┌─────────┐      ┌──────────────┐     ┌─────────────┐
 │   APT   │────▶│   debswarm   │────▶│   Peers     │
-│         │     │  (proxy)     │     │   (P2P)     │
-└─────────┘     └──────┬───────┘     └─────────────┘
-                       │                    │
-                       │ fallback           │ DHT lookup
-                       ▼                    ▼
-                ┌─────────────┐     ┌─────────────┐
-                │   Mirror    │     │  Kademlia   │
-                │  (http)     │     │    DHT      │
-                └─────────────┘     └─────────────┘
+│         │      │  (proxy)     │     │   (P2P)     │
+└─────────┘      └──────┬───────┘     └─────────────┘
+                        │                    │
+                        │ fallback           │ DHT lookup
+                        ▼                    ▼
+                 ┌─────────────┐     ┌─────────────┐
+                 │   Mirror    │     │  Kademlia   │
+                 │  (http)     │     │    DHT      │
+                 └─────────────┘     └─────────────┘
 ```
 
 1. APT requests a package via the local proxy (localhost:9977)
@@ -395,8 +395,8 @@ MemoryMax=512M
 
 Requirements:
 - Go 1.24+
-- GCC (for SQLite)
-- libsqlite3-dev
+
+No C compiler or external dependencies required - uses pure Go SQLite implementation.
 
 ```bash
 # Simple build
