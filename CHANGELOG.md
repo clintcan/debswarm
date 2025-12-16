@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.1] - 2025-12-18
+
+### Fixed
+- Fix `identity show` to use same data directory resolution as daemon
+- Fix `status` command to use configured metrics bind/port instead of hardcoded values
+- Fix `peers` command hardcoded metrics URL
+- Fix `config show` to display all configuration fields (was missing many sections)
+
+### Added
+- Comprehensive configuration documentation (`docs/configuration.md`)
+
+### Changed
+- Config show now displays resolved `data_directory` path
+- Rate limits show "unlimited" instead of empty string
+- Fixed documentation: grep pattern for peerID in bootstrap-node.md
+- Fixed documentation: removed incorrect CGO/GCC build requirements
+
+## [1.4.0] - 2025-12-17
+
+### Added
+- **Automatic retry for failed downloads**: Failed P2P downloads are automatically retried on subsequent APT requests
+  - Configurable `retry_max_attempts` (default: 3)
+  - Configurable `retry_interval` with exponential backoff (default: 5m)
+  - Configurable `retry_max_age` to expire old failures (default: 24h)
+
+## [1.3.3] - 2025-12-17
+
+### Security
+- **Log sanitization**: Sanitize peer IDs and file paths in log output to prevent log injection attacks
+
+## [1.3.2] - 2025-12-16
+
+### Added
+- `--cache-path` flag for seed command to override default cache path when importing packages
+
 ## [1.3.1] - 2025-12-16
 
 ### Fixed
@@ -326,7 +361,20 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/clintcan/debswarm/compare/v1.4.0...v1.4.1
+[1.4.0]: https://github.com/clintcan/debswarm/compare/v1.3.3...v1.4.0
+[1.3.3]: https://github.com/clintcan/debswarm/compare/v1.3.2...v1.3.3
+[1.3.2]: https://github.com/clintcan/debswarm/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/clintcan/debswarm/compare/v1.3.0...v1.3.1
+[1.3.0]: https://github.com/clintcan/debswarm/compare/v1.2.6...v1.3.0
+[1.2.6]: https://github.com/clintcan/debswarm/compare/v1.2.5...v1.2.6
+[1.2.5]: https://github.com/clintcan/debswarm/compare/v1.2.1...v1.2.5
+[1.2.1]: https://github.com/clintcan/debswarm/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/clintcan/debswarm/compare/v1.1.1...v1.2.0
+[1.1.1]: https://github.com/clintcan/debswarm/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/clintcan/debswarm/compare/v1.0.1...v1.1.0
+[1.0.1]: https://github.com/clintcan/debswarm/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/clintcan/debswarm/compare/v0.8.2...v1.0.0
 [0.8.2]: https://github.com/clintcan/debswarm/compare/v0.8.0...v0.8.2
 [0.8.0]: https://github.com/clintcan/debswarm/compare/v0.7.0...v0.8.0
