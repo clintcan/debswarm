@@ -28,6 +28,7 @@ import (
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/sanitize"
 	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
 )
@@ -535,7 +536,7 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.Debug("Proxy request",
 		zap.String("method", r.Method),
-		zap.String("url", targetURL))
+		zap.String("url", sanitize.URL(targetURL)))
 
 	reqType := s.classifyRequest(targetURL)
 
@@ -603,7 +604,7 @@ func (s *Server) extractTargetURL(r *http.Request) string {
 	// Only allow requests to legitimate Debian/Ubuntu package mirrors
 	if !isAllowedMirrorURL(targetURL) {
 		s.logger.Warn("Blocked request to non-allowed URL",
-			zap.String("url", targetURL),
+			zap.String("url", sanitize.URL(targetURL)),
 			zap.String("remoteAddr", r.RemoteAddr))
 		return ""
 	}
@@ -637,11 +638,11 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 				path = pkg.Filename // Use filename from index if available
 				s.logger.Debug("Found package in index",
 					zap.String("repo", pkg.Repo),
-					zap.String("path", path),
+					zap.String("path", sanitize.Path(path)),
 					zap.String("hash", expectedHash[:16]+"..."),
 					zap.Int64("size", expectedSize))
 			} else {
-				s.logger.Warn("Invalid hash format in index", zap.String("url", url))
+				s.logger.Warn("Invalid hash format in index", zap.String("url", sanitize.URL(url)))
 			}
 		}
 	}
@@ -670,7 +671,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	if shared {
 		s.logger.Debug("Request coalesced with another download",
-			zap.String("url", url),
+			zap.String("url", sanitize.URL(url)),
 			zap.String("key", coalescingKey[:min(16, len(coalescingKey))]+"..."))
 	}
 
@@ -783,7 +784,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	}
 
 	// Final fallback: mirror
-	s.logger.Debug("Falling back to mirror", zap.String("url", url))
+	s.logger.Debug("Falling back to mirror", zap.String("url", sanitize.URL(url)))
 	atomic.AddInt64(&s.requestsMirror, 1)
 
 	data, err := s.fetcher.Fetch(ctx, url)
@@ -926,7 +927,7 @@ func (s *Server) announcementWorker() {
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
 
-	s.logger.Debug("Fetching index", zap.String("url", url))
+	s.logger.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
 
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
@@ -939,13 +940,14 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 	lowerURL := strings.ToLower(url)
 	if strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation") {
 		go func() {
+			sanitizedURL := sanitize.URL(url) // Capture for goroutine
 			if err := s.index.LoadFromData(data, url); err != nil {
 				s.logger.Debug("Failed to parse index file",
-					zap.String("url", url),
+					zap.String("url", sanitizedURL),
 					zap.Error(err))
 			} else {
 				s.logger.Debug("Parsed index file",
-					zap.String("url", url),
+					zap.String("url", sanitizedURL),
 					zap.Int("totalPackages", s.index.Count()),
 					zap.Int("repos", s.index.RepoCount()))
 			}

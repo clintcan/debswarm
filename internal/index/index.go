@@ -19,6 +19,7 @@ import (
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/sanitize"
 	"github.com/debswarm/debswarm/internal/security"
 )
 
@@ -93,7 +94,7 @@ func (idx *Index) LoadFromURL(url string) error {
 		return fmt.Errorf("blocked request to non-allowed URL: %s", url)
 	}
 
-	idx.logger.Debug("Fetching package index", zap.String("url", url))
+	idx.logger.Debug("Fetching package index", zap.String("url", sanitize.URL(url)))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

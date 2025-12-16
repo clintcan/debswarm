@@ -30,6 +30,7 @@ import (
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/ratelimit"
+	"github.com/debswarm/debswarm/internal/sanitize"
 	"github.com/debswarm/debswarm/internal/timeouts"
 )
 
@@ -344,7 +345,7 @@ func (n *Node) bootstrap(ctx context.Context, bootstrapPeers []string) {
 	for _, addr := range bootstrapPeers {
 		ma, err := multiaddr.NewMultiaddr(addr)
 		if err != nil {
-			n.logger.Warn("Invalid bootstrap address", zap.String("addr", addr), zap.Error(err))
+			n.logger.Warn("Invalid bootstrap address", zap.String("addr", sanitize.String(addr)), zap.Error(err))
 			continue
 		}
 

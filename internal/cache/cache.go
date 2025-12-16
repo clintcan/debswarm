@@ -15,6 +15,8 @@ import (
 
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite"
+
+	"github.com/debswarm/debswarm/internal/sanitize"
 )
 
 var (
@@ -455,7 +457,7 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 	c.logger.Debug("Cached package",
 		zap.String("hash", expectedHash[:16]+"..."),
 		zap.Int64("size", size),
-		zap.String("filename", filename))
+		zap.String("filename", sanitize.Filename(filename)))
 
 	return nil
 }

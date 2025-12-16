@@ -30,13 +30,13 @@ This document tracks the gaps and improvements needed before a production-ready 
 
 ## Low Priority (Post-1.0)
 
-| Issue | Description |
-|-------|-------------|
-| Request tracing | Add request IDs for correlating multi-hop downloads across logs |
-| Per-peer rate limiting | Rate limit individual peers, not just global bandwidth |
-| Adaptive rate limiting | Adjust rates based on network conditions |
-| Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart |
-| Log sanitization review | Audit user-controlled data in logs for injection risks |
+| Issue | Description | Status |
+|-------|-------------|--------|
+| Request tracing | Add request IDs for correlating multi-hop downloads across logs | Not started |
+| Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | Not started |
+| Adaptive rate limiting | Adjust rates based on network conditions | Not started |
+| Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | Not started |
+| Log sanitization review | Audit user-controlled data in logs for injection risks | **Done** (v1.3.3) |
 
 ## Current Strengths (No Action Needed)
 
@@ -125,6 +125,14 @@ Implemented in `internal/proxy/e2e_test.go`:
 - `TestE2E_IndexAutoPopulation`: Tests Packages file parsing and SHA256/path lookups
 - `TestE2E_TwoNodeP2PTransfer`: Creates two P2P nodes, seeds package on one, downloads on other
 - `TestE2E_HashVerification`: Tests that packages with wrong hashes are rejected
+
+### Log Sanitization (Done)
+Implemented in `internal/sanitize/sanitize.go`:
+- `sanitize.String()` escapes newlines, carriage returns, tabs, and control characters
+- `sanitize.URL()`, `sanitize.Filename()`, `sanitize.Path()` for semantic clarity
+- Truncates strings over 500 characters to prevent log bloat
+- Applied to user-controlled data in proxy/server.go, cache.go, index.go, p2p/node.go
+- Prevents log injection attacks where malicious URLs/filenames could create fake log entries
 
 ## Version History
 
