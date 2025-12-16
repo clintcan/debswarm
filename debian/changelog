@@ -1,3 +1,39 @@
+debswarm (1.4.1-1) unstable; urgency=medium
+
+  * Fix identity show to use same data directory resolution as daemon
+  * Fix status command to use configured metrics bind/port instead of hardcoded values
+  * Fix peers command hardcoded metrics URL
+  * Fix config show to display all configuration fields (was missing many sections)
+  * Add comprehensive configuration documentation (docs/configuration.md)
+  * Fix grep pattern for peerID in bootstrap-node.md
+  * Remove incorrect CGO/GCC build requirements from documentation
+
+ -- debswarm developers <debswarm@example.com>  Wed, 18 Dec 2025 00:00:00 +0000
+
+debswarm (1.4.0-1) unstable; urgency=medium
+
+  * Add automatic retry for failed downloads
+    - Configurable retry_max_attempts, retry_interval, retry_max_age
+    - Failed downloads automatically retried on next APT request
+    - Exponential backoff between retry attempts
+
+ -- debswarm developers <debswarm@example.com>  Tue, 17 Dec 2025 00:00:00 +0000
+
+debswarm (1.3.3-1) unstable; urgency=medium
+
+  * Add log sanitization for security
+    - Sanitize peer IDs and file paths in log output
+    - Prevent potential log injection attacks
+
+ -- debswarm developers <debswarm@example.com>  Tue, 17 Dec 2025 00:00:00 +0000
+
+debswarm (1.3.2-1) unstable; urgency=medium
+
+  * Add --cache-path flag to seed command
+    - Override default cache path when importing packages
+
+ -- debswarm developers <debswarm@example.com>  Mon, 16 Dec 2025 00:00:00 +0000
+
 debswarm (1.3.1-1) unstable; urgency=medium
 
   * Fix contextcheck lint error in keepalive goroutine
