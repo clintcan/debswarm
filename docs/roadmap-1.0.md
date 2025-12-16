@@ -35,7 +35,7 @@ This document tracks the gaps and improvements needed before a production-ready 
 | Request tracing | Add request IDs for correlating multi-hop downloads across logs | Not started |
 | Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | Not started |
 | Adaptive rate limiting | Adjust rates based on network conditions | Not started |
-| Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | Not started |
+| Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | **Done** (v1.4.0) |
 | Log sanitization review | Audit user-controlled data in logs for injection risks | **Done** (v1.3.3) |
 
 ## Current Strengths (No Action Needed)
@@ -134,8 +134,25 @@ Implemented in `internal/sanitize/sanitize.go`:
 - Applied to user-controlled data in proxy/server.go, cache.go, index.go, p2p/node.go
 - Prevents log injection attacks where malicious URLs/filenames could create fake log entries
 
+### Automatic Resume Retry (Done)
+Implemented background worker to automatically retry failed downloads:
+- `internal/downloader/state.go`: Added `retry_count` column and methods:
+  - `GetRetryableDownloads(maxRetries, maxAge)` finds failed downloads eligible for retry
+  - `MarkForRetry(hash)` resets status to pending and increments retry count
+  - `IncrementRetryCount(hash)` for manual retry count updates
+- `internal/proxy/server.go`: Added `retryWorker()` background goroutine
+  - Runs at configurable interval (default 5 minutes)
+  - Checks for failed downloads within retry limits and age constraints
+  - Triggers re-download while preserving already-completed chunks
+- `internal/config/config.go`: Added configuration options:
+  - `transfer.retry_max_attempts`: Maximum retry attempts per download (default 3, 0 to disable)
+  - `transfer.retry_interval`: How often to check for failed downloads (default "5m")
+  - `transfer.retry_max_age`: Don't retry downloads older than this (default "1h")
+- Clean shutdown: Retry worker respects context cancellation for graceful stop
+
 ## Version History
 
+- **v1.4.0** (2025-12-16): Low priority - Automatic resume retry for failed downloads
 - **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
 - **v0.8.0** (2025-12-15): Medium priority - systemd directory validation
 - **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation

@@ -74,6 +74,14 @@ type Server struct {
 
 	// Request coalescing - prevents duplicate downloads for same package
 	downloadGroup singleflight.Group
+
+	// Retry configuration
+	retryMaxAttempts int
+	retryInterval    time.Duration
+	retryMaxAge      time.Duration
+	retryCtx         context.Context
+	retryCancel      context.CancelFunc
+	retryDone        chan struct{}
 }
 
 // Config holds proxy server configuration
@@ -88,6 +96,10 @@ type Config struct {
 	Metrics                    *metrics.Metrics
 	Timeouts                   *timeouts.Manager
 	Scorer                     *peers.Scorer
+	// Retry settings
+	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
+	RetryInterval    time.Duration // How often to check for failed downloads
+	RetryMaxAge      time.Duration // Don't retry downloads older than this
 }
 
 // DefaultConfig returns default configuration
@@ -136,22 +148,26 @@ func NewServer(
 	}
 
 	s := &Server{
-		addr:           cfg.Addr,
-		cache:          pkgCache,
-		index:          idx,
-		p2pNode:        node,
-		fetcher:        fetcher,
-		logger:         logger,
-		metrics:        m,
-		timeouts:       tm,
-		scorer:         scorer,
-		p2pTimeout:     cfg.P2PTimeout,
-		dhtLookupLimit: cfg.DHTLookupLimit,
-		metricsPort:    cfg.MetricsPort,
-		metricsBind:    metricsBind,
-		cacheMaxSize:   cfg.CacheMaxSize,
-		announceChan:   make(chan string, 100), // Bounded buffer
-		announceDone:   make(chan struct{}),
+		addr:             cfg.Addr,
+		cache:            pkgCache,
+		index:            idx,
+		p2pNode:          node,
+		fetcher:          fetcher,
+		logger:           logger,
+		metrics:          m,
+		timeouts:         tm,
+		scorer:           scorer,
+		p2pTimeout:       cfg.P2PTimeout,
+		dhtLookupLimit:   cfg.DHTLookupLimit,
+		metricsPort:      cfg.MetricsPort,
+		metricsBind:      metricsBind,
+		cacheMaxSize:     cfg.CacheMaxSize,
+		announceChan:     make(chan string, 100), // Bounded buffer
+		announceDone:     make(chan struct{}),
+		retryMaxAttempts: cfg.RetryMaxAttempts,
+		retryInterval:    cfg.RetryInterval,
+		retryMaxAge:      cfg.RetryMaxAge,
+		retryDone:        make(chan struct{}),
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -159,6 +175,9 @@ func NewServer(
 
 	// Start announcement worker (bounded goroutines)
 	go s.announcementWorker()
+
+	// Create context for retry worker
+	s.retryCtx, s.retryCancel = context.WithCancel(context.Background())
 
 	// Create state manager for download resume support
 	stateManager := downloader.NewStateManager(pkgCache.GetDB())
@@ -199,6 +218,11 @@ func (s *Server) Start() error {
 	// Start metrics server in background
 	if s.metricsPort > 0 {
 		go s.startMetricsServer()
+	}
+
+	// Start retry worker if enabled
+	if s.retryMaxAttempts > 0 && s.retryInterval > 0 {
+		go s.retryWorker()
 	}
 
 	s.logger.Info("Starting HTTP proxy", zap.String("addr", s.addr))
@@ -368,6 +392,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	// Cancel announcement context to stop in-flight announcements
 	s.announceCancel()
 
+	// Cancel retry context to stop retry worker
+	if s.retryCancel != nil {
+		s.retryCancel()
+	}
+
 	// Stop accepting new announcements and wait for pending ones
 	close(s.announceChan)
 	select {
@@ -375,6 +404,16 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		// Timeout waiting for announcements
 	}
+
+	// Wait for retry worker to finish
+	if s.retryDone != nil {
+		select {
+		case <-s.retryDone:
+		case <-ctx.Done():
+			// Timeout waiting for retry worker
+		}
+	}
+
 	return s.server.Shutdown(ctx)
 }
 
@@ -922,6 +961,119 @@ func (s *Server) announcementWorker() {
 	// Wait for all in-flight announcements to complete
 	wg.Wait()
 	close(s.announceDone)
+}
+
+// retryWorker periodically checks for failed downloads and retries them
+func (s *Server) retryWorker() {
+	defer close(s.retryDone)
+
+	ticker := time.NewTicker(s.retryInterval)
+	defer ticker.Stop()
+
+	s.logger.Info("Retry worker started",
+		zap.Duration("interval", s.retryInterval),
+		zap.Int("maxAttempts", s.retryMaxAttempts),
+		zap.Duration("maxAge", s.retryMaxAge))
+
+	for {
+		select {
+		case <-s.retryCtx.Done():
+			s.logger.Debug("Retry worker stopping")
+			return
+		case <-ticker.C:
+			s.checkAndRetryFailedDownloads()
+		}
+	}
+}
+
+// checkAndRetryFailedDownloads finds failed downloads and retries them
+func (s *Server) checkAndRetryFailedDownloads() {
+	stateManager := s.downloader.GetStateManager()
+	if stateManager == nil {
+		return
+	}
+
+	// Get retryable downloads (failed but within retry limits)
+	failed, err := stateManager.GetRetryableDownloads(s.retryMaxAttempts, s.retryMaxAge)
+	if err != nil {
+		s.logger.Warn("Failed to get retryable downloads", zap.Error(err))
+		return
+	}
+
+	if len(failed) == 0 {
+		return
+	}
+
+	s.logger.Info("Found failed downloads to retry", zap.Int("count", len(failed)))
+
+	for _, state := range failed {
+		// Check context before each retry
+		select {
+		case <-s.retryCtx.Done():
+			return
+		default:
+		}
+
+		// Skip if URL is empty (shouldn't happen but be safe)
+		if state.URL == "" {
+			s.logger.Debug("Skipping retry - no URL stored",
+				zap.String("hash", state.ID[:min(16, len(state.ID))]+"..."))
+			continue
+		}
+
+		s.logger.Info("Retrying failed download",
+			zap.String("hash", state.ID[:min(16, len(state.ID))]+"..."),
+			zap.Int("attempt", state.RetryCount+1),
+			zap.String("url", sanitize.URL(state.URL)))
+
+		// Mark for retry (resets status to pending, increments retry count)
+		if err := stateManager.MarkForRetry(state.ID); err != nil {
+			s.logger.Warn("Failed to mark download for retry",
+				zap.String("hash", state.ID[:min(16, len(state.ID))]+"..."),
+				zap.Error(err))
+			continue
+		}
+
+		// Extract path from URL for caching
+		path := index.ExtractPathFromURL(state.URL)
+
+		// Retry the download in background
+		go s.retryDownload(state.ID, state.URL, state.ExpectedSize, path)
+	}
+}
+
+// retryDownload performs a retry download for a failed package
+func (s *Server) retryDownload(expectedHash, url string, expectedSize int64, path string) {
+	ctx, cancel := context.WithTimeout(s.retryCtx, 5*time.Minute)
+	defer cancel()
+
+	// Coalesce with any concurrent requests for the same package
+	coalescingKey := expectedHash
+	if coalescingKey == "" {
+		coalescingKey = url
+	}
+
+	result, err, shared := s.downloadGroup.Do(coalescingKey, func() (interface{}, error) {
+		return s.downloadPackage(ctx, url, expectedHash, expectedSize, path)
+	})
+
+	if shared {
+		s.logger.Debug("Retry coalesced with another download",
+			zap.String("hash", expectedHash[:min(16, len(expectedHash))]+"..."))
+	}
+
+	if err != nil {
+		s.logger.Warn("Retry download failed",
+			zap.String("hash", expectedHash[:min(16, len(expectedHash))]+"..."),
+			zap.Error(err))
+		return
+	}
+
+	downloadResult := result.(*packageDownloadResult)
+	s.logger.Info("Retry download succeeded",
+		zap.String("hash", expectedHash[:min(16, len(expectedHash))]+"..."),
+		zap.String("source", downloadResult.source),
+		zap.Int("size", len(downloadResult.data)))
 }
 
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {

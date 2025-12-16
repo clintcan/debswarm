@@ -26,6 +26,9 @@ max_upload_rate = "0"
 max_download_rate = "0"
 max_concurrent_uploads = 20
 max_concurrent_peer_downloads = 10
+retry_max_attempts = 3
+retry_interval = "5m"
+retry_max_age = "1h"
 
 [dht]
 provider_ttl = "24h"

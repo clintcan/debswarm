@@ -19,6 +19,7 @@ type DownloadState struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	Error         string
+	RetryCount    int
 	Chunks        []*ChunkState
 }
 
@@ -89,13 +90,14 @@ func (sm *StateManager) GetDownload(hash string) (*DownloadState, error) {
 	var state DownloadState
 	var createdAt, updatedAt int64
 	var errStr sql.NullString
+	var retryCount sql.NullInt64
 
 	err := sm.db.QueryRow(`
-		SELECT id, url, expected_size, completed_size, chunk_size, total_chunks, status, created_at, updated_at, error
+		SELECT id, url, expected_size, completed_size, chunk_size, total_chunks, status, created_at, updated_at, error, retry_count
 		FROM downloads WHERE id = ?`, hash).Scan(
 		&state.ID, &state.URL, &state.ExpectedSize, &state.CompletedSize,
 		&state.ChunkSize, &state.TotalChunks, &state.Status,
-		&createdAt, &updatedAt, &errStr)
+		&createdAt, &updatedAt, &errStr, &retryCount)
 
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -108,6 +110,9 @@ func (sm *StateManager) GetDownload(hash string) (*DownloadState, error) {
 	state.UpdatedAt = time.Unix(updatedAt, 0)
 	if errStr.Valid {
 		state.Error = errStr.String
+	}
+	if retryCount.Valid {
+		state.RetryCount = int(retryCount.Int64)
 	}
 
 	// Load chunks
@@ -293,4 +298,88 @@ func (sm *StateManager) GetPendingChunks(hash string) ([]*ChunkState, error) {
 	}
 
 	return chunks, nil
+}
+
+// GetRetryableDownloads returns failed downloads that can be retried
+// maxRetries is the maximum number of retry attempts allowed
+// maxAge limits how old a failed download can be to still be retried
+func (sm *StateManager) GetRetryableDownloads(maxRetries int, maxAge time.Duration) ([]*DownloadState, error) {
+	cutoff := time.Now().Add(-maxAge).Unix()
+
+	rows, err := sm.db.Query(`
+		SELECT id FROM downloads
+		WHERE status = 'failed'
+		AND retry_count < ?
+		AND updated_at > ?
+		ORDER BY updated_at ASC`, maxRetries, cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var states []*DownloadState
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		state, err := sm.GetDownload(hash)
+		if err != nil {
+			return nil, err
+		}
+		if state != nil {
+			states = append(states, state)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating retryable downloads: %w", err)
+	}
+
+	return states, nil
+}
+
+// MarkForRetry resets a failed download to pending status and increments retry count
+func (sm *StateManager) MarkForRetry(hash string) error {
+	now := time.Now().Unix()
+
+	tx, err := sm.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Update download status and increment retry count
+	result, err := tx.Exec(`
+		UPDATE downloads
+		SET status = 'pending', retry_count = retry_count + 1, updated_at = ?, error = NULL
+		WHERE id = ? AND status = 'failed'`,
+		now, hash)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("download %s not found or not in failed state", hash)
+	}
+
+	// Reset all chunks to pending
+	_, err = tx.Exec(`
+		UPDATE download_chunks
+		SET status = 'pending', completed_at = NULL
+		WHERE download_id = ? AND status != 'completed'`,
+		hash)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// IncrementRetryCount increments the retry count for a download
+func (sm *StateManager) IncrementRetryCount(hash string) error {
+	_, err := sm.db.Exec(`
+		UPDATE downloads SET retry_count = retry_count + 1, updated_at = ? WHERE id = ?`,
+		time.Now().Unix(), hash)
+	return err
 }

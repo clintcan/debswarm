@@ -45,6 +45,10 @@ type TransferConfig struct {
 	MaxDownloadRate            string `toml:"max_download_rate"`
 	MaxConcurrentUploads       int    `toml:"max_concurrent_uploads"`
 	MaxConcurrentPeerDownloads int    `toml:"max_concurrent_peer_downloads"`
+	// Retry settings for failed downloads
+	RetryMaxAttempts int    `toml:"retry_max_attempts"` // Max retry attempts per download (0 = disabled)
+	RetryInterval    string `toml:"retry_interval"`     // How often to check for failed downloads
+	RetryMaxAge      string `toml:"retry_max_age"`      // Don't retry downloads older than this
 }
 
 // DHTConfig holds DHT-related settings
@@ -140,6 +144,32 @@ func (c *TransferConfig) MaxDownloadRateBytes() int64 {
 	return rate
 }
 
+// RetryIntervalDuration returns the parsed retry interval duration.
+// Returns 5 minutes default if parsing fails or value is empty.
+func (c *TransferConfig) RetryIntervalDuration() time.Duration {
+	if c.RetryInterval == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(c.RetryInterval)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+// RetryMaxAgeDuration returns the parsed retry max age duration.
+// Returns 1 hour default if parsing fails or value is empty.
+func (c *TransferConfig) RetryMaxAgeDuration() time.Duration {
+	if c.RetryMaxAge == "" {
+		return 1 * time.Hour
+	}
+	d, err := time.ParseDuration(c.RetryMaxAge)
+	if err != nil {
+		return 1 * time.Hour
+	}
+	return d
+}
+
 // DefaultConfig returns a configuration with sensible defaults.
 // When running under systemd with CacheDirectory=, the CACHE_DIRECTORY
 // environment variable is used automatically.
@@ -178,6 +208,9 @@ func DefaultConfig() *Config {
 			MaxDownloadRate:            "0", // unlimited
 			MaxConcurrentUploads:       20,
 			MaxConcurrentPeerDownloads: 10,
+			RetryMaxAttempts:           3,      // Retry failed downloads up to 3 times
+			RetryInterval:              "5m",   // Check for failed downloads every 5 minutes
+			RetryMaxAge:                "1h",   // Don't retry downloads older than 1 hour
 		},
 		DHT: DHTConfig{
 			ProviderTTL:      "24h",

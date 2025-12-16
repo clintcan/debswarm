@@ -44,6 +44,16 @@ max_concurrent_uploads = 20
 # Maximum concurrent downloads from peers
 max_concurrent_peer_downloads = 10
 
+# Automatic retry for failed downloads (0 = disabled)
+# Failed downloads will be automatically retried up to this many times
+retry_max_attempts = 3
+
+# How often to check for failed downloads to retry
+retry_interval = "5m"
+
+# Don't retry downloads older than this
+retry_max_age = "1h"
+
 [dht]
 # How long provider records last in DHT
 provider_ttl = "24h"

@@ -30,7 +30,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 			status TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			error TEXT
+			error TEXT,
+			retry_count INTEGER DEFAULT 0
 		)`)
 	if err != nil {
 		t.Fatalf("Failed to create downloads table: %v", err)
@@ -595,5 +596,192 @@ func TestStateManager_InProgressChunk(t *testing.T) {
 	}
 	if !found {
 		t.Error("In-progress chunk should be in pending list")
+	}
+}
+
+func TestStateManager_GetRetryableDownloads(t *testing.T) {
+	db := setupTestDB(t)
+	sm := NewStateManager(db)
+
+	// Create downloads with different states
+	if err := sm.CreateDownload("failed_retry0", "http://example.com/1.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+	if err := sm.CreateDownload("failed_retry3", "http://example.com/2.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+	if err := sm.CreateDownload("pending", "http://example.com/3.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+
+	// Mark downloads as failed
+	if err := sm.FailDownload("failed_retry0", "connection error"); err != nil {
+		t.Fatalf("FailDownload failed: %v", err)
+	}
+	if err := sm.FailDownload("failed_retry3", "timeout"); err != nil {
+		t.Fatalf("FailDownload failed: %v", err)
+	}
+
+	// Set retry count to 3 for one of them (exceeded max)
+	if _, err := db.Exec("UPDATE downloads SET retry_count = 3 WHERE id = 'failed_retry3'"); err != nil {
+		t.Fatalf("Update retry_count failed: %v", err)
+	}
+
+	// Get retryable downloads with max 3 retries and 1 hour max age
+	retryable, err := sm.GetRetryableDownloads(3, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("GetRetryableDownloads failed: %v", err)
+	}
+
+	// Should only get the one with retry_count < 3
+	if len(retryable) != 1 {
+		t.Errorf("Expected 1 retryable download, got %d", len(retryable))
+	}
+	if len(retryable) > 0 && retryable[0].ID != "failed_retry0" {
+		t.Errorf("Expected failed_retry0, got %s", retryable[0].ID)
+	}
+}
+
+func TestStateManager_GetRetryableDownloads_MaxAge(t *testing.T) {
+	db := setupTestDB(t)
+	sm := NewStateManager(db)
+
+	// Create a failed download
+	if err := sm.CreateDownload("old_failed", "http://example.com/old.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+	if err := sm.FailDownload("old_failed", "error"); err != nil {
+		t.Fatalf("FailDownload failed: %v", err)
+	}
+
+	// Make it old by updating timestamp
+	oldTime := time.Now().Add(-2 * time.Hour).Unix()
+	if _, err := db.Exec("UPDATE downloads SET updated_at = ? WHERE id = 'old_failed'", oldTime); err != nil {
+		t.Fatalf("Update timestamp failed: %v", err)
+	}
+
+	// Should not find it with 1 hour max age
+	retryable, err := sm.GetRetryableDownloads(3, 1*time.Hour)
+	if err != nil {
+		t.Fatalf("GetRetryableDownloads failed: %v", err)
+	}
+	if len(retryable) != 0 {
+		t.Errorf("Expected 0 retryable downloads (too old), got %d", len(retryable))
+	}
+
+	// Should find it with 3 hour max age
+	retryable, err = sm.GetRetryableDownloads(3, 3*time.Hour)
+	if err != nil {
+		t.Fatalf("GetRetryableDownloads failed: %v", err)
+	}
+	if len(retryable) != 1 {
+		t.Errorf("Expected 1 retryable download, got %d", len(retryable))
+	}
+}
+
+func TestStateManager_MarkForRetry(t *testing.T) {
+	db := setupTestDB(t)
+	sm := NewStateManager(db)
+
+	hash := "retry_test"
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 8*1024*1024, 4*1024*1024); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+
+	// Complete one chunk
+	if err := sm.UpdateChunk(hash, 0, "completed"); err != nil {
+		t.Fatalf("UpdateChunk failed: %v", err)
+	}
+
+	// Fail the download
+	if err := sm.FailDownload(hash, "connection error"); err != nil {
+		t.Fatalf("FailDownload failed: %v", err)
+	}
+
+	// Verify it's failed
+	state, _ := sm.GetDownload(hash)
+	if state.Status != "failed" {
+		t.Errorf("Status = %q, want failed", state.Status)
+	}
+	if state.RetryCount != 0 {
+		t.Errorf("RetryCount = %d, want 0", state.RetryCount)
+	}
+
+	// Mark for retry
+	if err := sm.MarkForRetry(hash); err != nil {
+		t.Fatalf("MarkForRetry failed: %v", err)
+	}
+
+	// Verify status reset to pending and retry count incremented
+	state, _ = sm.GetDownload(hash)
+	if state.Status != "pending" {
+		t.Errorf("Status = %q, want pending", state.Status)
+	}
+	if state.RetryCount != 1 {
+		t.Errorf("RetryCount = %d, want 1", state.RetryCount)
+	}
+	if state.Error != "" {
+		t.Errorf("Error = %q, want empty string", state.Error)
+	}
+
+	// Completed chunk should remain completed
+	if state.Chunks[0].Status != "completed" {
+		t.Errorf("Chunk 0 status = %q, want completed (preserved)", state.Chunks[0].Status)
+	}
+	// Pending chunk should remain pending
+	if state.Chunks[1].Status != "pending" {
+		t.Errorf("Chunk 1 status = %q, want pending", state.Chunks[1].Status)
+	}
+}
+
+func TestStateManager_MarkForRetry_NotFailed(t *testing.T) {
+	db := setupTestDB(t)
+	sm := NewStateManager(db)
+
+	hash := "not_failed"
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+
+	// Try to mark pending download for retry (should fail)
+	err := sm.MarkForRetry(hash)
+	if err == nil {
+		t.Error("Expected error when marking non-failed download for retry")
+	}
+}
+
+func TestStateManager_IncrementRetryCount(t *testing.T) {
+	db := setupTestDB(t)
+	sm := NewStateManager(db)
+
+	hash := "increment_retry"
+	if err := sm.CreateDownload(hash, "http://example.com/test.deb", 1024, 512); err != nil {
+		t.Fatalf("CreateDownload failed: %v", err)
+	}
+
+	// Initial retry count should be 0
+	state, _ := sm.GetDownload(hash)
+	if state.RetryCount != 0 {
+		t.Errorf("Initial RetryCount = %d, want 0", state.RetryCount)
+	}
+
+	// Increment retry count
+	if err := sm.IncrementRetryCount(hash); err != nil {
+		t.Fatalf("IncrementRetryCount failed: %v", err)
+	}
+
+	state, _ = sm.GetDownload(hash)
+	if state.RetryCount != 1 {
+		t.Errorf("RetryCount = %d, want 1", state.RetryCount)
+	}
+
+	// Increment again
+	if err := sm.IncrementRetryCount(hash); err != nil {
+		t.Fatalf("IncrementRetryCount failed: %v", err)
+	}
+
+	state, _ = sm.GetDownload(hash)
+	if state.RetryCount != 2 {
+		t.Errorf("RetryCount = %d, want 2", state.RetryCount)
 	}
 }

@@ -254,7 +254,8 @@ func createTables(db *sql.DB) error {
 			status TEXT DEFAULT 'pending',
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			error TEXT
+			error TEXT,
+			retry_count INTEGER DEFAULT 0
 		);
 
 		CREATE TABLE IF NOT EXISTS download_chunks (
@@ -280,7 +281,14 @@ func createTables(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_download_chunks_status
 		ON download_chunks(download_id, status);
 	`)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add retry_count column if it doesn't exist (for existing databases)
+	_, _ = db.Exec(`ALTER TABLE downloads ADD COLUMN retry_count INTEGER DEFAULT 0`)
+
+	return nil
 }
 
 // Has checks if a package with the given hash exists in the cache
