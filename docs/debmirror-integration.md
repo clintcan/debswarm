@@ -184,6 +184,9 @@ debswarm seed import --recursive /var/www/mirror/debian/pool/
 
 # Or for Ubuntu
 debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
+
+# Override cache path (useful if running as different user or custom location)
+debswarm seed import --recursive --cache-path /var/cache/debswarm /var/www/mirror/debian/pool/
 ```
 
 ### Sync Mode (Recommended)
@@ -193,6 +196,9 @@ Use `--sync` to keep debswarm cache aligned with the mirror:
 ```bash
 # Sync: imports new packages, removes packages no longer in mirror
 debswarm seed import --recursive --sync /var/www/mirror/debian/pool/
+
+# With custom cache path
+debswarm seed import --recursive --sync --cache-path /var/cache/debswarm /var/www/mirror/debian/pool/
 ```
 
 This ensures:

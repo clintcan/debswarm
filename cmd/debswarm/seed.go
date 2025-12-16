@@ -21,6 +21,7 @@ func seedCmd() *cobra.Command {
 	var recursive bool
 	var announce bool
 	var sync bool
+	var cachePath string
 
 	cmd := &cobra.Command{
 		Use:   "seed",
@@ -40,10 +41,11 @@ Examples:
   debswarm seed import /var/cache/apt/archives/*.deb
   debswarm seed import --recursive /mirror/ubuntu/pool/
   debswarm seed import --recursive --sync /var/www/mirror/pool/
+  debswarm seed import --cache-path /var/cache/debswarm /mirror/pool/
   debswarm seed import package1.deb package2.deb`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSeedImport(args, recursive, announce, sync)
+			return runSeedImport(args, recursive, announce, sync, cachePath)
 		},
 	}
 
@@ -51,13 +53,16 @@ Examples:
 	importCmd.Flags().BoolVarP(&announce, "announce", "a", true, "Announce packages to DHT")
 	importCmd.Flags().BoolVar(&sync, "sync", false, "Remove cached packages not in source (mirror sync mode)")
 
+	// Add cache-path as persistent flag so it's available to all subcommands
+	cmd.PersistentFlags().StringVar(&cachePath, "cache-path", "", "Override cache path from config")
+
 	cmd.AddCommand(importCmd)
-	cmd.AddCommand(seedListCmd())
+	cmd.AddCommand(seedListCmd(&cachePath))
 
 	return cmd
 }
 
-func seedListCmd() *cobra.Command {
+func seedListCmd(cachePath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List seeded packages",
@@ -68,8 +73,14 @@ func seedListCmd() *cobra.Command {
 				return err
 			}
 
+			// Override cache path if specified
+			cacheDir := cfg.Cache.Path
+			if cachePath != nil && *cachePath != "" {
+				cacheDir = *cachePath
+			}
+
 			maxSize := cfg.Cache.MaxSizeBytes()
-			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
+			c, err := cache.New(cacheDir, maxSize, logger)
 			if err != nil {
 				return err
 			}
@@ -95,7 +106,7 @@ func seedListCmd() *cobra.Command {
 	}
 }
 
-func runSeedImport(args []string, recursive, announce, syncMode bool) error {
+func runSeedImport(args []string, recursive, announce, syncMode bool, cachePath string) error {
 	logger, err := setupLogger()
 	if err != nil {
 		return err
@@ -106,9 +117,15 @@ func runSeedImport(args []string, recursive, announce, syncMode bool) error {
 		return err
 	}
 
+	// Override cache path if specified
+	cacheDir := cfg.Cache.Path
+	if cachePath != "" {
+		cacheDir = cachePath
+	}
+
 	// Initialize cache
 	maxSize := cfg.Cache.MaxSizeBytes()
-	pkgCache, err := cache.New(cfg.Cache.Path, maxSize, logger)
+	pkgCache, err := cache.New(cacheDir, maxSize, logger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}

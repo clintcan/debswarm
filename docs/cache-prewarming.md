@@ -326,6 +326,9 @@ debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
 
 # Sync with mirror (add new, remove deleted packages)
 debswarm seed import --recursive --sync /var/www/mirror/ubuntu/pool/
+
+# Override cache path (useful when running as different user than the daemon)
+debswarm seed import --recursive --cache-path /var/cache/debswarm /var/www/mirror/ubuntu/pool/
 ```
 
 See [bootstrap-node.md](bootstrap-node.md) for setting up a dedicated seeder with mirror sync.
@@ -404,3 +407,4 @@ max_concurrent_peer_downloads = 5
 | Cache specific | Pre-load known packages | `apt-get download package1 package2` |
 | Seed from files | Import existing .deb files | `debswarm seed import *.deb` |
 | Mirror sync | Keep in sync with local mirror | `debswarm seed import -r --sync /mirror/` |
+| Custom cache path | Import to specific cache location | `debswarm seed import --cache-path /path *.deb` |
