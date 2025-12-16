@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/debswarm/debswarm/internal/config"
 	"github.com/debswarm/debswarm/internal/p2p"
 )
 
@@ -38,11 +39,8 @@ func identityShowCmd() *cobra.Command {
 				return err
 			}
 
-			// Determine data directory
-			identityDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
-			if dataDir != "" {
-				identityDir = dataDir
-			}
+			// Determine data directory using same logic as daemon
+			identityDir := resolveDataDir(cfg)
 
 			keyPath := filepath.Join(identityDir, p2p.IdentityKeyFile)
 
@@ -94,11 +92,8 @@ need to be updated.`,
 				return err
 			}
 
-			// Determine data directory
-			identityDir := filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
-			if dataDir != "" {
-				identityDir = dataDir
-			}
+			// Determine data directory using same logic as daemon
+			identityDir := resolveDataDir(cfg)
 
 			keyPath := filepath.Join(identityDir, p2p.IdentityKeyFile)
 
@@ -142,4 +137,31 @@ need to be updated.`,
 	cmd.Flags().BoolVar(&force, "force", false, "Force regeneration even if identity exists")
 
 	return cmd
+}
+
+// resolveDataDir determines the data directory using the same logic as the daemon.
+// Priority: --data-dir flag > STATE_DIRECTORY env > /var/lib/debswarm > ~/.local/share/debswarm
+func resolveDataDir(cfg *config.Config) string {
+	// Check --data-dir flag first
+	if dataDir != "" {
+		return dataDir
+	}
+
+	// Check STATE_DIRECTORY (set by systemd)
+	if stateDir := os.Getenv("STATE_DIRECTORY"); stateDir != "" {
+		return stateDir
+	}
+
+	// Check standard system location
+	if info, err := os.Stat("/var/lib/debswarm"); err == nil && info.IsDir() {
+		return "/var/lib/debswarm"
+	}
+
+	// Fall back to user data directory
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		return filepath.Join(homeDir, ".local", "share", "debswarm")
+	}
+
+	// Last resort fallback
+	return filepath.Join(filepath.Dir(cfg.Cache.Path), "debswarm-data")
 }
