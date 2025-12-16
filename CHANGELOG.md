@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2025-12-16
+
+### Added
+- **Keepalive pings**: Periodic pings (every 5 minutes) to all connected peers prevent idle connections from being pruned by the connection manager
+- **Longer grace period**: Connection manager grace period increased from 1 to 10 minutes
+
+### Fixed
+- Connected peers no longer drop to 0 after periods of inactivity
+
 ## [1.2.6] - 2025-12-16
 
 Re-release of v1.2.5 (CI asset conflict).
