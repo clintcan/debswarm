@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.2] - 2025-12-17
+
+### Added
+- Enhanced mDNS discovery logging to help debug local peer discovery
+  - Log listen addresses when mDNS starts
+  - Log when mDNS is explicitly disabled
+  - Log discovered peer addresses (not just peer ID)
+  - Log successful mDNS peer connections at Info level
+
 ## [1.4.1] - 2025-12-18
 
 ### Fixed
@@ -361,7 +370,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/clintcan/debswarm/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/clintcan/debswarm/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/clintcan/debswarm/compare/v1.3.3...v1.4.0
 [1.3.3]: https://github.com/clintcan/debswarm/compare/v1.3.2...v1.3.3

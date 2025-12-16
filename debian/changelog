@@ -1,3 +1,13 @@
+debswarm (1.4.2-1) stable; urgency=medium
+
+  * Add enhanced mDNS discovery logging
+    - Log listen addresses when mDNS starts
+    - Log when mDNS is explicitly disabled
+    - Log discovered peer addresses (not just peer ID)
+    - Log successful mDNS peer connections at Info level
+
+ -- debswarm developers <debswarm@example.com>  Wed, 18 Dec 2025 00:00:00 +0000
+
 debswarm (1.4.1-1) unstable; urgency=medium
 
   * Fix identity show to use same data directory resolution as daemon
