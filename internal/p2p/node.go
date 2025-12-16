@@ -308,13 +308,20 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 
 	// Start mDNS discovery if enabled
 	if cfg.EnableMDNS {
-		mdnsService := mdns.NewMdnsService(h, "_debswarm._tcp", node)
+		mdnsServiceName := "_debswarm._tcp"
+		mdnsService := mdns.NewMdnsService(h, mdnsServiceName, node)
 		if err := mdnsService.Start(); err != nil {
-			logger.Warn("Failed to start mDNS", zap.Error(err))
+			logger.Warn("Failed to start mDNS discovery",
+				zap.String("service", mdnsServiceName),
+				zap.Error(err))
 		} else {
 			node.mdnsService = mdnsService
-			logger.Info("Started mDNS discovery")
+			logger.Info("Started mDNS discovery for local peer discovery",
+				zap.String("service", mdnsServiceName),
+				zap.Strings("listenAddrs", multiaddrsToStrings(h.Addrs())))
 		}
+	} else {
+		logger.Info("mDNS discovery disabled")
 	}
 
 	// Bootstrap DHT
@@ -856,14 +863,30 @@ func (n *Node) HandlePeerFound(pi peer.AddrInfo) {
 		return
 	}
 
-	n.logger.Debug("Discovered peer via mDNS", zap.String("peer", pi.ID.String()))
+	n.logger.Info("Discovered peer via mDNS",
+		zap.String("peerID", pi.ID.String()),
+		zap.Strings("addrs", multiaddrsToStrings(pi.Addrs)))
 
 	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
 	defer cancel()
 
 	if err := n.host.Connect(ctx, pi); err != nil {
-		n.logger.Debug("Failed to connect to mDNS peer", zap.Error(err))
+		n.logger.Warn("Failed to connect to mDNS discovered peer",
+			zap.String("peerID", pi.ID.String()),
+			zap.Error(err))
+	} else {
+		n.logger.Info("Connected to mDNS discovered peer",
+			zap.String("peerID", pi.ID.String()))
 	}
+}
+
+// multiaddrsToStrings converts multiaddrs to string slice for logging
+func multiaddrsToStrings(addrs []multiaddr.Multiaddr) []string {
+	strs := make([]string, len(addrs))
+	for i, addr := range addrs {
+		strs[i] = addr.String()
+	}
+	return strs
 }
 
 // Getters for node information
