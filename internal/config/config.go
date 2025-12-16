@@ -208,9 +208,9 @@ func DefaultConfig() *Config {
 			MaxDownloadRate:            "0", // unlimited
 			MaxConcurrentUploads:       20,
 			MaxConcurrentPeerDownloads: 10,
-			RetryMaxAttempts:           3,      // Retry failed downloads up to 3 times
-			RetryInterval:              "5m",   // Check for failed downloads every 5 minutes
-			RetryMaxAge:                "1h",   // Don't retry downloads older than 1 hour
+			RetryInterval:              "5m", // Check for failed downloads every 5 minutes
+			RetryMaxAttempts:           3,    // Retry failed downloads up to 3 times
+			RetryMaxAge:                "1h", // Don't retry downloads older than 1 hour
 		},
 		DHT: DHTConfig{
 			ProviderTTL:      "24h",
