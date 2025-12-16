@@ -13,8 +13,32 @@ env:
   GO_VERSION: '1.24'
 
 jobs:
+  # Check if tag is on main branch
+  check-branch:
+    runs-on: ubuntu-latest
+    outputs:
+      on_main: ${{ steps.check.outputs.on_main }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if tag is on main branch
+        id: check
+        run: |
+          TAG_COMMIT=$(git rev-list -n 1 ${{ github.ref_name }})
+          if git branch -r --contains "$TAG_COMMIT" | grep -q 'origin/main'; then
+            echo "on_main=true" >> $GITHUB_OUTPUT
+            echo "✅ Tag ${{ github.ref_name }} is on main branch"
+          else
+            echo "on_main=false" >> $GITHUB_OUTPUT
+            echo "❌ Tag ${{ github.ref_name }} is NOT on main branch - skipping release"
+          fi
+
   release:
     runs-on: ubuntu-latest
+    needs: check-branch
+    if: needs.check-branch.outputs.on_main == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +62,8 @@ jobs:
 
   build-deb:
     runs-on: ubuntu-latest
-    needs: release
+    needs: [check-branch, release]
+    if: needs.check-branch.outputs.on_main == 'true'
     strategy:
       fail-fast: false
       max-parallel: 1
