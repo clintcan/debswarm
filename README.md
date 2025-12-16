@@ -113,46 +113,48 @@ Config file locations (in order of precedence):
 2. `/etc/debswarm/config.toml`
 3. `~/.config/debswarm/config.toml`
 
+**Quick reference** (see [docs/configuration.md](docs/configuration.md) for full details):
+
 ```toml
 [network]
-listen_port = 4001          # P2P port
-proxy_port = 9977           # APT proxy port
-max_connections = 100
-
-# Bootstrap peers (libp2p defaults)
-bootstrap_peers = [
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-]
+listen_port = 4001              # P2P port (UDP/TCP)
+proxy_port = 9977               # APT proxy port
+max_connections = 100           # Max concurrent P2P connections
 
 [cache]
-path = "~/.cache/debswarm"
-max_size = "10GB"
-min_free_space = "1GB"
+path = "~/.cache/debswarm"      # Cache directory
+max_size = "10GB"               # Maximum cache size
+min_free_space = "1GB"          # Minimum free disk space
 
 [transfer]
-max_upload_rate = "0"       # 0 = unlimited, or "10MB/s"
-max_download_rate = "0"     # 0 = unlimited, or "50MB/s"
-max_concurrent_uploads = 20
-max_concurrent_peer_downloads = 10
+max_upload_rate = "0"           # 0 = unlimited, or "10MB/s"
+max_download_rate = "0"         # 0 = unlimited, or "50MB/s"
+max_concurrent_uploads = 20     # Simultaneous uploads
+max_concurrent_peer_downloads = 10  # Simultaneous peer downloads
+retry_max_attempts = 3          # Auto-retry failed downloads (0 = disabled)
+retry_interval = "5m"           # How often to check for failed downloads
+retry_max_age = "1h"            # Don't retry downloads older than this
 
 [dht]
-provider_ttl = "24h"
-announce_interval = "12h"
+provider_ttl = "24h"            # DHT record lifetime
+announce_interval = "12h"       # Re-announce interval
 
 [privacy]
-enable_mdns = true          # Local network discovery
-announce_packages = true    # Share with network
+enable_mdns = true              # Local network discovery
+announce_packages = true        # Share packages with network
+psk_path = ""                   # Private swarm key file
+peer_allowlist = []             # Restrict to specific peer IDs
 
-# Private swarm settings (optional)
-psk_path = ""               # Path to PSK file for private swarm
-# psk = ""                  # Inline PSK (hex), mutually exclusive with psk_path
-peer_allowlist = []         # List of allowed peer IDs (empty = allow all)
+[metrics]
+port = 9978                     # Metrics/dashboard port (0 = disabled)
+bind = "127.0.0.1"              # Bind address (use 0.0.0.0 for remote access)
 
 [logging]
-level = "info"              # debug, info, warn, error
-file = ""                   # Empty = stderr
+level = "info"                  # debug, info, warn, error
+file = ""                       # Log file path (empty = stderr)
 ```
+
+For complete configuration reference including all options, formats, and examples, see **[Configuration Reference](docs/configuration.md)**.
 
 ## CLI Commands
 
@@ -456,11 +458,14 @@ journalctl -u debswarm -f
 
 ## Documentation
 
+- [Configuration Reference](docs/configuration.md) - Complete guide to all configuration options
 - [Technical Comparison](docs/comparison.md) - debswarm vs apt-p2p, DebTorrent, apt-cacher-ng
 - [Bootstrap Node Setup](docs/bootstrap-node.md) - Running a dedicated seeder/bootstrap node
 - [Cache Pre-warming](docs/cache-prewarming.md) - Pre-populate cache for your network
 - [Popular Packages](docs/popular-packages.md) - Pre-warm cache with commonly used packages
 - [debmirror Integration](docs/debmirror-integration.md) - Use local mirror with debswarm P2P
+- [Troubleshooting](docs/troubleshooting.md) - Common issues and solutions
+- [Upgrading](docs/upgrading.md) - Version upgrade procedures
 
 ## Contributing
 

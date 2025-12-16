@@ -1,17 +1,27 @@
 # debswarm configuration example
 # Copy to /etc/debswarm/config.toml or ~/.config/debswarm/config.toml
+#
+# For complete documentation of all options, see:
+# https://github.com/debswarm/debswarm/blob/main/docs/configuration.md
 
+#─────────────────────────────────────────────────────────────────────────────
+# [network] - P2P and proxy settings
+#─────────────────────────────────────────────────────────────────────────────
 [network]
 # P2P listen port (UDP for QUIC, TCP fallback)
+# Make sure this port is accessible through your firewall for incoming connections
 listen_port = 4001
 
 # HTTP proxy port for APT
+# APT connects to http://127.0.0.1:<port> via /etc/apt/apt.conf.d/90debswarm.conf
 proxy_port = 9977
 
-# Maximum concurrent connections
+# Maximum concurrent P2P connections
+# Prevents resource exhaustion; libp2p connection manager enforces this limit
 max_connections = 100
 
-# Bootstrap peers for DHT (libp2p defaults)
+# Bootstrap peers for DHT initialization
+# These are libp2p public bootstrap nodes; add your own for private networks
 bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
@@ -19,67 +29,93 @@ bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 ]
 
+#─────────────────────────────────────────────────────────────────────────────
+# [cache] - Package cache settings
+#─────────────────────────────────────────────────────────────────────────────
 [cache]
-# Cache directory
+# Cache directory for packages and SQLite database
 # Use absolute path or ~ for home directory
+# Note: CACHE_DIRECTORY env var (set by systemd) overrides this
 path = "~/.cache/debswarm"
 
-# Maximum cache size (supports KB, MB, GB, TB suffixes)
+# Maximum cache size
+# Supports: KB, MB, GB, TB suffixes (e.g., "10GB", "500MB")
+# LRU eviction removes old packages when limit is reached
 max_size = "10GB"
 
-# Minimum free space to maintain on disk
+# Minimum free disk space to maintain
+# Cache writes fail if this limit would be violated
 min_free_space = "1GB"
 
+#─────────────────────────────────────────────────────────────────────────────
+# [transfer] - Upload/download settings
+#─────────────────────────────────────────────────────────────────────────────
 [transfer]
-# Maximum upload rate (0 = unlimited)
-# Supports KB/s, MB/s suffixes (e.g., "10MB/s", "500KB/s")
+# Maximum upload bandwidth
+# Supports: KB/s, MB/s, GB/s (e.g., "10MB/s", "500KB/s")
+# Use "0" or "unlimited" for no limit
 max_upload_rate = "0"
 
-# Maximum download rate (0 = unlimited)
+# Maximum download bandwidth
 max_download_rate = "0"
 
 # Maximum concurrent uploads to other peers
+# Limits how many peers can download from you simultaneously
 max_concurrent_uploads = 20
 
-# Maximum concurrent downloads from peers
+# Maximum concurrent chunk downloads from peers
+# Higher values may improve large file download speed
 max_concurrent_peer_downloads = 10
 
-# Automatic retry for failed downloads (0 = disabled)
-# Failed downloads will be automatically retried up to this many times
+# Automatic retry for failed downloads
+# Set to 0 to disable automatic retry
 retry_max_attempts = 3
 
 # How often to check for failed downloads to retry
+# Go duration format: "5m" (5 minutes), "1h" (1 hour), "30s" (30 seconds)
 retry_interval = "5m"
 
 # Don't retry downloads older than this
+# Prevents retrying stale failures indefinitely
 retry_max_age = "1h"
 
+#─────────────────────────────────────────────────────────────────────────────
+# [dht] - Distributed Hash Table settings
+#─────────────────────────────────────────────────────────────────────────────
 [dht]
-# How long provider records last in DHT
+# How long provider records (package announcements) remain in the DHT
+# Shorter = faster propagation of removed packages
+# Longer = less DHT traffic
 provider_ttl = "24h"
 
-# How often to re-announce cached packages
+# How often to re-announce cached packages to the DHT
+# Should be less than provider_ttl to ensure continuous availability
 announce_interval = "12h"
 
+#─────────────────────────────────────────────────────────────────────────────
+# [privacy] - Privacy and access control
+#─────────────────────────────────────────────────────────────────────────────
 [privacy]
 # Enable mDNS for local network peer discovery
 # Set to false if you don't want to be discoverable on LAN
 enable_mdns = true
 
 # Announce cached packages to the network
-# Set to false to only download, never upload
+# Set to false to only download, never upload (leech mode)
 announce_packages = true
 
-# Private swarm settings (optional)
-# Path to PSK file for private swarm (use 'debswarm psk generate' to create)
+# Private swarm settings
+# Use 'debswarm psk generate' to create a PSK file
+# All nodes in the private swarm must use the same PSK
 psk_path = ""
 
-# Inline PSK (hex), mutually exclusive with psk_path
-# Not recommended - use psk_path instead for better security
+# Inline PSK in hex format (mutually exclusive with psk_path)
+# NOT RECOMMENDED - use psk_path instead for better security
 # psk = ""
 
 # List of allowed peer IDs (empty = allow all)
 # Use to restrict connections to specific known peers
+# Get peer IDs with 'debswarm identity show' on each node
 peer_allowlist = []
 # Example:
 # peer_allowlist = [
@@ -87,26 +123,35 @@ peer_allowlist = []
 #   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
 # ]
 
+#─────────────────────────────────────────────────────────────────────────────
+# [metrics] - Monitoring and dashboard
+#─────────────────────────────────────────────────────────────────────────────
 [metrics]
-# Metrics/dashboard server port (0 to disable)
+# Metrics/dashboard server port
+# Set to 0 to disable metrics server entirely
 port = 9978
 
 # Metrics server bind address
-# SECURITY WARNING: The metrics endpoint exposes operational information including:
+# SECURITY WARNING: Changing from 127.0.0.1 exposes operational data:
 #   - Cache statistics and hit rates
 #   - Connected peer counts and IDs
 #   - Download/upload statistics
-#   - Network performance data
-# Keep bound to 127.0.0.1 (localhost) unless you have firewall rules in place.
-# If exposing externally, consider placing behind a reverse proxy with authentication.
+#   - Runtime profiling data (pprof)
+# If exposing externally, use a reverse proxy with authentication
 bind = "127.0.0.1"
 
+#─────────────────────────────────────────────────────────────────────────────
+# [logging] - Log output settings
+#─────────────────────────────────────────────────────────────────────────────
 [logging]
 # Log level: debug, info, warn, error
+# Use "debug" for troubleshooting (very verbose)
 level = "info"
 
-# Log file path (empty = stderr)
+# Log file path
+# Empty = log to stderr (recommended for systemd services)
+# When running as systemd service, use journalctl to view logs
 file = ""
 
-# Example: log to file
+# Example: log to file (for non-systemd deployments)
 # file = "/var/log/debswarm/debswarm.log"
