@@ -191,8 +191,11 @@ sudo systemctl start debswarm
 After starting, get your node's peer ID and multiaddr:
 
 ```bash
-# Check logs for the peer ID
-journalctl -u debswarm | grep "peer ID"
+# Recommended: use the identity command
+debswarm identity show
+
+# Or check logs for the peer ID (note: field name is "peerID")
+journalctl -u debswarm | grep peerID
 
 # Or check the metrics endpoint
 curl -s http://localhost:9978/stats | jq '.peer_id'
