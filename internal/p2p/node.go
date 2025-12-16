@@ -23,6 +23,7 @@ import (
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 
@@ -55,6 +56,7 @@ type Node struct {
 	host             host.Host
 	dht              *dht.IpfsDHT
 	routingDiscovery *drouting.RoutingDiscovery // Cached for reuse
+	pingService      *ping.PingService          // Keepalive ping service
 	logger           *zap.Logger
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -183,7 +185,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	connMgr, err := connmgr.NewConnManager(
 		lowWater,
 		highWater,
-		connmgr.WithGracePeriod(time.Minute),
+		connmgr.WithGracePeriod(10*time.Minute),
 	)
 	if err != nil {
 		cancel()
@@ -273,6 +275,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		host:                 h,
 		dht:                  kadDHT,
 		routingDiscovery:     drouting.NewRoutingDiscovery(kadDHT), // Reuse for all lookups
+		pingService:          ping.NewPingService(h),               // Keepalive pings
 		logger:               logger,
 		ctx:                  ctx,
 		cancel:               cancel,
@@ -318,6 +321,9 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 
 	// Start periodic tasks
 	go node.periodicTasks()
+
+	// Start keepalive pings to prevent idle connection pruning
+	go node.keepalivePings()
 
 	return node, nil
 }
@@ -410,6 +416,53 @@ func (n *Node) periodicTasks() {
 				n.metrics.RoutingTableSize.Set(float64(n.dht.RoutingTable().Size()))
 				n.metrics.ConnectedPeers.Set(float64(len(n.host.Network().Peers())))
 			}
+		}
+	}
+}
+
+// keepalivePings sends periodic pings to all connected peers to prevent
+// the connection manager from pruning idle connections
+func (n *Node) keepalivePings() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-n.ctx.Done():
+			return
+		case <-ticker.C:
+			peers := n.host.Network().Peers()
+			if len(peers) == 0 {
+				continue
+			}
+
+			n.logger.Debug("Sending keepalive pings", zap.Int("peers", len(peers)))
+
+			// Ping all connected peers concurrently
+			var wg sync.WaitGroup
+			for _, peerID := range peers {
+				wg.Add(1)
+				go func(pid peer.ID) {
+					defer wg.Done()
+
+					// Short timeout for ping
+					ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+					defer cancel()
+
+					// Ping returns a channel with the result
+					result := <-n.pingService.Ping(ctx, pid)
+					if result.Error != nil {
+						n.logger.Debug("Keepalive ping failed",
+							zap.String("peer", pid.String()),
+							zap.Error(result.Error))
+					} else {
+						n.logger.Debug("Keepalive ping succeeded",
+							zap.String("peer", pid.String()),
+							zap.Duration("rtt", result.RTT))
+					}
+				}(peerID)
+			}
+			wg.Wait()
 		}
 	}
 }
