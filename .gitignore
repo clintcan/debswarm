@@ -38,3 +38,6 @@ debian/*.log
 # Release
 *.tar.gz
 dist/
+
+# Private notes (not for public repo)
+notes/
