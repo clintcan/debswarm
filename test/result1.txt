@@ -1,0 +1,68 @@
+Run go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+  go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+  shell: /usr/bin/bash -e {0}
+  env:
+    GOTOOLCHAIN: auto
+    GO_VERSION: 1.24
+=== RUN   TestRootCommand_Help
+--- PASS: TestRootCommand_Help (0.00s)
+=== RUN   TestVersionCommand
+debswarm version dev
+
+Features:
+  • Parallel chunked downloads
+  • Adaptive timeouts
+  • Peer scoring
+  • QUIC transport
+  • Prometheus metrics
+  • Package seeding
+  • Bandwidth limiting
+  • Web dashboard
+  • Private swarms (PSK)
+  • Persistent identity
+  • Simulated benchmarking
+--- PASS: TestVersionCommand (0.00s)
+=== RUN   TestConfigInitCommand
+Created configuration file: /tmp/TestConfigInitCommand3311049474/001/test-config.toml
+--- PASS: TestConfigInitCommand (0.00s)
+=== RUN   TestConfigShowCommand
+Created configuration file: /tmp/TestConfigShowCommand1456035746/001/test-config.toml
+Configuration
+══════════════════════════════════════
+
+[network]
+  listen_port     = 4001
+  proxy_port      = 9977
+  max_connections = 100
+
+[cache]
+  path            = /home/runner/.cache/debswarm
+  max_size        = 10GB
+
+[transfer]
+  max_upload_rate = 0
+
+[privacy]
+  enable_mdns     = true
+  announce_pkgs   = true
+
+[logging]
+=== RUN   TestTimeoutBoundsEnforced
+--- PASS: TestTimeoutBoundsEnforced (0.00s)
+=== RUN   TestConcurrentAccess
+--- PASS: TestConcurrentAccess (0.00s)
+=== RUN   TestDurationTrackerConcurrentAccess
+--- PASS: TestDurationTrackerConcurrentAccess (0.00s)
+=== RUN   TestAdaptiveTimeoutEMASmoothing
+--- PASS: TestAdaptiveTimeoutEMASmoothing (0.00s)
+=== RUN   TestMaxFunction
+--- PASS: TestMaxFunction (0.00s)
+=== RUN   TestOperationConstants
+--- PASS: TestOperationConstants (0.00s)
+=== RUN   TestConstants
+--- PASS: TestConstants (0.00s)
+PASS
+coverage: 100.0% of statements
+ok  	github.com/debswarm/debswarm/internal/timeouts	1.019s	coverage: 100.0% of statements
+FAIL
+Error: Process completed with exit code 1.
