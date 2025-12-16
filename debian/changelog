@@ -1,4 +1,4 @@
-debswarm (1.2.4-1) unstable; urgency=medium
+debswarm (1.2.5-1) unstable; urgency=medium
 
   * Switch from DynamicUser to static debswarm user for reliable permissions
   * postinst creates debswarm system user/group and sets directory ownership

@@ -581,11 +581,21 @@ func (s *Server) classifyRequest(url string) requestType {
 }
 
 func (s *Server) extractTargetURL(r *http.Request) string {
+	// For proxy requests, r.URL contains the full absolute URL
+	// Check if we have a complete URL with host
+	if r.URL.Host != "" {
+		return r.URL.String()
+	}
+
+	// Fall back to path-based extraction for non-proxy requests
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
 	var targetURL string
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		targetURL = path
+	} else if r.Host != "" && strings.Contains(path, "/") {
+		// Use the Host header if available
+		targetURL = "http://" + r.Host + "/" + path
 	} else if strings.Contains(path, "/") {
 		targetURL = "http://" + path
 	} else {
