@@ -15,9 +15,6 @@ RestartSec=5
 User=debswarm
 Group=debswarm
 
-# Directories (created by package postinst with correct ownership)
-ConfigurationDirectory=debswarm
-
 # Filesystem restrictions
 ProtectSystem=strict
 ProtectHome=yes

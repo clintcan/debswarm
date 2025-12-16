@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.3] - 2025-12-16
+## [1.2.4] - 2025-12-16
 
 ### Fixed
+- **Systemd service**: Remove all `*Directory=` directives to avoid STATE_DIRECTORY errors
 - **Systemd service**: Switch from `DynamicUser=yes` to static `debswarm` user for reliable directory permissions
-- **Systemd service**: Remove `StateDirectory=`/`CacheDirectory=` to avoid conflicts with manually created directories
 - **Debian package**: postinst now creates `debswarm` system user/group and sets directory ownership
 - **Data directory**: Auto-detect `/var/lib/debswarm` for system installs instead of deriving from cache path
 
