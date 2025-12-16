@@ -442,11 +442,11 @@ func (n *Node) keepalivePings() {
 			var wg sync.WaitGroup
 			for _, peerID := range peers {
 				wg.Add(1)
-				go func(pid peer.ID) {
+				go func(parentCtx context.Context, pid peer.ID) {
 					defer wg.Done()
 
 					// Short timeout for ping
-					ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
+					ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
 					defer cancel()
 
 					// Ping returns a channel with the result
@@ -460,7 +460,7 @@ func (n *Node) keepalivePings() {
 							zap.String("peer", pid.String()),
 							zap.Duration("rtt", result.RTT))
 					}
-				}(peerID)
+				}(n.ctx, peerID)
 			}
 			wg.Wait()
 		}
