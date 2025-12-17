@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2025-12-18
+
+### Added
+- **LAN Peer Priority**: mDNS-discovered peers now receive a scoring boost for proximity
+  - New `WeightProximity` factor (15%) in peer scoring algorithm
+  - mDNS peers get proximity score of 1.0, DHT peers get 0.3
+  - Unknown mDNS peers start at score 0.65 (vs 0.5 for DHT peers)
+  - Peers discovered via mDNS are automatically marked for priority selection
+- **Offline-First Mode**: Automatic detection and graceful fallback when internet is unavailable
+  - Three connectivity modes: `online` (full), `lan_only` (mDNS peers only), `offline` (cache only)
+  - Configurable `connectivity_mode`: "auto" (default), "lan_only", or "online_only"
+  - Background connectivity monitoring with configurable check interval
+  - Health endpoint now includes `connectivity_mode` field
+  - New `internal/connectivity/` package with full test coverage
+- **Audit Log Export**: Structured JSON audit logging for compliance and monitoring
+  - Events logged: download complete/failed, upload complete, cache hits, verification failures, peer blacklisting
+  - JSON Lines format for easy parsing by log analysis tools (jq, ELK, Splunk)
+  - Automatic file rotation with configurable max size and backup count
+  - New `internal/audit/` package with Logger interface and NoopLogger for disabled state
+  - Configurable via `[logging.audit]` section in config.toml
+
+### Changed
+- Peer scoring weights adjusted: Latency 25%, Throughput 25%, Reliability 20%, Freshness 15%, Proximity 15%
+  - (Previously: Latency 30%, Throughput 30%, Reliability 25%, Freshness 15%)
+
+### Configuration
+New options in `config.toml`:
+```toml
+[network]
+connectivity_mode = "auto"           # "auto", "lan_only", "online_only"
+connectivity_check_interval = "30s"
+# connectivity_check_url = "https://deb.debian.org"
+
+[logging.audit]
+enabled = false
+path = "/var/log/debswarm/audit.json"
+max_size_mb = 100
+max_backups = 5
+```
+
 ## [1.7.0] - 2025-12-18
 
 ### Changed
@@ -429,7 +469,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.8.0...HEAD
+[1.8.0]: https://github.com/clintcan/debswarm/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/clintcan/debswarm/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/clintcan/debswarm/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/clintcan/debswarm/compare/v1.5.0...v1.5.1

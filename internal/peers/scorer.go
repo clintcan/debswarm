@@ -12,10 +12,11 @@ import (
 
 // Score weights for peer scoring algorithm
 const (
-	WeightLatency     = 0.3
-	WeightThroughput  = 0.3
-	WeightReliability = 0.25
+	WeightLatency     = 0.25
+	WeightThroughput  = 0.25
+	WeightReliability = 0.20
 	WeightFreshness   = 0.15
+	WeightProximity   = 0.15 // LAN/mDNS peers get priority
 
 	// Decay factor for exponential moving average
 	EMAAlpha = 0.3
@@ -66,6 +67,7 @@ type PeerScore struct {
 	Blacklisted     bool
 	BlacklistReason string
 	BlacklistUntil  time.Time
+	IsMDNSPeer      bool // True if discovered via mDNS (local LAN peer)
 
 	// Computed score (cached)
 	cachedScore   float64
@@ -168,6 +170,18 @@ func (s *Scorer) Blacklist(peerID peer.ID, reason string, duration time.Duration
 	ps.BlacklistUntil = time.Now().Add(duration)
 	ps.cachedScore = 0
 	ps.scoreCachedAt = time.Now()
+}
+
+// MarkAsMDNSPeer marks a peer as discovered via mDNS (local LAN peer)
+// LAN peers get a scoring boost for proximity
+func (s *Scorer) MarkAsMDNSPeer(peerID peer.ID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	ps := s.getOrCreate(peerID)
+	ps.IsMDNSPeer = true
+	// Invalidate cached score to include proximity boost
+	ps.scoreCachedAt = time.Time{}
 }
 
 // IsBlacklisted checks if a peer is currently blacklisted
@@ -385,8 +399,11 @@ func (s *Scorer) computeScore(ps *PeerScore) float64 {
 		return ps.cachedScore
 	}
 
-	// Not enough data - return neutral score
+	// Not enough data - return neutral score (but boost mDNS peers)
 	if ps.TotalRequests < MinSamples {
+		if ps.IsMDNSPeer {
+			return 0.65 // mDNS peers get a slight boost even with no data
+		}
 		return 0.5
 	}
 
@@ -413,11 +430,18 @@ func (s *Scorer) computeScore(ps *PeerScore) float64 {
 	hoursSinceLastSeen := time.Since(ps.LastSeen).Hours()
 	freshnessScore := math.Exp(-hoursSinceLastSeen / 24) // Decay over 24 hours
 
+	// Proximity score - mDNS (LAN) peers get maximum, DHT peers get lower
+	proximityScore := 0.3 // Default for DHT peers
+	if ps.IsMDNSPeer {
+		proximityScore = 1.0 // Maximum for LAN peers
+	}
+
 	// Weighted combination
 	score := WeightLatency*latencyScore +
 		WeightThroughput*throughputScore +
 		WeightReliability*reliabilityScore +
-		WeightFreshness*freshnessScore
+		WeightFreshness*freshnessScore +
+		WeightProximity*proximityScore
 
 	// Clamp to 0-1
 	if score < 0 {

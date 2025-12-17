@@ -30,6 +30,41 @@ type NetworkConfig struct {
 	ProxyPort      int      `toml:"proxy_port"`
 	MaxConnections int      `toml:"max_connections"`
 	BootstrapPeers []string `toml:"bootstrap_peers"`
+
+	// Connectivity detection settings
+	ConnectivityMode          string `toml:"connectivity_mode"`           // "auto", "lan_only", "online_only"
+	ConnectivityCheckInterval string `toml:"connectivity_check_interval"` // How often to check connectivity
+	ConnectivityCheckURL      string `toml:"connectivity_check_url"`      // URL to check for internet access
+}
+
+// GetConnectivityMode returns the connectivity mode with a default of "auto"
+func (c *NetworkConfig) GetConnectivityMode() string {
+	if c.ConnectivityMode == "" {
+		return "auto"
+	}
+	return c.ConnectivityMode
+}
+
+// GetConnectivityCheckInterval returns the check interval duration.
+// Returns 30 seconds default if not configured.
+func (c *NetworkConfig) GetConnectivityCheckInterval() time.Duration {
+	if c.ConnectivityCheckInterval == "" {
+		return 30 * time.Second
+	}
+	d, err := time.ParseDuration(c.ConnectivityCheckInterval)
+	if err != nil {
+		return 30 * time.Second
+	}
+	return d
+}
+
+// GetConnectivityCheckURL returns the URL for connectivity checks.
+// Returns default Debian mirror if not configured.
+func (c *NetworkConfig) GetConnectivityCheckURL() string {
+	if c.ConnectivityCheckURL == "" {
+		return "https://deb.debian.org"
+	}
+	return c.ConnectivityCheckURL
 }
 
 // CacheConfig holds cache-related settings
@@ -110,8 +145,33 @@ type MetricsConfig struct {
 
 // LoggingConfig holds logging-related settings
 type LoggingConfig struct {
-	Level string `toml:"level"`
-	File  string `toml:"file"`
+	Level string      `toml:"level"`
+	File  string      `toml:"file"`
+	Audit AuditConfig `toml:"audit"`
+}
+
+// AuditConfig holds audit logging settings
+type AuditConfig struct {
+	Enabled    bool   `toml:"enabled"`      // Enable audit logging (default: false)
+	Path       string `toml:"path"`         // Path for JSON audit log file
+	MaxSizeMB  int    `toml:"max_size_mb"`  // Max file size before rotation (default: 100)
+	MaxBackups int    `toml:"max_backups"`  // Number of backup files to keep (default: 5)
+}
+
+// GetMaxSizeMB returns the max size with a default of 100MB
+func (c *AuditConfig) GetMaxSizeMB() int {
+	if c.MaxSizeMB <= 0 {
+		return 100
+	}
+	return c.MaxSizeMB
+}
+
+// GetMaxBackups returns the max backups with a default of 5
+func (c *AuditConfig) GetMaxBackups() int {
+	if c.MaxBackups <= 0 {
+		return 5
+	}
+	return c.MaxBackups
 }
 
 // MaxSizeBytes returns the parsed max size in bytes.
@@ -637,6 +697,45 @@ func (c *Config) Validate() error {
 		errs = append(errs, ValidationError{
 			Field:   "logging.level",
 			Message: fmt.Sprintf("invalid level %q; must be debug, info, warn, or error", c.Logging.Level),
+		})
+	}
+
+	// Validate connectivity mode
+	validModes := map[string]bool{"auto": true, "lan_only": true, "online_only": true, "": true}
+	if !validModes[c.Network.ConnectivityMode] {
+		errs = append(errs, ValidationError{
+			Field:   "network.connectivity_mode",
+			Message: fmt.Sprintf("invalid mode %q; must be auto, lan_only, or online_only", c.Network.ConnectivityMode),
+		})
+	}
+
+	// Validate connectivity check interval
+	if c.Network.ConnectivityCheckInterval != "" {
+		if _, err := time.ParseDuration(c.Network.ConnectivityCheckInterval); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "network.connectivity_check_interval",
+				Message: fmt.Sprintf("invalid duration %q: %v", c.Network.ConnectivityCheckInterval, err),
+			})
+		}
+	}
+
+	// Validate audit config
+	if c.Logging.Audit.Enabled && c.Logging.Audit.Path == "" {
+		errs = append(errs, ValidationError{
+			Field:   "logging.audit.path",
+			Message: "audit log path is required when audit logging is enabled",
+		})
+	}
+	if c.Logging.Audit.MaxSizeMB < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "logging.audit.max_size_mb",
+			Message: fmt.Sprintf("must be non-negative, got %d", c.Logging.Audit.MaxSizeMB),
+		})
+	}
+	if c.Logging.Audit.MaxBackups < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "logging.audit.max_backups",
+			Message: fmt.Sprintf("must be non-negative, got %d", c.Logging.Audit.MaxBackups),
 		})
 	}
 

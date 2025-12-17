@@ -1,3 +1,24 @@
+debswarm (1.8.0-1) stable; urgency=medium
+
+  * LAN Peer Priority - mDNS-discovered peers get scoring boost
+    - New proximity weight (15%) in peer scoring algorithm
+    - mDNS peers get proximity score 1.0, DHT peers get 0.3
+    - Peers discovered via mDNS automatically marked for priority
+  * Offline-First Mode - automatic connectivity detection and fallback
+    - Three modes: online (full), lan_only (mDNS only), offline (cache only)
+    - Configurable connectivity_mode: auto, lan_only, online_only
+    - Background connectivity monitoring with configurable interval
+    - Health endpoint includes connectivity_mode field
+  * Audit Log Export - structured JSON logging for compliance
+    - Events: download complete/failed, upload, cache hit, verification failed
+    - JSON Lines format for ELK, Splunk, jq compatibility
+    - Automatic file rotation with configurable size and backups
+    - New [logging.audit] config section
+  * Peer scoring weights adjusted for proximity factor
+    - Latency 25%, Throughput 25%, Reliability 20%, Freshness 15%, Proximity 15%
+
+ -- debswarm developers <debswarm@example.com>  Wed, 18 Dec 2025 00:00:00 +0000
+
 debswarm (1.7.0-1) stable; urgency=medium
 
   * Streaming downloads for memory efficiency

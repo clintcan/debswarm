@@ -27,6 +27,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/audit"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/ratelimit"
@@ -66,6 +67,7 @@ type Node struct {
 	scorer           *peers.Scorer
 	timeouts         *timeouts.Manager
 	metrics          *metrics.Metrics
+	audit            audit.Logger
 	mdnsService      mdns.Service
 	bootstrapDone    chan struct{}
 
@@ -108,6 +110,7 @@ type Config struct {
 	Scorer               *peers.Scorer
 	Timeouts             *timeouts.Manager
 	Metrics              *metrics.Metrics
+	Audit                audit.Logger // Audit logger for structured event logging
 
 	// Per-peer rate limiting configuration
 	PerPeerUploadRate   int64   // bytes per second, 0 = auto-calculate from global/expected
@@ -292,6 +295,12 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		tm = timeouts.NewManager(nil)
 	}
 
+	// Set default audit logger if not provided
+	auditLogger := cfg.Audit
+	if auditLogger == nil {
+		auditLogger = &audit.NoopLogger{}
+	}
+
 	node := &Node{
 		host:                 h,
 		dht:                  kadDHT,
@@ -303,6 +312,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		scorer:               scorer,
 		timeouts:             tm,
 		metrics:              cfg.Metrics,
+		audit:                auditLogger,
 		bootstrapDone:        make(chan struct{}),
 		uploadsPerPeer:       make(map[peer.ID]int),
 		maxConcurrentUploads: cfg.MaxConcurrentUploads,
@@ -924,6 +934,9 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	if n.metrics != nil {
 		n.metrics.BytesUploaded.WithLabel(peerID.String()).Add(written)
 	}
+
+	// Audit log upload complete
+	n.audit.Log(audit.NewUploadCompleteEvent(sha256Hash, written, peerID.String(), 0))
 }
 
 func (n *Node) writeSize(stream network.Stream, size int64) {
@@ -973,6 +986,11 @@ func (n *Node) HandlePeerFound(pi peer.AddrInfo) {
 	n.logger.Info("Discovered peer via mDNS",
 		zap.String("peerID", pi.ID.String()),
 		zap.Strings("addrs", multiaddrsToStrings(pi.Addrs)))
+
+	// Mark peer as mDNS-discovered for scoring priority
+	if n.scorer != nil {
+		n.scorer.MarkAsMDNSPeer(pi.ID)
+	}
 
 	ctx, cancel := context.WithTimeout(n.ctx, 10*time.Second)
 	defer cancel()

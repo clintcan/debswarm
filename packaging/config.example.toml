@@ -20,6 +20,21 @@ proxy_port = 9977
 # Prevents resource exhaustion; libp2p connection manager enforces this limit
 max_connections = 100
 
+# Connectivity detection mode (v1.8+)
+# Controls how debswarm handles network connectivity:
+#   "auto" = detect automatically (default) - checks mirror reachability
+#   "lan_only" = only use mDNS peers, never try DHT or mirrors
+#   "online_only" = fail if internet is unavailable (no LAN-only fallback)
+connectivity_mode = "auto"
+
+# How often to check connectivity (when mode is "auto")
+# Go duration format: "30s", "1m", "5m"
+connectivity_check_interval = "30s"
+
+# URL to check for connectivity (typically a Debian/Ubuntu mirror)
+# Used for HEAD requests to verify internet access
+# connectivity_check_url = "https://deb.debian.org"
+
 # Bootstrap peers for DHT initialization
 # These are libp2p public bootstrap nodes; add your own for private networks
 bootstrap_peers = [
@@ -182,3 +197,24 @@ file = ""
 
 # Example: log to file (for non-systemd deployments)
 # file = "/var/log/debswarm/debswarm.log"
+
+#─────────────────────────────────────────────────────────────────────────────
+# [logging.audit] - Structured audit logging (v1.8+)
+#─────────────────────────────────────────────────────────────────────────────
+[logging.audit]
+# Enable structured audit logging
+# Logs download/upload events, cache hits, and verification failures
+# Output is JSON Lines format for easy parsing by log analysis tools
+enabled = false
+
+# Path for JSON audit log file
+# The directory will be created if it doesn't exist
+path = "/var/log/debswarm/audit.json"
+
+# Max file size before rotation (MB)
+# Old logs are renamed with .1, .2, etc. suffixes
+max_size_mb = 100
+
+# Number of rotated files to keep
+# Oldest files are deleted when this limit is exceeded
+max_backups = 5

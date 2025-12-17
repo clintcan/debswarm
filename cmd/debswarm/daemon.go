@@ -12,8 +12,10 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/audit"
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/config"
+	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
@@ -142,6 +144,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Initialize metrics
 	m := metrics.New()
 
+	// Initialize audit logger
+	var auditLogger audit.Logger = &audit.NoopLogger{}
+	if cfg.Logging.Audit.Enabled {
+		auditWriter, auditErr := audit.NewJSONWriter(audit.JSONWriterConfig{
+			Path:       cfg.Logging.Audit.Path,
+			MaxSizeMB:  cfg.Logging.Audit.GetMaxSizeMB(),
+			MaxBackups: cfg.Logging.Audit.GetMaxBackups(),
+		})
+		if auditErr != nil {
+			return fmt.Errorf("failed to initialize audit logger: %w", auditErr)
+		}
+		auditLogger = auditWriter
+		defer auditWriter.Close()
+		logger.Info("Audit logging enabled",
+			zap.String("path", cfg.Logging.Audit.Path),
+			zap.Int("maxSizeMB", cfg.Logging.Audit.GetMaxSizeMB()),
+			zap.Int("maxBackups", cfg.Logging.Audit.GetMaxBackups()))
+	}
+
 	// Initialize peer scorer
 	scorer := peers.NewScorer()
 
@@ -230,6 +251,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Scorer:               scorer,
 		Timeouts:             tm,
 		Metrics:              m,
+		Audit:                auditLogger,
 		// Per-peer rate limiting configuration
 		PerPeerUploadRate:   cfg.Transfer.PerPeerUploadRateBytes(),
 		PerPeerDownloadRate: cfg.Transfer.PerPeerDownloadRateBytes(),
@@ -257,6 +279,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		m.ConnectedPeers.Set(float64(p2pNode.ConnectedPeers()))
 	}()
 
+	// Initialize connectivity monitor
+	connectivityMonitor := connectivity.NewMonitor(&connectivity.Config{
+		Mode:          cfg.Network.ConnectivityMode,
+		CheckInterval: cfg.Network.GetConnectivityCheckInterval(),
+		CheckURL:      cfg.Network.GetConnectivityCheckURL(),
+		CheckTimeout:  5 * time.Second,
+		GetMDNSPeerCount: func() int {
+			return p2pNode.ConnectedPeers() // Approximate - includes all connected peers
+		},
+		OnModeChange: func(old, new connectivity.Mode) {
+			logger.Info("Connectivity mode changed",
+				zap.String("from", old.String()),
+				zap.String("to", new.String()))
+		},
+	}, logger)
+
+	// Start connectivity monitor in background
+	go connectivityMonitor.Start(ctx)
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
 		Addr:                       fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
@@ -269,6 +310,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Metrics:                    m,
 		Timeouts:                   tm,
 		Scorer:                     scorer,
+		Audit:                      auditLogger,
+		Connectivity:               connectivityMonitor,
 		RetryMaxAttempts:           cfg.Transfer.RetryMaxAttempts,
 		RetryInterval:              cfg.Transfer.RetryIntervalDuration(),
 		RetryMaxAge:                cfg.Transfer.RetryMaxAgeDuration(),

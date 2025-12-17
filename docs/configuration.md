@@ -33,6 +33,9 @@ Network settings for P2P communication and the HTTP proxy.
 | `proxy_port` | integer | `9977` | HTTP proxy port for APT requests. APT connects to `http://127.0.0.1:<port>`. |
 | `max_connections` | integer | `100` | Maximum number of concurrent P2P connections. Prevents resource exhaustion. |
 | `bootstrap_peers` | string[] | libp2p defaults | List of bootstrap peer multiaddrs for DHT initialization. |
+| `connectivity_mode` | string | `"auto"` | Connectivity mode: `"auto"`, `"lan_only"`, or `"online_only"`. |
+| `connectivity_check_interval` | string | `"30s"` | How often to check connectivity in auto mode. |
+| `connectivity_check_url` | string | `"https://deb.debian.org"` | URL for connectivity checks. |
 
 **Example:**
 ```toml
@@ -40,6 +43,11 @@ Network settings for P2P communication and the HTTP proxy.
 listen_port = 4001
 proxy_port = 9977
 max_connections = 100
+
+# Connectivity detection mode (v1.8+)
+connectivity_mode = "auto"           # "auto", "lan_only", "online_only"
+connectivity_check_interval = "30s"
+# connectivity_check_url = "https://deb.debian.org"
 
 # Bootstrap peers (libp2p public nodes)
 bootstrap_peers = [
@@ -49,6 +57,13 @@ bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 ]
 ```
+
+**Connectivity Modes (v1.8+):**
+| Mode | Description |
+|------|-------------|
+| `auto` | Automatically detect connectivity. Uses DHT + mirrors when online, falls back to mDNS peers only when internet is unavailable. |
+| `lan_only` | Only use mDNS-discovered peers. Never try DHT or remote mirrors. Useful for air-gapped networks. |
+| `online_only` | Require internet connectivity. Fail requests if mirrors are unreachable (no LAN-only fallback). |
 
 **Notes:**
 - The `listen_port` should be accessible through your firewall for incoming P2P connections
@@ -306,6 +321,51 @@ file = "/var/log/debswarm/debswarm.log"
 - When running as a systemd service, logs go to journald regardless of file setting
 - Use `journalctl -u debswarm -f` to view logs in real-time
 - Debug level is useful for troubleshooting but generates significant output
+
+---
+
+### [logging.audit]
+
+Settings for structured audit logging (v1.8+).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable structured audit logging. |
+| `path` | string | `""` | Path for JSON audit log file. |
+| `max_size_mb` | integer | `100` | Maximum file size before rotation (MB). |
+| `max_backups` | integer | `5` | Number of rotated backup files to keep. |
+
+**Example:**
+```toml
+[logging.audit]
+enabled = true
+path = "/var/log/debswarm/audit.json"
+max_size_mb = 100
+max_backups = 5
+```
+
+**Events Logged:**
+| Event Type | Description |
+|------------|-------------|
+| `download_complete` | Package download succeeded (includes source, bytes, duration) |
+| `download_failed` | Package download failed (includes error message) |
+| `upload_complete` | Package served to another peer |
+| `cache_hit` | Package served from local cache |
+| `verification_failed` | Hash mismatch detected (peer blacklisted) |
+| `peer_blacklisted` | Peer added to blacklist |
+
+**Log Format:**
+The audit log uses JSON Lines format (one JSON object per line), compatible with tools like `jq`, ELK stack, and Splunk.
+
+**Example audit log entry:**
+```json
+{"timestamp":"2025-12-18T10:30:45Z","event_type":"download_complete","package_hash":"abc123...","package_name":"pool/main/c/curl/curl_7.88.1.deb","package_size":1567890,"source":"peer","duration_ms":1234,"bytes_p2p":1500000,"bytes_mirror":67890}
+```
+
+**Notes:**
+- The directory will be created if it doesn't exist
+- Rotation creates backup files with `.1`, `.2`, etc. suffixes
+- Oldest backups are deleted when `max_backups` is exceeded
 
 ---
 

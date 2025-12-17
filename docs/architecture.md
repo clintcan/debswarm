@@ -127,8 +127,9 @@ type DownloadResult struct {
 
 Tracks and scores peer performance:
 
-- **Metrics**: Latency, throughput, success rate
-- **Scoring**: Weighted combination of metrics
+- **Metrics**: Latency, throughput, success rate, proximity (v1.8+)
+- **Scoring**: Weighted combination of metrics (latency 25%, throughput 25%, reliability 20%, freshness 15%, proximity 15%)
+- **LAN Priority**: mDNS-discovered peers get higher proximity scores (v1.8+)
 - **Selection**: Returns best peers with some diversity
 - **Blacklisting**: Temporary ban for misbehaving peers
 
@@ -161,6 +162,38 @@ Performance testing with simulated peers:
 - **Scenarios**: Small files, large files, varying peer counts
 - **Metrics**: Throughput (MB/s), duration, chunk distribution
 - **Reproducible**: Deterministic testing without real network
+
+### Connectivity Monitor (`internal/connectivity/`)
+
+Network connectivity monitoring for offline-first mode (v1.8+):
+
+- **Mode Detection**: Online, LAN-only, or Offline modes
+- **Auto Detection**: Periodic connectivity checks to configured URL
+- **Graceful Fallback**: Falls back to mDNS-only peers when internet unavailable
+- **Mode Callbacks**: Notifies components when connectivity changes
+
+```go
+type Monitor struct {
+    GetMode() Mode                    // Current mode: ModeOnline, ModeLANOnly, ModeOffline
+    Start(ctx context.Context)        // Start background monitoring
+}
+```
+
+### Audit Logger (`internal/audit/`)
+
+Structured event logging for compliance and monitoring (v1.8+):
+
+- **Event Types**: Download complete/failed, upload complete, cache hits, verification failures
+- **JSON Lines Format**: Compatible with ELK, Splunk, jq
+- **File Rotation**: Automatic rotation with configurable size and backup count
+- **Logger Interface**: Supports NoopLogger when disabled
+
+```go
+type Logger interface {
+    Log(event Event)
+    Close() error
+}
+```
 
 ## Data Flow
 

@@ -20,7 +20,9 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 
+	"github.com/debswarm/debswarm/internal/audit"
 	"github.com/debswarm/debswarm/internal/cache"
+	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/downloader"
 	"github.com/debswarm/debswarm/internal/index"
@@ -45,7 +47,9 @@ type Server struct {
 	server     *http.Server
 	metrics    *metrics.Metrics
 	timeouts   *timeouts.Manager
-	scorer     *peers.Scorer
+	scorer       *peers.Scorer
+	audit        audit.Logger
+	connectivity *connectivity.Monitor
 
 	// Statistics (atomic)
 	requestsTotal   int64
@@ -96,6 +100,8 @@ type Config struct {
 	Metrics                    *metrics.Metrics
 	Timeouts                   *timeouts.Manager
 	Scorer                     *peers.Scorer
+	Audit                      audit.Logger           // Audit logger for structured event logging
+	Connectivity               *connectivity.Monitor  // Connectivity monitor for offline-first mode
 	// Retry settings
 	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
 	RetryInterval    time.Duration // How often to check for failed downloads
@@ -141,6 +147,11 @@ func NewServer(
 		scorer = peers.NewScorer()
 	}
 
+	auditLogger := cfg.Audit
+	if auditLogger == nil {
+		auditLogger = &audit.NoopLogger{}
+	}
+
 	// Default metrics bind to localhost if not specified
 	metricsBind := cfg.MetricsBind
 	if metricsBind == "" {
@@ -157,6 +168,8 @@ func NewServer(
 		metrics:          m,
 		timeouts:         tm,
 		scorer:           scorer,
+		audit:            auditLogger,
+		connectivity:     cfg.Connectivity,
 		p2pTimeout:       cfg.P2PTimeout,
 		dhtLookupLimit:   cfg.DHTLookupLimit,
 		metricsPort:      cfg.MetricsPort,
@@ -292,6 +305,7 @@ type HealthStatus struct {
 	Checks           map[string]string `json:"checks"`
 	ConnectedPeers   int               `json:"connected_peers"`
 	RoutingTableSize int               `json:"routing_table_size"`
+	ConnectivityMode string            `json:"connectivity_mode,omitempty"`
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -333,6 +347,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	} else {
 		health.Checks["cache"] = "not_initialized"
 		allHealthy = false
+	}
+
+	// Add connectivity mode
+	if s.connectivity != nil {
+		health.ConnectivityMode = s.connectivity.GetMode().String()
 	}
 
 	// Set overall status
@@ -691,6 +710,10 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 		s.logger.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
 		atomic.AddInt64(&s.cacheHits, 1)
 		s.metrics.CacheHits.Inc()
+
+		// Audit log cache hit
+		s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize))
+
 		s.serveFromCache(w, expectedHash)
 		return
 	}
@@ -808,6 +831,17 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				// Cache the data
 				s.cacheAndAnnounce(data, expectedHash, path)
 
+				// Audit log download complete
+				s.audit.Log(audit.NewDownloadCompleteEvent(
+					expectedHash,
+					path,
+					int64(len(data)),
+					downloader.SourceTypePeer,
+					0, // duration not tracked for simple downloads
+					int64(len(data)),
+					0,
+				))
+
 				return &packageDownloadResult{
 					data:        data,
 					hash:        expectedHash,
@@ -820,6 +854,8 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 			s.metrics.VerificationFailures.Inc()
 			if ps, ok := src.(*downloader.PeerSource); ok {
 				s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
+				// Audit log verification failure
+				s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()))
 			}
 		}
 	}
@@ -831,6 +867,8 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
 		s.logger.Error("Mirror fetch failed", zap.Error(err))
+		// Audit log download failure
+		s.audit.Log(audit.NewDownloadFailedEvent(expectedHash, path, err.Error()))
 		return nil, fmt.Errorf("mirror fetch failed: %w", err)
 	}
 
@@ -850,6 +888,17 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				zap.String("actual", actualHashHex))
 		}
 	}
+
+	// Audit log mirror download complete
+	s.audit.Log(audit.NewDownloadCompleteEvent(
+		expectedHash,
+		path,
+		int64(len(data)),
+		downloader.SourceTypeMirror,
+		0, // duration not tracked for mirror fallback
+		0,
+		int64(len(data)),
+	))
 
 	return &packageDownloadResult{
 		data:        data,
@@ -880,6 +929,17 @@ func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expec
 		zap.Int("chunks", result.ChunksTotal),
 		zap.Int("chunksP2P", result.ChunksFromP2P),
 		zap.Duration("duration", result.Duration))
+
+	// Audit log download complete
+	s.audit.Log(audit.NewDownloadCompleteEvent(
+		expectedHash,
+		path,
+		result.Size,
+		result.Source,
+		result.Duration.Milliseconds(),
+		result.PeerBytes,
+		result.MirrorBytes,
+	))
 
 	// Handle file-based result (chunked download - streaming)
 	if result.FilePath != "" {
