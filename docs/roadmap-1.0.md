@@ -33,8 +33,8 @@ This document tracks the gaps and improvements needed before a production-ready 
 | Issue | Description | Status |
 |-------|-------------|--------|
 | Request tracing | Add request IDs for correlating multi-hop downloads across logs | Not started |
-| Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | Not started |
-| Adaptive rate limiting | Adjust rates based on network conditions | Not started |
+| Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | **Done** (v1.5.0) |
+| Adaptive rate limiting | Adjust rates based on network conditions | **Done** (v1.5.0) |
 | Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | **Done** (v1.4.0) |
 | Log sanitization review | Audit user-controlled data in logs for injection risks | **Done** (v1.3.3) |
 
@@ -150,8 +150,35 @@ Implemented background worker to automatically retry failed downloads:
   - `transfer.retry_max_age`: Don't retry downloads older than this (default "1h")
 - Clean shutdown: Retry worker respects context cancellation for graceful stop
 
+### Per-Peer Rate Limiting (Done)
+Implemented per-peer bandwidth limiting to prevent single peer monopolization:
+- `internal/ratelimit/peer_limiter.go`: New `PeerLimiterManager` with lazy limiter creation
+  - Tracks rate limiters per peer.ID with automatic idle cleanup (30s timeout)
+  - `ReaderContext()` and `WriterContext()` return composed readers/writers
+  - `ComposedLimitedReader/Writer` applies both global and per-peer limits
+  - Auto-calculation mode: `global_limit / expected_peers` with configurable minimum
+- `internal/config/config.go`: Added configuration options:
+  - `transfer.per_peer_upload_rate`: "auto", "0" (disabled), or specific rate
+  - `transfer.per_peer_download_rate`: "auto", "0" (disabled), or specific rate
+  - `transfer.expected_peers`: For auto-calculation (default 10)
+- `internal/p2p/node.go`: Integrated per-peer limiters into transfer handlers
+- `internal/metrics/metrics.go`: Added `PeerRateLimiters` gauge and `PeerRateLimitCurrent` gauge vector
+
+### Adaptive Rate Limiting (Done)
+Implemented adaptive rate adjustment based on peer performance metrics:
+- Integrated with existing peer scoring system (`internal/peers/scorer.go`)
+- Moderate adjustment style: ±50% based on score (0.5x to 1.5x multiplier)
+- Congestion detection: reduces rates when latency exceeds 500ms threshold
+- Background adaptive loop recalculates rates every 10 seconds
+- `internal/config/config.go`: Added configuration options:
+  - `transfer.adaptive_rate_limiting`: Enable/disable (default: enabled when per-peer is active)
+  - `transfer.adaptive_min_rate`: Floor rate (default "100KB/s")
+  - `transfer.adaptive_max_boost`: Maximum multiplier (default 1.5)
+- `internal/metrics/metrics.go`: Added `AdaptiveAdjustments` counter for tracking boost/reduce events
+
 ## Version History
 
+- **v1.5.0** (2025-12-17): Low priority - Per-peer rate limiting and adaptive rate limiting
 - **v1.4.0** (2025-12-17): Low priority - Automatic resume retry for failed downloads
 - **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
 - **v0.8.0** (2025-12-15): Medium priority - systemd directory validation

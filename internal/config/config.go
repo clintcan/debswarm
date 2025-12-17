@@ -49,6 +49,16 @@ type TransferConfig struct {
 	RetryMaxAttempts int    `toml:"retry_max_attempts"` // Max retry attempts per download (0 = disabled)
 	RetryInterval    string `toml:"retry_interval"`     // How often to check for failed downloads
 	RetryMaxAge      string `toml:"retry_max_age"`      // Don't retry downloads older than this
+
+	// Per-peer rate limiting
+	PerPeerUploadRate   string `toml:"per_peer_upload_rate"`   // "auto", "5MB/s", or "0" (disabled)
+	PerPeerDownloadRate string `toml:"per_peer_download_rate"` // "auto", "5MB/s", or "0" (disabled)
+	ExpectedPeers       int    `toml:"expected_peers"`         // For auto-calculation (default: 10)
+
+	// Adaptive rate limiting (enabled by default when per-peer is active)
+	AdaptiveRateLimiting *bool   `toml:"adaptive_rate_limiting"` // nil = auto (enabled if per-peer active)
+	AdaptiveMinRate      string  `toml:"adaptive_min_rate"`      // Minimum rate floor: "100KB/s"
+	AdaptiveMaxBoost     float64 `toml:"adaptive_max_boost"`     // Max multiplier: 1.5
 }
 
 // DHTConfig holds DHT-related settings
@@ -170,6 +180,87 @@ func (c *TransferConfig) RetryMaxAgeDuration() time.Duration {
 	return d
 }
 
+// PerPeerUploadRateBytes returns the per-peer upload rate in bytes/sec.
+// Returns 0 for "auto" (calculate from global/expected_peers) or disabled.
+func (c *TransferConfig) PerPeerUploadRateBytes() int64 {
+	if c.PerPeerUploadRate == "" || c.PerPeerUploadRate == "auto" {
+		return 0 // auto-calculate
+	}
+	rate, err := ParseRate(c.PerPeerUploadRate)
+	if err != nil {
+		return 0
+	}
+	return rate
+}
+
+// PerPeerDownloadRateBytes returns the per-peer download rate in bytes/sec.
+// Returns 0 for "auto" (calculate from global/expected_peers) or disabled.
+func (c *TransferConfig) PerPeerDownloadRateBytes() int64 {
+	if c.PerPeerDownloadRate == "" || c.PerPeerDownloadRate == "auto" {
+		return 0 // auto-calculate
+	}
+	rate, err := ParseRate(c.PerPeerDownloadRate)
+	if err != nil {
+		return 0
+	}
+	return rate
+}
+
+// IsPerPeerEnabled returns whether per-peer rate limiting is enabled.
+// It's enabled by default ("auto") unless explicitly set to "0".
+func (c *TransferConfig) IsPerPeerEnabled() bool {
+	// Disabled if explicitly set to "0"
+	if c.PerPeerUploadRate == "0" && c.PerPeerDownloadRate == "0" {
+		return false
+	}
+	// Enabled by default (auto) or if any rate is configured
+	return true
+}
+
+// IsAdaptiveEnabled returns whether adaptive rate limiting is enabled.
+// Enabled by default when per-peer limiting is active, unless explicitly disabled.
+func (c *TransferConfig) IsAdaptiveEnabled() bool {
+	if c.AdaptiveRateLimiting != nil {
+		return *c.AdaptiveRateLimiting
+	}
+	// Auto: enabled if per-peer is enabled
+	return c.IsPerPeerEnabled()
+}
+
+// AdaptiveMinRateBytes returns the minimum adaptive rate in bytes/sec.
+// Returns 100KB/s default if not configured.
+func (c *TransferConfig) AdaptiveMinRateBytes() int64 {
+	if c.AdaptiveMinRate == "" {
+		return 100 * 1024 // 100KB/s default
+	}
+	rate, err := ParseRate(c.AdaptiveMinRate)
+	if err != nil {
+		return 100 * 1024
+	}
+	return rate
+}
+
+// AdaptiveMaxBoostFactor returns the max boost multiplier.
+// Returns 1.5 default if not configured or invalid.
+func (c *TransferConfig) AdaptiveMaxBoostFactor() float64 {
+	if c.AdaptiveMaxBoost <= 0 {
+		return 1.5 // default
+	}
+	if c.AdaptiveMaxBoost > 10 {
+		return 10 // cap at 10x
+	}
+	return c.AdaptiveMaxBoost
+}
+
+// GetExpectedPeers returns the expected number of concurrent peers.
+// Returns 10 default if not configured.
+func (c *TransferConfig) GetExpectedPeers() int {
+	if c.ExpectedPeers <= 0 {
+		return 10
+	}
+	return c.ExpectedPeers
+}
+
 // DefaultConfig returns a configuration with sensible defaults.
 // When running under systemd with CacheDirectory=, the CACHE_DIRECTORY
 // environment variable is used automatically.
@@ -211,6 +302,14 @@ func DefaultConfig() *Config {
 			RetryInterval:              "5m", // Check for failed downloads every 5 minutes
 			RetryMaxAttempts:           3,    // Retry failed downloads up to 3 times
 			RetryMaxAge:                "1h", // Don't retry downloads older than 1 hour
+			// Per-peer rate limiting (enabled by default with auto-calculation)
+			PerPeerUploadRate:   "auto", // global_limit / expected_peers
+			PerPeerDownloadRate: "auto", // global_limit / expected_peers
+			ExpectedPeers:       10,     // For auto-calculation
+			// Adaptive rate limiting (enabled by default when per-peer is active)
+			AdaptiveRateLimiting: nil,       // Auto: enabled if per-peer active
+			AdaptiveMinRate:      "100KB/s", // Minimum rate floor
+			AdaptiveMaxBoost:     1.5,       // Max 1.5x base rate
 		},
 		DHT: DHTConfig{
 			ProviderTTL:      "24h",
@@ -478,6 +577,42 @@ func (c *Config) Validate() error {
 				Message: fmt.Sprintf("invalid rate %q: %v", c.Transfer.MaxDownloadRate, err),
 			})
 		}
+	}
+
+	// Validate per-peer rate limits
+	if c.Transfer.PerPeerUploadRate != "" && c.Transfer.PerPeerUploadRate != "auto" && c.Transfer.PerPeerUploadRate != "0" {
+		if _, err := ParseRate(c.Transfer.PerPeerUploadRate); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "transfer.per_peer_upload_rate",
+				Message: fmt.Sprintf("invalid rate %q: must be 'auto', '0', or a rate like '5MB/s'", c.Transfer.PerPeerUploadRate),
+			})
+		}
+	}
+	if c.Transfer.PerPeerDownloadRate != "" && c.Transfer.PerPeerDownloadRate != "auto" && c.Transfer.PerPeerDownloadRate != "0" {
+		if _, err := ParseRate(c.Transfer.PerPeerDownloadRate); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "transfer.per_peer_download_rate",
+				Message: fmt.Sprintf("invalid rate %q: must be 'auto', '0', or a rate like '5MB/s'", c.Transfer.PerPeerDownloadRate),
+			})
+		}
+	}
+
+	// Validate adaptive min rate
+	if c.Transfer.AdaptiveMinRate != "" {
+		if _, err := ParseRate(c.Transfer.AdaptiveMinRate); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "transfer.adaptive_min_rate",
+				Message: fmt.Sprintf("invalid rate %q: %v", c.Transfer.AdaptiveMinRate, err),
+			})
+		}
+	}
+
+	// Validate adaptive max boost
+	if c.Transfer.AdaptiveMaxBoost < 0 {
+		errs = append(errs, ValidationError{
+			Field:   "transfer.adaptive_max_boost",
+			Message: fmt.Sprintf("must be non-negative, got %v", c.Transfer.AdaptiveMaxBoost),
+		})
 	}
 
 	// Validate PSK configuration (mutually exclusive)

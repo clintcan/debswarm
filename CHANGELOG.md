@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2025-12-17
+
+### Added
+- **Per-peer rate limiting**: Rate limit individual peers to prevent bandwidth monopolization
+  - Configurable `per_peer_upload_rate` and `per_peer_download_rate`
+  - Auto mode divides global limit by expected number of peers
+  - Both global and per-peer limits enforced simultaneously (stricter wins)
+  - Idle peer limiters automatically cleaned up after 30 seconds
+- **Adaptive rate limiting**: Automatic rate adjustment based on peer performance
+  - Integrates with peer scoring system (latency, throughput, reliability)
+  - High-performing peers get boosted rates (up to 1.5x)
+  - Poorly-performing peers get reduced rates (down to configurable minimum)
+  - Congestion detection reduces rates when latency exceeds 500ms
+  - Enabled by default when per-peer limiting is active
+- New configuration options in `[transfer]` section:
+  - `per_peer_upload_rate`: "auto", "0" (disabled), or specific rate like "5MB/s"
+  - `per_peer_download_rate`: "auto", "0" (disabled), or specific rate
+  - `expected_peers`: Number of peers for auto-calculation (default: 10)
+  - `adaptive_rate_limiting`: Enable/disable adaptive adjustment
+  - `adaptive_min_rate`: Floor rate for adaptive reduction (default: "100KB/s")
+  - `adaptive_max_boost`: Maximum boost factor (default: 1.5)
+- New Prometheus metrics:
+  - `debswarm_peer_rate_limiters`: Number of active per-peer limiters
+  - `debswarm_peer_rate_limit_bytes_per_second`: Current rate per peer
+  - `debswarm_adaptive_adjustments_total`: Count of rate adjustments by type
+
 ## [1.4.2] - 2025-12-17
 
 ### Added

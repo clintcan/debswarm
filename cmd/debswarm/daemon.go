@@ -230,6 +230,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Scorer:               scorer,
 		Timeouts:             tm,
 		Metrics:              m,
+		// Per-peer rate limiting configuration
+		PerPeerUploadRate:   cfg.Transfer.PerPeerUploadRateBytes(),
+		PerPeerDownloadRate: cfg.Transfer.PerPeerDownloadRateBytes(),
+		ExpectedPeers:       cfg.Transfer.GetExpectedPeers(),
+		AdaptiveEnabled:     cfg.Transfer.IsAdaptiveEnabled(),
+		AdaptiveMinRate:     cfg.Transfer.AdaptiveMinRateBytes(),
+		AdaptiveMaxBoost:    cfg.Transfer.AdaptiveMaxBoostFactor(),
 	}
 
 	p2pNode, err := p2p.New(ctx, p2pCfg, logger)

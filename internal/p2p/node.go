@@ -68,9 +68,13 @@ type Node struct {
 	mdnsService      mdns.Service
 	bootstrapDone    chan struct{}
 
-	// Rate limiting
+	// Rate limiting (global)
 	uploadLimiter   *ratelimit.Limiter
 	downloadLimiter *ratelimit.Limiter
+
+	// Per-peer rate limiting (optional, nil if disabled)
+	peerUploadLimiter   *ratelimit.PeerLimiterManager
+	peerDownloadLimiter *ratelimit.PeerLimiterManager
 
 	// Upload tracking
 	uploadsMu            sync.Mutex
@@ -99,6 +103,14 @@ type Config struct {
 	Scorer               *peers.Scorer
 	Timeouts             *timeouts.Manager
 	Metrics              *metrics.Metrics
+
+	// Per-peer rate limiting configuration
+	PerPeerUploadRate   int64   // bytes per second, 0 = auto-calculate from global/expected
+	PerPeerDownloadRate int64   // bytes per second, 0 = auto-calculate from global/expected
+	ExpectedPeers       int     // Expected concurrent peers for auto-calculation
+	AdaptiveEnabled     bool    // Enable adaptive rate adjustment based on peer scores
+	AdaptiveMinRate     int64   // Minimum rate floor for adaptive (bytes/sec)
+	AdaptiveMaxBoost    float64 // Maximum boost factor for high-performing peers
 }
 
 // New creates a new P2P node with QUIC preference
@@ -300,6 +312,44 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	}
 	if cfg.MaxDownloadRate > 0 {
 		logger.Info("Download rate limiting enabled", zap.Int64("bytesPerSecond", cfg.MaxDownloadRate))
+	}
+
+	// Initialize per-peer rate limiters if configured
+	// Per-peer limiting is enabled by default (ExpectedPeers > 0 or explicit rates)
+	if cfg.ExpectedPeers > 0 || cfg.PerPeerUploadRate > 0 || cfg.PerPeerDownloadRate > 0 || cfg.AdaptiveEnabled {
+		// Upload per-peer limiter
+		uploadPeerCfg := ratelimit.PeerLimiterConfig{
+			GlobalLimit:            cfg.MaxUploadRate,
+			PerPeerLimit:           cfg.PerPeerUploadRate,
+			ExpectedPeers:          cfg.ExpectedPeers,
+			MinPeerLimit:           cfg.AdaptiveMinRate,
+			AdaptiveEnabled:        cfg.AdaptiveEnabled,
+			MaxBoostFactor:         cfg.AdaptiveMaxBoost,
+			LatencyThresholdMs:     ratelimit.DefaultLatencyThreshold,
+			IdleTimeout:            ratelimit.DefaultIdleTimeout,
+			AdaptiveRecalcInterval: ratelimit.DefaultAdaptiveRecalc,
+			Logger:                 logger.Named("peer-upload-limiter"),
+		}
+		node.peerUploadLimiter = ratelimit.NewPeerLimiterManager(uploadPeerCfg, node.uploadLimiter, scorer)
+
+		// Download per-peer limiter
+		downloadPeerCfg := ratelimit.PeerLimiterConfig{
+			GlobalLimit:            cfg.MaxDownloadRate,
+			PerPeerLimit:           cfg.PerPeerDownloadRate,
+			ExpectedPeers:          cfg.ExpectedPeers,
+			MinPeerLimit:           cfg.AdaptiveMinRate,
+			AdaptiveEnabled:        cfg.AdaptiveEnabled,
+			MaxBoostFactor:         cfg.AdaptiveMaxBoost,
+			LatencyThresholdMs:     ratelimit.DefaultLatencyThreshold,
+			IdleTimeout:            ratelimit.DefaultIdleTimeout,
+			AdaptiveRecalcInterval: ratelimit.DefaultAdaptiveRecalc,
+			Logger:                 logger.Named("peer-download-limiter"),
+		}
+		node.peerDownloadLimiter = ratelimit.NewPeerLimiterManager(downloadPeerCfg, node.downloadLimiter, scorer)
+
+		logger.Info("Per-peer rate limiting enabled",
+			zap.Int("expectedPeers", cfg.ExpectedPeers),
+			zap.Bool("adaptiveEnabled", cfg.AdaptiveEnabled))
 	}
 
 	// Set up transfer protocol handlers
@@ -638,10 +688,14 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		return nil, fmt.Errorf("content too large: %d bytes", size)
 	}
 
-	// Read content with optional rate limiting
+	// Read content with rate limiting (per-peer if available, else global)
 	data := make([]byte, size)
 	var reader io.Reader = stream
-	if n.downloadLimiter.Enabled() {
+	if n.peerDownloadLimiter != nil && n.peerDownloadLimiter.Enabled() {
+		// Use per-peer limiter (includes global limiting via composed reader)
+		reader = n.peerDownloadLimiter.ReaderContext(ctx, peerInfo.ID, stream)
+	} else if n.downloadLimiter.Enabled() {
+		// Fall back to global limiter only
 		reader = n.downloadLimiter.ReaderContext(ctx, stream)
 	}
 	if _, err := io.ReadFull(reader, data); err != nil {
@@ -793,10 +847,14 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	// Send size
 	n.writeSize(stream, responseSize)
 
-	// Send content (limited to response size) with optional rate limiting
+	// Send content (limited to response size) with rate limiting (per-peer if available, else global)
 	// Use context from the node to support proper cancellation
 	var writer io.Writer = stream
-	if n.uploadLimiter.Enabled() {
+	if n.peerUploadLimiter != nil && n.peerUploadLimiter.Enabled() {
+		// Use per-peer limiter (includes global limiting via composed writer)
+		writer = n.peerUploadLimiter.WriterContext(n.ctx, peerID, stream)
+	} else if n.uploadLimiter.Enabled() {
+		// Fall back to global limiter only
 		writer = n.uploadLimiter.WriterContext(n.ctx, stream)
 	}
 	written, err := io.CopyN(writer, reader, responseSize)
@@ -906,6 +964,14 @@ func (n *Node) GetPeerStats() []*peers.PeerScore {
 // Close shuts down the P2P node
 func (n *Node) Close() error {
 	n.cancel()
+
+	// Close per-peer rate limiters
+	if n.peerUploadLimiter != nil {
+		n.peerUploadLimiter.Close()
+	}
+	if n.peerDownloadLimiter != nil {
+		n.peerDownloadLimiter.Close()
+	}
 
 	if n.mdnsService != nil {
 		if err := n.mdnsService.Close(); err != nil {

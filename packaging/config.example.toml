@@ -59,6 +59,33 @@ max_upload_rate = "0"
 # Maximum download bandwidth
 max_download_rate = "0"
 
+# Per-peer rate limiting (default: "auto")
+# Prevents any single peer from monopolizing bandwidth
+#   "auto" = global_limit / expected_peers
+#   "0" = disabled (only global limits apply)
+#   Specific rate: "5MB/s"
+per_peer_upload_rate = "auto"
+per_peer_download_rate = "auto"
+
+# Expected number of peers for auto-calculation
+# Used when per_peer_*_rate is set to "auto"
+expected_peers = 10
+
+# Adaptive rate limiting (enabled by default when per-peer limiting is active)
+# Automatically adjusts per-peer rates based on peer performance:
+#   - High-performing peers get up to 1.5x the base rate
+#   - Poorly-performing peers get reduced rates (down to min_rate)
+#   - Congestion detection reduces rates when latency exceeds 500ms
+# adaptive_rate_limiting = true
+
+# Minimum rate floor for adaptive reduction
+# Ensures no peer gets throttled below this threshold
+adaptive_min_rate = "100KB/s"
+
+# Maximum boost factor for high-performing peers
+# 1.5 = up to 50% boost above base rate
+adaptive_max_boost = 1.5
+
 # Maximum concurrent uploads to other peers
 # Limits how many peers can download from you simultaneously
 max_concurrent_uploads = 20

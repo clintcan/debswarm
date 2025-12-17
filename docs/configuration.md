@@ -97,6 +97,12 @@ Settings for upload/download behavior and rate limiting.
 |-------|------|---------|-------------|
 | `max_upload_rate` | string | `"0"` | Maximum upload bandwidth. `"0"` or `"unlimited"` = no limit. |
 | `max_download_rate` | string | `"0"` | Maximum download bandwidth. `"0"` or `"unlimited"` = no limit. |
+| `per_peer_upload_rate` | string | `"auto"` | Per-peer upload rate limit. `"auto"` = global/expected_peers. |
+| `per_peer_download_rate` | string | `"auto"` | Per-peer download rate limit. `"auto"` = global/expected_peers. |
+| `expected_peers` | integer | `10` | Expected number of peers for auto-calculating per-peer limits. |
+| `adaptive_rate_limiting` | boolean | auto | Enable adaptive rate adjustment. Default: enabled when per-peer is active. |
+| `adaptive_min_rate` | string | `"100KB/s"` | Minimum rate floor for adaptive reduction. |
+| `adaptive_max_boost` | float | `1.5` | Maximum boost factor for high-performing peers (1.5 = 50% boost). |
 | `max_concurrent_uploads` | integer | `20` | Maximum simultaneous uploads to other peers. |
 | `max_concurrent_peer_downloads` | integer | `10` | Maximum simultaneous chunk downloads from peers. |
 | `retry_max_attempts` | integer | `3` | Maximum retry attempts for failed downloads. `0` = disabled. |
@@ -108,6 +114,17 @@ Settings for upload/download behavior and rate limiting.
 [transfer]
 max_upload_rate = "10MB/s"
 max_download_rate = "50MB/s"
+
+# Per-peer rate limiting
+per_peer_upload_rate = "auto"       # = 10MB/s / 10 peers = 1MB/s per peer
+per_peer_download_rate = "auto"
+expected_peers = 10
+
+# Adaptive rate limiting (enabled by default)
+# adaptive_rate_limiting = true
+adaptive_min_rate = "100KB/s"
+adaptive_max_boost = 1.5
+
 max_concurrent_uploads = 20
 max_concurrent_peer_downloads = 10
 
@@ -126,8 +143,24 @@ retry_max_age = "1h"
 - Go duration format: `"5m"` (5 minutes), `"1h"` (1 hour), `"30s"` (30 seconds)
 - Combinations: `"1h30m"` (1 hour 30 minutes)
 
+**Per-Peer Rate Limiting:**
+- Prevents any single peer from monopolizing your bandwidth
+- `"auto"` divides global limit by `expected_peers`
+- `"0"` disables per-peer limiting (only global limits apply)
+- Specific rate like `"5MB/s"` sets a fixed per-peer limit
+- Both global and per-peer limits are enforced (stricter limit wins)
+
+**Adaptive Rate Limiting:**
+- Automatically adjusts per-peer rates based on peer performance
+- High-performing peers (good latency, throughput, reliability) get boosted rates
+- Poorly-performing peers get reduced rates (down to `adaptive_min_rate`)
+- Congestion detection: rates reduced when latency exceeds 500ms
+- Adjustment range: 0.5x to 1.5x of base rate (±50%)
+- Recalculates every 10 seconds based on peer scoring metrics
+
 **Notes:**
-- Rate limiting applies to the total bandwidth, not per-connection
+- Global rate limits apply to total bandwidth across all peers
+- Per-peer limits ensure fair bandwidth distribution
 - Concurrent limits prevent overwhelming peers or your network
 - The retry worker runs in the background and picks up failed downloads automatically
 - Already-completed chunks are preserved when retrying failed downloads
@@ -308,6 +341,16 @@ min_free_space = "2GB"
 max_upload_rate = "10MB/s"
 max_download_rate = "0"
 
+# Per-peer rate limiting (prevents single peer monopolization)
+per_peer_upload_rate = "auto"     # auto = global/expected_peers
+per_peer_download_rate = "auto"
+expected_peers = 10
+
+# Adaptive rate limiting (adjusts rates based on peer performance)
+# adaptive_rate_limiting = true   # enabled by default when per-peer is active
+adaptive_min_rate = "100KB/s"
+adaptive_max_boost = 1.5
+
 # Concurrency limits
 max_concurrent_uploads = 20
 max_concurrent_peer_downloads = 10
@@ -401,6 +444,8 @@ kill -HUP $(pidof debswarm)
 
 **Reloadable settings:**
 - Rate limits (`max_upload_rate`, `max_download_rate`)
+- Per-peer rate limits (`per_peer_upload_rate`, `per_peer_download_rate`, `expected_peers`)
+- Adaptive settings (`adaptive_rate_limiting`, `adaptive_min_rate`, `adaptive_max_boost`)
 - Database integrity check is performed on reload
 
 **Settings requiring restart:**

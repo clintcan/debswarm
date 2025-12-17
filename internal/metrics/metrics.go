@@ -42,6 +42,11 @@ type Metrics struct {
 	UploadRate   *Gauge
 	DownloadRate *Gauge
 
+	// Per-peer rate limiting metrics
+	PeerRateLimiters     *Gauge    // Number of active per-peer limiters
+	PeerRateLimitCurrent *GaugeVec // Current rate limit per peer (labels: peer_id:direction)
+	AdaptiveAdjustments  *CounterVec // Adaptive rate adjustments (labels: type - boost/reduce)
+
 	// Histograms
 	DownloadDuration  *HistogramVec
 	PeerLatency       *HistogramVec
@@ -116,6 +121,49 @@ func (cv *CounterVec) Values() map[string]int64 {
 type Gauge struct {
 	value float64
 	mu    sync.Mutex
+}
+
+// GaugeVec is a gauge with labels for multi-dimensional metrics.
+type GaugeVec struct {
+	gauges map[string]*Gauge
+	mu     sync.RWMutex
+}
+
+// NewGaugeVec creates a new labeled gauge vector.
+func NewGaugeVec() *GaugeVec {
+	return &GaugeVec{
+		gauges: make(map[string]*Gauge),
+	}
+}
+
+// WithLabel returns the gauge for the given label, creating it if needed.
+func (gv *GaugeVec) WithLabel(label string) *Gauge {
+	gv.mu.Lock()
+	defer gv.mu.Unlock()
+	if g, ok := gv.gauges[label]; ok {
+		return g
+	}
+	g := &Gauge{}
+	gv.gauges[label] = g
+	return g
+}
+
+// Values returns all label-value pairs in the gauge vector.
+func (gv *GaugeVec) Values() map[string]float64 {
+	gv.mu.RLock()
+	defer gv.mu.RUnlock()
+	result := make(map[string]float64)
+	for k, v := range gv.gauges {
+		result[k] = v.Value()
+	}
+	return result
+}
+
+// Delete removes a gauge with the given label.
+func (gv *GaugeVec) Delete(label string) {
+	gv.mu.Lock()
+	defer gv.mu.Unlock()
+	delete(gv.gauges, label)
 }
 
 // Set sets the gauge to the given value.
@@ -262,6 +310,11 @@ func New() *Metrics {
 		UploadRate:   &Gauge{},
 		DownloadRate: &Gauge{},
 
+		// Per-peer rate limiting
+		PeerRateLimiters:     &Gauge{},
+		PeerRateLimitCurrent: NewGaugeVec(),
+		AdaptiveAdjustments:  NewCounterVec(),
+
 		DownloadDuration:  NewHistogramVec(DurationBuckets),
 		PeerLatency:       NewHistogramVec(LatencyBuckets),
 		ChunkDownloadTime: NewHistogram(DurationBuckets),
@@ -313,6 +366,15 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(w, "debswarm_upload_bytes_per_second", m.UploadRate.Value())
 		writeGauge(w, "debswarm_download_bytes_per_second", m.DownloadRate.Value())
 
+		// Per-peer rate limiting
+		writeGauge(w, "debswarm_peer_rate_limiters", m.PeerRateLimiters.Value())
+		for label, value := range m.PeerRateLimitCurrent.Values() {
+			writeGaugeWithLabel(w, "debswarm_peer_rate_limit_bytes_per_second", "peer_direction", label, value)
+		}
+		for label, value := range m.AdaptiveAdjustments.Values() {
+			writeCounterWithLabel(w, "debswarm_adaptive_adjustments_total", "type", label, value)
+		}
+
 		// Histograms
 		writeHistogram(w, "debswarm_chunk_download_seconds", m.ChunkDownloadTime)
 		writeHistogram(w, "debswarm_dht_lookup_seconds", m.DHTLookupDuration)
@@ -331,6 +393,10 @@ func writeCounterWithLabel(w http.ResponseWriter, name, labelName, labelValue st
 func writeGauge(w http.ResponseWriter, name string, value float64) {
 	_, _ = w.Write([]byte("# TYPE " + name + " gauge\n"))
 	_, _ = w.Write([]byte(name + " " + ftoa(value) + "\n"))
+}
+
+func writeGaugeWithLabel(w http.ResponseWriter, name, labelName, labelValue string, value float64) {
+	_, _ = w.Write([]byte(name + "{" + labelName + "=\"" + labelValue + "\"} " + ftoa(value) + "\n"))
 }
 
 func writeHistogram(w http.ResponseWriter, name string, h *Histogram) {
