@@ -17,12 +17,12 @@ import (
 
 // Default constants for per-peer rate limiting
 const (
-	DefaultExpectedPeers   = 10
-	DefaultMinPeerRate     = 100 * 1024       // 100 KB/s minimum
-	DefaultMaxBoostFactor  = 1.5              // Max 1.5x base rate
-	DefaultIdleTimeout     = 30 * time.Second // Cleanup idle limiters
-	DefaultAdaptiveRecalc  = 10 * time.Second // Recalculate rates
-	DefaultLatencyThreshold = 500.0           // 500ms latency threshold for congestion
+	DefaultExpectedPeers    = 10
+	DefaultMinPeerRate      = 100 * 1024       // 100 KB/s minimum
+	DefaultMaxBoostFactor   = 1.5              // Max 1.5x base rate
+	DefaultIdleTimeout      = 30 * time.Second // Cleanup idle limiters
+	DefaultAdaptiveRecalc   = 10 * time.Second // Recalculate rates
+	DefaultLatencyThreshold = 500.0            // 500ms latency threshold for congestion
 )
 
 // PeerLimiterConfig configures the per-peer rate limiter manager
@@ -247,10 +247,10 @@ func (m *PeerLimiterManager) ReaderContext(ctx context.Context, peerID peer.ID, 
 	}
 
 	return &ComposedLimitedReader{
-		r:           r,
-		globalLim:   globalLim,
-		peerLim:     peerLimiter,
-		ctx:         ctx,
+		r:         r,
+		globalLim: globalLim,
+		peerLim:   peerLimiter,
+		ctx:       ctx,
 	}
 }
 
@@ -270,10 +270,10 @@ func (m *PeerLimiterManager) WriterContext(ctx context.Context, peerID peer.ID, 
 	}
 
 	return &ComposedLimitedWriter{
-		w:           w,
-		globalLim:   globalLim,
-		peerLim:     peerLimiter,
-		ctx:         ctx,
+		w:         w,
+		globalLim: globalLim,
+		peerLim:   peerLimiter,
+		ctx:       ctx,
 	}
 }
 

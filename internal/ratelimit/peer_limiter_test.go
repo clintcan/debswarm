@@ -224,8 +224,8 @@ func TestPeerLimiterManager_WithGlobalLimiter(t *testing.T) {
 	globalLimiter := New(5 * 1024 * 1024) // 5 MB/s global
 
 	cfg := PeerLimiterConfig{
-		GlobalLimit:   5 * 1024 * 1024,  // 5 MB/s
-		PerPeerLimit:  2 * 1024 * 1024,  // 2 MB/s per peer
+		GlobalLimit:   5 * 1024 * 1024, // 5 MB/s
+		PerPeerLimit:  2 * 1024 * 1024, // 2 MB/s per peer
 		ExpectedPeers: 10,
 	}
 	mgr := NewPeerLimiterManager(cfg, globalLimiter, nil)
@@ -269,6 +269,9 @@ func TestPeerLimiterManager_GetPeerStats(t *testing.T) {
 	currentLimit, baseLimit, exists := mgr.GetPeerStats(peerID)
 	if exists {
 		t.Error("Unknown peer should not exist")
+	}
+	if currentLimit != 0 {
+		t.Errorf("Current limit for unknown peer should be 0, got %d", currentLimit)
 	}
 	if baseLimit != cfg.PerPeerLimit {
 		t.Errorf("Base limit should be %d, got %d", cfg.PerPeerLimit, baseLimit)

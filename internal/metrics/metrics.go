@@ -43,8 +43,8 @@ type Metrics struct {
 	DownloadRate *Gauge
 
 	// Per-peer rate limiting metrics
-	PeerRateLimiters     *Gauge    // Number of active per-peer limiters
-	PeerRateLimitCurrent *GaugeVec // Current rate limit per peer (labels: peer_id:direction)
+	PeerRateLimiters     *Gauge      // Number of active per-peer limiters
+	PeerRateLimitCurrent *GaugeVec   // Current rate limit per peer (labels: peer_id:direction)
 	AdaptiveAdjustments  *CounterVec // Adaptive rate adjustments (labels: type - boost/reduce)
 
 	// Histograms
