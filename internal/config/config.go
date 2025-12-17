@@ -152,10 +152,10 @@ type LoggingConfig struct {
 
 // AuditConfig holds audit logging settings
 type AuditConfig struct {
-	Enabled    bool   `toml:"enabled"`      // Enable audit logging (default: false)
-	Path       string `toml:"path"`         // Path for JSON audit log file
-	MaxSizeMB  int    `toml:"max_size_mb"`  // Max file size before rotation (default: 100)
-	MaxBackups int    `toml:"max_backups"`  // Number of backup files to keep (default: 5)
+	Enabled    bool   `toml:"enabled"`     // Enable audit logging (default: false)
+	Path       string `toml:"path"`        // Path for JSON audit log file
+	MaxSizeMB  int    `toml:"max_size_mb"` // Max file size before rotation (default: 100)
+	MaxBackups int    `toml:"max_backups"` // Number of backup files to keep (default: 5)
 }
 
 // GetMaxSizeMB returns the max size with a default of 100MB

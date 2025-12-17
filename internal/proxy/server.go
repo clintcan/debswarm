@@ -37,16 +37,16 @@ import (
 
 // Server is the HTTP proxy server
 type Server struct {
-	addr       string
-	cache      *cache.Cache
-	index      *index.Index
-	p2pNode    *p2p.Node
-	fetcher    *mirror.Fetcher
-	downloader *downloader.Downloader
-	logger     *zap.Logger
-	server     *http.Server
-	metrics    *metrics.Metrics
-	timeouts   *timeouts.Manager
+	addr         string
+	cache        *cache.Cache
+	index        *index.Index
+	p2pNode      *p2p.Node
+	fetcher      *mirror.Fetcher
+	downloader   *downloader.Downloader
+	logger       *zap.Logger
+	server       *http.Server
+	metrics      *metrics.Metrics
+	timeouts     *timeouts.Manager
 	scorer       *peers.Scorer
 	audit        audit.Logger
 	connectivity *connectivity.Monitor
@@ -100,8 +100,8 @@ type Config struct {
 	Metrics                    *metrics.Metrics
 	Timeouts                   *timeouts.Manager
 	Scorer                     *peers.Scorer
-	Audit                      audit.Logger           // Audit logger for structured event logging
-	Connectivity               *connectivity.Monitor  // Connectivity monitor for offline-first mode
+	Audit                      audit.Logger          // Audit logger for structured event logging
+	Connectivity               *connectivity.Monitor // Connectivity monitor for offline-first mode
 	// Retry settings
 	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
 	RetryInterval    time.Duration // How often to check for failed downloads
