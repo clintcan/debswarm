@@ -1,3 +1,44 @@
+debswarm (1.7.0-1) stable; urgency=medium
+
+  * Streaming downloads for memory efficiency
+    - Large files (>=10MB) now stream to disk instead of memory
+    - Eliminates memory exhaustion for large packages
+    - Memory usage reduced from ~file_size to ~32MB for chunked downloads
+  * Increase peer score cache TTL from 1min to 5min
+  * Add cache.PutFile() for atomic file moves
+
+ -- debswarm developers <debswarm@example.com>  Wed, 18 Dec 2025 00:00:00 +0000
+
+debswarm (1.6.0-1) stable; urgency=high
+
+  * Security: Eclipse attack mitigation
+    - Block connections to/from private/reserved IP addresses
+    - Filter multiaddrs in InterceptAccept and InterceptAddrDial
+  * Security: Skip DHT announcements in private swarm mode
+  * Security: Validate byte range bounds in transfer requests
+  * Security: Filter blocked addresses from DHT provider results
+
+ -- debswarm developers <debswarm@example.com>  Wed, 18 Dec 2025 00:00:00 +0000
+
+debswarm (1.5.1-1) stable; urgency=medium
+
+  * Fix golangci-lint gofmt errors in rate limiting code
+  * Fix ineffassign error in peer limiter test
+
+ -- debswarm developers <debswarm@example.com>  Tue, 17 Dec 2025 00:00:00 +0000
+
+debswarm (1.5.0-1) stable; urgency=medium
+
+  * Add per-peer rate limiting
+    - Configurable per_peer_upload_rate and per_peer_download_rate
+    - Auto mode divides global limit by expected number of peers
+  * Add adaptive rate limiting
+    - Integrates with peer scoring system
+    - High-performing peers get boosted rates
+    - Poorly-performing peers get reduced rates
+
+ -- debswarm developers <debswarm@example.com>  Tue, 17 Dec 2025 00:00:00 +0000
+
 debswarm (1.4.2-1) stable; urgency=medium
 
   * Add enhanced mDNS discovery logging

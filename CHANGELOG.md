@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2025-12-18
+
 ### Changed
 - **Streaming downloads**: Large file downloads (≥10MB) now stream directly to disk instead of buffering in memory
   - Eliminates memory exhaustion for large packages (500MB+ files no longer allocate 500MB RAM)
@@ -427,7 +429,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/clintcan/debswarm/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/clintcan/debswarm/compare/v1.5.1...v1.6.0
 [1.5.1]: https://github.com/clintcan/debswarm/compare/v1.5.0...v1.5.1
 [1.5.0]: https://github.com/clintcan/debswarm/compare/v1.4.2...v1.5.0
