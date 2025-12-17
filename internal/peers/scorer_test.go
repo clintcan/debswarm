@@ -192,7 +192,7 @@ func TestGetScoreMinSamples(t *testing.T) {
 
 	// Score is cached during RecordSuccess, so it should not be 0.5 anymore
 	// However the cached score was computed before we hit MinSamples
-	// The next GetScore call should recompute since cache expires after 1 minute
+	// The next GetScore call should recompute since cache expires after ScoreCacheTTL
 	// For this test, we just verify the scorer works correctly
 	score := s.GetScore(peerID)
 	// Score could be 0.5 if cached, or computed value

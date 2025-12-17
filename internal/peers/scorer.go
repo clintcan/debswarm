@@ -34,6 +34,10 @@ const (
 
 	// Maximum age before peer is considered stale
 	MaxPeerAge = 24 * time.Hour
+
+	// Score cache TTL - how long computed scores are cached
+	// Higher values reduce CPU under load but delay score updates
+	ScoreCacheTTL = 5 * time.Minute
 )
 
 // PeerScore holds scoring data for a peer
@@ -377,7 +381,7 @@ func (s *Scorer) getOrCreate(peerID peer.ID) *PeerScore {
 func (s *Scorer) computeScore(ps *PeerScore) float64 {
 	// Check cache - use cached value if valid and recent
 	// Note: cachedScore of 0 is valid for blacklisted peers, so check scoreCachedAt
-	if !ps.scoreCachedAt.IsZero() && time.Since(ps.scoreCachedAt) < time.Minute {
+	if !ps.scoreCachedAt.IsZero() && time.Since(ps.scoreCachedAt) < ScoreCacheTTL {
 		return ps.cachedScore
 	}
 

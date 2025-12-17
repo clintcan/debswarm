@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -424,15 +425,25 @@ func (d *Downloader) downloadChunked(
 		}
 	}
 
-	// Read chunks from disk (resumed chunks)
+	// Read chunks from disk (resumed chunks) - read directly into assembled buffer
+	// to avoid intermediate allocations
 	for i := range completedFromDisk {
 		start := int64(i) * d.chunkSize
 		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		data, err := os.ReadFile(chunkFile)
+		f, err := os.Open(chunkFile)
 		if err != nil {
+			return nil, fmt.Errorf("failed to open resumed chunk %d: %w", i, err)
+		}
+		// Calculate chunk end, handling last chunk which may be smaller
+		end := start + d.chunkSize
+		if end > int64(len(assembled)) {
+			end = int64(len(assembled))
+		}
+		_, err = io.ReadFull(f, assembled[start:end])
+		f.Close()
+		if err != nil && err != io.ErrUnexpectedEOF {
 			return nil, fmt.Errorf("failed to read resumed chunk %d: %w", i, err)
 		}
-		copy(assembled[start:], data)
 	}
 
 	// Verify hash
