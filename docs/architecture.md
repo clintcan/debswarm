@@ -5,11 +5,11 @@
 debswarm is a peer-to-peer package distribution system that operates as an HTTP proxy between APT and package mirrors. It intercepts APT requests, attempts to fulfill them from the P2P network, and falls back to mirrors when necessary.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         Local Machine                           │
-│                                                                 │
+┌────────────────────────────────────────────────────────────────┐
+│                         Local Machine                          │
+│                                                                │
 │  ┌─────────┐     ┌──────────────────────────────────────────┐  │
-│  │   APT   │────▶│              debswarm                     │  │
+│  │   APT   │────▶│              debswarm                    │  │
 │  │         │     │  ┌────────┐  ┌────────┐  ┌────────────┐  │  │
 │  └─────────┘     │  │ Proxy  │──│ Cache  │──│ Downloader │  │  │
 │                  │  └────────┘  └────────┘  └────────────┘  │  │
@@ -25,7 +25,7 @@ debswarm is a peer-to-peer package distribution system that operates as an HTTP 
 │                  │  │  └─────────┘  └──────────────┘   │    │  │
 │                  │  └──────────────────────────────────┘    │  │
 │                  └──────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────┘
          │                         │                    │
          │                         │                    │
          ▼                         ▼                    ▼
@@ -215,7 +215,7 @@ Chunk size: 4MB
 Chunks: 20
 
 ┌──────────────────────────────────────────────────────┐
-│                    Work Queue                         │
+│                    Work Queue                        │
 │  [C0] [C1] [C2] [C3] [C4] ... [C19]                  │
 └──────────────────────────────────────────────────────┘
          │     │     │     │
@@ -224,12 +224,12 @@ Chunks: 20
     │       Worker Pool          │
     │  W1   W2   W3   W4   ...   │
     └────────────────────────────┘
-         │     │     │     │
-         ▼     ▼     ▼     ▼
-    ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐
+         │     │     │       │
+         ▼     ▼     ▼       ▼
+    ┌─────┐ ┌─────┐ ┌──────┐ ┌─────┐
     │Peer │ │Peer │ │Mirror│ │Peer │
     │  A  │ │  B  │ │      │ │  C  │
-    └─────┘ └─────┘ └─────┘ └─────┘
+    └─────┘ └─────┘ └──────┘ └─────┘
 ```
 
 ### Download Resume (v0.6.0+)
@@ -239,7 +239,7 @@ Chunked downloads can survive interruptions:
 ```
 During Download:
 ┌─────────────────────────────────────────────────┐
-│ SQLite: downloads table                          │
+│ SQLite: downloads table                         │
 │   id: "abc123...", status: "in_progress"        │
 │   chunks: 20, completed: 12                     │
 └─────────────────────────────────────────────────┘
@@ -300,34 +300,34 @@ Provider Key: /debswarm/pkg/{sha256_hash}
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                 TRUSTED                              │
+│                 TRUSTED                             │
 │  ┌─────────────────────────────────────────────┐    │
-│  │  APT + GPG Verification                      │    │
-│  │  - Release files (signed by Debian/Ubuntu)   │    │
-│  │  - Packages index (signed transitively)      │    │
+│  │  APT + GPG Verification                     │    │
+│  │  - Release files (signed by Debian/Ubuntu)  │    │
+│  │  - Packages index (signed transitively)     │    │
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
                         │
                         │ SHA256 hashes
                         ▼
 ┌─────────────────────────────────────────────────────┐
-│                 VERIFIED                             │
+│                 VERIFIED                            │
 │  ┌─────────────────────────────────────────────┐    │
-│  │  debswarm verification                       │    │
-│  │  - All downloads verified against SHA256     │    │
-│  │  - Hash from trusted Packages index          │    │
+│  │  debswarm verification                      │    │
+│  │  - All downloads verified against SHA256    │    │
+│  │  - Hash from trusted Packages index         │    │
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
                         │
                         │ Download content
                         ▼
 ┌─────────────────────────────────────────────────────┐
-│                 UNTRUSTED                            │
+│                 UNTRUSTED                           │
 │  ┌─────────────────────────────────────────────┐    │
-│  │  P2P Network                                 │    │
-│  │  - Peers can send anything                   │    │
-│  │  - Content must pass verification            │    │
-│  │  - Bad actors get blacklisted                │    │
+│  │  P2P Network                                │    │
+│  │  - Peers can send anything                  │    │
+│  │  - Content must pass verification           │    │
+│  │  - Bad actors get blacklisted               │    │
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
 ```
