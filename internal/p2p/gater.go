@@ -8,6 +8,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/debswarm/debswarm/internal/security"
 )
 
 // AllowlistGater implements connmgr.ConnectionGater to restrict connections
@@ -83,11 +85,20 @@ func (g *AllowlistGater) InterceptPeerDial(p peer.ID) bool {
 
 // InterceptAddrDial is called when we're about to dial a specific address
 func (g *AllowlistGater) InterceptAddrDial(id peer.ID, addr multiaddr.Multiaddr) bool {
+	// Block dialing to private/reserved IPs (defense against eclipse attacks)
+	if security.IsBlockedMultiaddr(addr) {
+		return false
+	}
 	return g.isAllowed(id)
 }
 
 // InterceptAccept is called when we're about to accept an inbound connection
 func (g *AllowlistGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
+	// Block connections from private/reserved IPs early (defense-in-depth)
+	// This saves resources by rejecting before security handshake
+	if addrs != nil && security.IsBlockedMultiaddr(addrs.RemoteMultiaddr()) {
+		return false
+	}
 	// Can't check peer ID here, allow and check in InterceptSecured
 	return true
 }

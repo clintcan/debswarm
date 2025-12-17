@@ -5,6 +5,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 )
 
 func TestNewAllowlistGater_Empty(t *testing.T) {
@@ -124,9 +125,15 @@ func TestAllowlistGater_InterceptAddrDial(t *testing.T) {
 func TestAllowlistGater_InterceptAccept(t *testing.T) {
 	gater := NewAllowlistGater([]peer.ID{peer.ID("12D3KooWSomePeer")})
 
-	// InterceptAccept always returns true (can't determine peer ID yet)
+	// InterceptAccept with nil should return true (no address to check)
 	if !gater.InterceptAccept(nil) {
-		t.Error("InterceptAccept should always return true")
+		t.Error("InterceptAccept with nil should return true")
+	}
+
+	// InterceptAccept with public IP should return true
+	publicAddr := mustMultiaddr(t, "/ip4/8.8.8.8/tcp/4001")
+	if !gater.InterceptAccept(&mockConnMultiaddrs{remote: publicAddr}) {
+		t.Error("InterceptAccept should allow public IP")
 	}
 }
 
@@ -247,4 +254,142 @@ func TestAllowlistGater_ConcurrentAccess(t *testing.T) {
 	<-done
 	<-done
 	<-done
+}
+
+// mockConnMultiaddrs implements network.ConnMultiaddrs for testing
+type mockConnMultiaddrs struct {
+	local, remote multiaddr.Multiaddr
+}
+
+func (m *mockConnMultiaddrs) LocalMultiaddr() multiaddr.Multiaddr {
+	if m == nil {
+		return nil
+	}
+	return m.local
+}
+
+func (m *mockConnMultiaddrs) RemoteMultiaddr() multiaddr.Multiaddr {
+	if m == nil {
+		return nil
+	}
+	return m.remote
+}
+
+func mustMultiaddr(t *testing.T, s string) multiaddr.Multiaddr {
+	t.Helper()
+	ma, err := multiaddr.NewMultiaddr(s)
+	if err != nil {
+		t.Fatalf("failed to create multiaddr %q: %v", s, err)
+	}
+	return ma
+}
+
+func TestAllowlistGater_InterceptAccept_BlocksPrivateIPs(t *testing.T) {
+	gater := NewAllowlistGater(nil) // Gating disabled but IP filtering active
+
+	blockedAddrs := []string{
+		"/ip4/192.168.1.1/tcp/4001",
+		"/ip4/10.0.0.1/tcp/4001",
+		"/ip4/127.0.0.1/tcp/4001",
+		"/ip4/172.16.0.1/tcp/4001",
+		"/ip4/169.254.1.1/tcp/4001",
+		"/ip6/::1/tcp/4001",
+		"/ip6/fe80::1/tcp/4001",
+		"/ip6/fd00::1/tcp/4001",
+	}
+
+	for _, addr := range blockedAddrs {
+		ma := mustMultiaddr(t, addr)
+		mockAddrs := &mockConnMultiaddrs{remote: ma}
+		if gater.InterceptAccept(mockAddrs) {
+			t.Errorf("InterceptAccept should block %s", addr)
+		}
+	}
+}
+
+func TestAllowlistGater_InterceptAccept_AllowsPublicIPs(t *testing.T) {
+	gater := NewAllowlistGater(nil)
+
+	allowedAddrs := []string{
+		"/ip4/8.8.8.8/tcp/4001",
+		"/ip4/1.1.1.1/tcp/4001",
+		"/ip4/203.0.113.1/tcp/4001",
+		"/ip6/2001:db8::1/tcp/4001",
+		"/dns4/example.com/tcp/4001",
+	}
+
+	for _, addr := range allowedAddrs {
+		ma := mustMultiaddr(t, addr)
+		mockAddrs := &mockConnMultiaddrs{remote: ma}
+		if !gater.InterceptAccept(mockAddrs) {
+			t.Errorf("InterceptAccept should allow %s", addr)
+		}
+	}
+}
+
+func TestAllowlistGater_InterceptAddrDial_BlocksPrivateIPs(t *testing.T) {
+	gater := NewAllowlistGater(nil) // Gating disabled
+
+	blockedAddrs := []string{
+		"/ip4/192.168.1.1/tcp/4001",
+		"/ip4/10.0.0.1/tcp/4001",
+		"/ip4/127.0.0.1/tcp/4001",
+		"/ip4/172.16.0.1/tcp/4001",
+	}
+
+	peerID := peer.ID("12D3KooWSomePeer")
+	for _, addr := range blockedAddrs {
+		ma := mustMultiaddr(t, addr)
+		if gater.InterceptAddrDial(peerID, ma) {
+			t.Errorf("InterceptAddrDial should block %s", addr)
+		}
+	}
+}
+
+func TestAllowlistGater_InterceptAddrDial_AllowsPublicIPs(t *testing.T) {
+	gater := NewAllowlistGater(nil) // Gating disabled
+
+	allowedAddrs := []string{
+		"/ip4/8.8.8.8/tcp/4001",
+		"/ip4/1.1.1.1/tcp/4001",
+		"/dns4/example.com/tcp/4001",
+	}
+
+	peerID := peer.ID("12D3KooWSomePeer")
+	for _, addr := range allowedAddrs {
+		ma := mustMultiaddr(t, addr)
+		if !gater.InterceptAddrDial(peerID, ma) {
+			t.Errorf("InterceptAddrDial should allow %s", addr)
+		}
+	}
+}
+
+func TestAllowlistGater_InterceptAddrDial_CombinesIPAndPeerCheck(t *testing.T) {
+	allowedPeer := peer.ID("12D3KooWAllowedPeer")
+	blockedPeer := peer.ID("12D3KooWBlockedPeer")
+
+	gater := NewAllowlistGater([]peer.ID{allowedPeer})
+
+	publicAddr := mustMultiaddr(t, "/ip4/8.8.8.8/tcp/4001")
+	privateAddr := mustMultiaddr(t, "/ip4/192.168.1.1/tcp/4001")
+
+	// Allowed peer with public IP - should pass
+	if !gater.InterceptAddrDial(allowedPeer, publicAddr) {
+		t.Error("Should allow: allowed peer + public IP")
+	}
+
+	// Allowed peer with private IP - should fail (IP check)
+	if gater.InterceptAddrDial(allowedPeer, privateAddr) {
+		t.Error("Should block: allowed peer + private IP")
+	}
+
+	// Blocked peer with public IP - should fail (peer check)
+	if gater.InterceptAddrDial(blockedPeer, publicAddr) {
+		t.Error("Should block: blocked peer + public IP")
+	}
+
+	// Blocked peer with private IP - should fail (both checks)
+	if gater.InterceptAddrDial(blockedPeer, privateAddr) {
+		t.Error("Should block: blocked peer + private IP")
+	}
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/ratelimit"
 	"github.com/debswarm/debswarm/internal/sanitize"
+	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
 )
 
@@ -81,6 +82,10 @@ type Node struct {
 	activeUploads        int
 	uploadsPerPeer       map[peer.ID]int
 	maxConcurrentUploads int
+
+	// Private swarm mode (when peer allowlist is active)
+	// Skips DHT announcements to prevent information leakage
+	privateSwarm bool
 }
 
 // ContentGetter is a function that retrieves content by hash
@@ -231,6 +236,8 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 	}
 
 	// Add peer allowlist if configured
+	// Also track if we're in private swarm mode to skip DHT announcements
+	var privateSwarmMode bool
 	if len(cfg.PeerAllowlist) > 0 {
 		peerIDs := make([]peer.ID, 0, len(cfg.PeerAllowlist))
 		for _, pidStr := range cfg.PeerAllowlist {
@@ -244,6 +251,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		if len(peerIDs) > 0 {
 			gater := NewAllowlistGater(peerIDs)
 			opts = append(opts, libp2p.ConnectionGater(gater))
+			privateSwarmMode = true // Enable private swarm mode to skip DHT announcements
 			logger.Info("Peer allowlist enabled", zap.Int("count", len(peerIDs)))
 		}
 	}
@@ -300,6 +308,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		maxConcurrentUploads: cfg.MaxConcurrentUploads,
 		uploadLimiter:        ratelimit.New(cfg.MaxUploadRate),
 		downloadLimiter:      ratelimit.New(cfg.MaxDownloadRate),
+		privateSwarm:         privateSwarmMode,
 	}
 
 	// Apply default for max concurrent uploads if not set
@@ -532,6 +541,13 @@ func (n *Node) WaitForBootstrap() {
 
 // Provide announces to the DHT that we have a package with the given hash
 func (n *Node) Provide(ctx context.Context, sha256Hash string) error {
+	// Skip DHT announcements in private swarm mode to prevent information leakage
+	if n.privateSwarm {
+		n.logger.Debug("Skipping DHT announcement (private swarm mode)",
+			zap.String("hash", sha256Hash[:16]+"..."))
+		return nil
+	}
+
 	key := NamespacePackage + sha256Hash
 
 	var timer *metrics.Timer
@@ -597,7 +613,22 @@ func (n *Node) FindProviders(ctx context.Context, sha256Hash string, limit int) 
 	duration := timer.ObserveDuration()
 	n.timeouts.RecordSuccess(timeouts.OpDHTLookup, duration)
 
-	return providers, nil
+	// Filter out providers with blocked/private IP addresses (defense against eclipse attacks)
+	filtered := make([]peer.AddrInfo, 0, len(providers))
+	for _, p := range providers {
+		allowedAddrs := security.FilterBlockedAddrs(p.Addrs)
+		if len(allowedAddrs) > 0 {
+			filtered = append(filtered, peer.AddrInfo{
+				ID:    p.ID,
+				Addrs: allowedAddrs,
+			})
+		} else {
+			n.logger.Debug("Filtered provider with blocked addresses",
+				zap.String("peer", p.ID.String()))
+		}
+	}
+
+	return filtered, nil
 }
 
 // FindProvidersRanked returns providers sorted by score
@@ -824,6 +855,24 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	}
 	if start < 0 {
 		start = 0
+	}
+
+	// Validate range bounds to prevent negative responseSize or out-of-bounds access
+	if start > end {
+		n.logger.Debug("Invalid range: start > end",
+			zap.Int64("start", start),
+			zap.Int64("end", end),
+			zap.String("hash", sha256Hash[:16]+"..."))
+		n.writeSize(stream, 0)
+		return
+	}
+	if start >= totalSize {
+		n.logger.Debug("Invalid range: start >= totalSize",
+			zap.Int64("start", start),
+			zap.Int64("totalSize", totalSize),
+			zap.String("hash", sha256Hash[:16]+"..."))
+		n.writeSize(stream, 0)
+		return
 	}
 
 	responseSize := end - start
