@@ -13,10 +13,10 @@ sudo apt-get install -y \
     debhelper \
     devscripts \
     golang-go \
-    libsqlite3-dev \
-    pkg-config \
     git
 ```
+
+Note: No C compiler or external libraries required - debswarm uses pure Go SQLite (modernc.org/sqlite).
 
 ### Go Version
 
@@ -80,7 +80,7 @@ sudo sbuild-adduser $USER
 newgrp sbuild
 
 # Create chroot (one time)
-sudo sbuild-createchroot --include=golang-go,libsqlite3-dev \
+sudo sbuild-createchroot --include=golang-go \
     unstable /srv/chroot/unstable-amd64 http://deb.debian.org/debian
 
 # Build
@@ -95,7 +95,7 @@ sudo apt-get install pbuilder
 
 # Create base (one time)
 sudo pbuilder create --distribution unstable \
-    --extrapackages "golang-go libsqlite3-dev"
+    --extrapackages "golang-go"
 
 # Build
 sudo pbuilder build ../debswarm_0.2.0-1.dsc
@@ -162,14 +162,6 @@ You need network access to download dependencies:
 # Download dependencies first
 go mod download
 go mod vendor
-```
-
-### CGO errors
-
-Ensure you have the SQLite development libraries:
-
-```bash
-sudo apt-get install libsqlite3-dev
 ```
 
 ### Permission denied on /var/cache/debswarm

@@ -152,7 +152,7 @@ Implemented background worker to automatically retry failed downloads:
 
 ## Version History
 
-- **v1.4.0** (2025-12-16): Low priority - Automatic resume retry for failed downloads
+- **v1.4.0** (2025-12-17): Low priority - Automatic resume retry for failed downloads
 - **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
 - **v0.8.0** (2025-12-15): Medium priority - systemd directory validation
 - **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation

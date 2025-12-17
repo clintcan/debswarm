@@ -41,6 +41,61 @@ sudo systemctl start debswarm
 
 ## Version-Specific Notes
 
+### Upgrading to v1.4.x
+
+**From v1.3.x:**
+
+v1.4.x adds automatic retry for failed downloads and enhanced mDNS logging. Fully backwards compatible.
+
+1. **Automatic Retry**: Failed P2P downloads are now automatically retried. Configure with:
+   ```toml
+   [transfer]
+   retry_max_attempts = 3   # 0 to disable
+   retry_interval = "5m"
+   retry_max_age = "1h"
+   ```
+
+2. **Enhanced mDNS Logging**: More detailed logging for local peer discovery troubleshooting.
+
+   **Action**: None required. New features available immediately.
+
+### Upgrading to v1.3.x
+
+**From v1.2.x:**
+
+v1.3.x adds keepalive pings to prevent peer disconnection and log sanitization for security. Backwards compatible.
+
+1. **Keepalive Pings**: Periodic pings prevent idle connections from being pruned.
+
+2. **Log Sanitization**: User-controlled data is now sanitized in logs to prevent log injection.
+
+   **Action**: None required.
+
+### Upgrading to v1.2.x
+
+**From v1.1.x:**
+
+v1.2.x improves systemd compatibility. Backwards compatible.
+
+1. **Systemd Integration**: Automatic detection of `CACHE_DIRECTORY` and `STATE_DIRECTORY` environment variables from systemd.
+
+   **Action**: None required. Works automatically with systemd `CacheDirectory=` and `StateDirectory=` directives.
+
+### Upgrading to v1.1.0
+
+**From v1.0.x:**
+
+v1.1.0 is a significant change that switches from CGO SQLite to pure Go SQLite.
+
+1. **Pure Go SQLite**: The SQLite driver changed from `mattn/go-sqlite3` (CGO) to `modernc.org/sqlite` (pure Go).
+   - **No longer requires GCC or C compiler to build**
+   - Cross-compilation now works without CGO toolchain
+   - Database format is compatible; no migration needed
+
+   **Action**: If building from source, you no longer need `libsqlite3-dev` or GCC installed.
+
+2. **Build Requirements Changed**: Update any CI/CD pipelines or build scripts to remove CGO dependencies.
+
 ### Upgrading to v1.0.0
 
 **From v0.6.x:**
@@ -198,14 +253,20 @@ For major version upgrades with breaking changes:
 
 ## Compatibility Matrix
 
-| Version | Config Format | Cache Format | Database Schema | Protocol |
-|---------|--------------|--------------|-----------------|----------|
-| v1.0.x  | v1           | v1           | v3              | v1.0.0   |
-| v0.6.x  | v1           | v1           | v3              | v1.0.0   |
-| v0.5.x  | v1           | v1           | v2              | v1.0.0   |
-| v0.4.x  | v1           | v1           | v1              | v1.0.0   |
+| Version | Config Format | Cache Format | Database Schema | Protocol | SQLite Driver |
+|---------|--------------|--------------|-----------------|----------|---------------|
+| v1.4.x  | v1           | v1           | v4              | v1.0.0   | Pure Go       |
+| v1.3.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |
+| v1.2.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |
+| v1.1.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |
+| v1.0.x  | v1           | v1           | v3              | v1.0.0   | CGO           |
+| v0.6.x  | v1           | v1           | v3              | v1.0.0   | CGO           |
+| v0.5.x  | v1           | v1           | v2              | v1.0.0   | CGO           |
+| v0.4.x  | v1           | v1           | v1              | v1.0.0   | CGO           |
 
 All v0.x and v1.x versions use compatible P2P protocols and can interoperate.
+
+**Note**: v1.1.0+ uses pure Go SQLite which is database-format compatible with CGO SQLite. No migration needed.
 
 ## Pre-Upgrade Checklist
 

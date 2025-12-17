@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Log discovered peer addresses (not just peer ID)
   - Log successful mDNS peer connections at Info level
 
-## [1.4.1] - 2025-12-18
+## [1.4.1] - 2025-12-17
 
 ### Fixed
 - Fix `identity show` to use same data directory resolution as daemon
@@ -39,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Automatic retry for failed downloads**: Failed P2P downloads are automatically retried on subsequent APT requests
   - Configurable `retry_max_attempts` (default: 3)
   - Configurable `retry_interval` with exponential backoff (default: 5m)
-  - Configurable `retry_max_age` to expire old failures (default: 24h)
+  - Configurable `retry_max_age` to expire old failures (default: 1h)
 
 ## [1.3.3] - 2025-12-17
 

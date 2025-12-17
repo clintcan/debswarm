@@ -24,7 +24,7 @@ This document provides a technical comparison of debswarm against other peer-to-
 
 | Component | apt-p2p | debswarm |
 |-----------|---------|----------|
-| **Language** | Python 2.7 | Go 1.22+ |
+| **Language** | Python 2.7 | Go 1.24+ |
 | **DHT Implementation** | Custom (Khashmir-based) | libp2p Kademlia |
 | **Transport Protocol** | TCP only | QUIC (primary), TCP (fallback) |
 | **Binary Distribution** | Python package + dependencies | Single static binary |

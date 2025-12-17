@@ -19,9 +19,10 @@ Thank you for your interest in contributing to debswarm!
 ### Prerequisites
 
 - Go 1.24 or later
-- GCC (for SQLite CGO)
 - Make
 - golangci-lint (for linting)
+
+Note: No C compiler required - debswarm uses pure Go SQLite.
 
 ### Building
 

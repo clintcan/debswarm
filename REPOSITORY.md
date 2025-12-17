@@ -119,11 +119,8 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      
-      - name: Install dependencies
-        run: sudo apt-get install -y libsqlite3-dev
-      
+          go-version: '1.24'
+
       - name: Build
         run: go build -v ./...
       
@@ -141,10 +138,10 @@ jobs:
         goarch: [amd64, arm64, arm]
     steps:
       - uses: actions/checkout@v4
-      
+
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
       
       - name: Build
         env:
@@ -183,11 +180,8 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      
-      - name: Install dependencies
-        run: sudo apt-get install -y libsqlite3-dev
-      
+          go-version: '1.24'
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
@@ -220,16 +214,14 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      
+          go-version: '1.24'
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             devscripts \
-            debhelper \
-            libsqlite3-dev \
-            pkg-config
+            debhelper
       
       - name: Prepare source
         run: |
