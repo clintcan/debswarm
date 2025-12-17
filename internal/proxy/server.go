@@ -727,10 +727,12 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 // packageDownloadResult holds the result of a package download
 type packageDownloadResult struct {
-	data        []byte
-	hash        string
-	source      string
-	contentType string
+	data           []byte
+	hash           string
+	size           int64 // Used when serveFromCache is true
+	source         string
+	contentType    string
+	serveFromCache bool // If true, stream from cache instead of using data
 }
 
 // downloadPackage performs the actual download (called via singleflight)
@@ -879,7 +881,24 @@ func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expec
 		zap.Int("chunksP2P", result.ChunksFromP2P),
 		zap.Duration("duration", result.Duration))
 
-	// Cache and announce
+	// Handle file-based result (chunked download - streaming)
+	if result.FilePath != "" {
+		// Move verified file directly to cache (no memory copy)
+		if err := s.cache.PutFile(result.FilePath, expectedHash, path, result.Size); err != nil {
+			s.logger.Warn("Failed to cache file", zap.Error(err))
+		}
+		s.announceAsync(expectedHash)
+
+		return &packageDownloadResult{
+			hash:           expectedHash,
+			size:           result.Size,
+			source:         result.Source,
+			contentType:    "application/vnd.debian.binary-package",
+			serveFromCache: true,
+		}
+	}
+
+	// Handle in-memory result (racing download - small files)
 	s.cacheAndAnnounce(result.Data, expectedHash, path)
 
 	return &packageDownloadResult{
@@ -892,6 +911,27 @@ func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expec
 
 // servePackageResult writes a download result to the HTTP response
 func (s *Server) servePackageResult(w http.ResponseWriter, result *packageDownloadResult) {
+	// Stream from cache for file-based results (chunked downloads)
+	if result.serveFromCache {
+		reader, _, err := s.cache.Get(result.hash)
+		if err != nil {
+			s.logger.Error("Failed to read from cache for serving", zap.Error(err))
+			http.Error(w, "Cache error", http.StatusInternalServerError)
+			return
+		}
+		defer reader.Close()
+
+		w.Header().Set("Content-Type", result.contentType)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", result.size))
+		if result.source != "" {
+			w.Header().Set("X-Debswarm-Source", result.source)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, reader)
+		return
+	}
+
+	// Serve from memory for in-memory results (racing downloads)
 	w.Header().Set("Content-Type", result.contentType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(result.data)))
 	if result.source != "" {

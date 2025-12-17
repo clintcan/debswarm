@@ -189,7 +189,8 @@ func (d *Downloader) GetStateManager() *StateManager {
 
 // DownloadResult contains the result of a download
 type DownloadResult struct {
-	Data          []byte
+	Data          []byte // For racing (small files) - nil when FilePath is set
+	FilePath      string // For chunked (large files) - path to verified temp file
 	Hash          string
 	Size          int64
 	Duration      time.Duration
@@ -384,19 +385,22 @@ func (d *Downloader) downloadChunked(
 
 		completedChunks[chunk.Index] = chunk
 
-		// Persist chunk to disk
+		// Count bytes first (before potentially clearing data)
+		chunkLen := int64(len(chunk.Data))
+		if chunk.Source.Type() == SourceTypePeer {
+			peerBytes += chunkLen
+			chunksFromP2P++
+		} else {
+			mirrorBytes += chunkLen
+		}
+
+		// Persist chunk to disk and release memory early
 		if resumeEnabled && partialDir != "" {
 			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", chunk.Index))
 			if err := os.WriteFile(chunkFile, chunk.Data, 0600); err == nil {
 				_ = d.stateManager.UpdateChunk(expectedHash, chunk.Index, "completed")
+				chunk.Data = nil // Release chunk memory after persisting to disk
 			}
-		}
-
-		if chunk.Source.Type() == SourceTypePeer {
-			peerBytes += int64(len(chunk.Data))
-			chunksFromP2P++
-		} else {
-			mirrorBytes += int64(len(chunk.Data))
 		}
 	}
 
@@ -415,40 +419,88 @@ func (d *Downloader) downloadChunked(
 		}
 	}
 
-	// Assemble file
-	assembled := make([]byte, expectedSize)
+	// Create temp file for assembly (streaming to disk, not memory)
+	assemblyFile := filepath.Join(partialDir, "assembled")
+	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create assembly file: %w", err)
+	}
 
-	// Copy chunks from memory
+	// Pre-allocate file size for efficient writes
+	if err := f.Truncate(expectedSize); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to allocate assembly file: %w", err)
+	}
+
+	// Write chunks from memory directly to file at correct offsets
+	// If chunk.Data is nil (was cleared after disk persist), read from chunk file
 	for _, c := range completedChunks {
 		if c != nil {
-			copy(assembled[c.Start:], c.Data)
+			if c.Data != nil {
+				// Chunk still in memory - write directly
+				if _, err := f.WriteAt(c.Data, c.Start); err != nil {
+					f.Close()
+					return nil, fmt.Errorf("failed to write chunk %d: %w", c.Index, err)
+				}
+				c.Data = nil // Release chunk memory immediately
+			} else if resumeEnabled {
+				// Chunk was persisted to disk and cleared - read from file
+				chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", c.Index))
+				chunkData, err := os.ReadFile(chunkFile)
+				if err != nil {
+					f.Close()
+					return nil, fmt.Errorf("failed to read persisted chunk %d: %w", c.Index, err)
+				}
+				if _, err := f.WriteAt(chunkData, c.Start); err != nil {
+					f.Close()
+					return nil, fmt.Errorf("failed to write chunk %d: %w", c.Index, err)
+				}
+			}
 		}
 	}
 
-	// Read chunks from disk (resumed chunks) - read directly into assembled buffer
-	// to avoid intermediate allocations
+	// Copy resumed chunks from partial files to assembly file
 	for i := range completedFromDisk {
 		start := int64(i) * d.chunkSize
 		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		f, err := os.Open(chunkFile)
+		chunkF, err := os.Open(chunkFile)
 		if err != nil {
+			f.Close()
 			return nil, fmt.Errorf("failed to open resumed chunk %d: %w", i, err)
 		}
-		// Calculate chunk end, handling last chunk which may be smaller
-		end := start + d.chunkSize
-		if end > int64(len(assembled)) {
-			end = int64(len(assembled))
+		// Calculate chunk size, handling last chunk which may be smaller
+		chunkEnd := start + d.chunkSize
+		if chunkEnd > expectedSize {
+			chunkEnd = expectedSize
 		}
-		_, err = io.ReadFull(f, assembled[start:end])
-		f.Close()
+		chunkSize := chunkEnd - start
+
+		// Read chunk and write to assembly file at correct offset
+		buf := make([]byte, chunkSize)
+		_, err = io.ReadFull(chunkF, buf)
+		chunkF.Close()
 		if err != nil && err != io.ErrUnexpectedEOF {
+			f.Close()
 			return nil, fmt.Errorf("failed to read resumed chunk %d: %w", i, err)
+		}
+		if _, err := f.WriteAt(buf, start); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("failed to write resumed chunk %d: %w", i, err)
 		}
 	}
 
-	// Verify hash
-	actualHash := sha256.Sum256(assembled)
-	actualHashHex := hex.EncodeToString(actualHash[:])
+	// Verify hash by streaming read (no memory allocation for full file)
+	if _, err := f.Seek(0, 0); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to compute hash: %w", err)
+	}
+	actualHashHex := hex.EncodeToString(hasher.Sum(nil))
+	f.Close()
 
 	if actualHashHex != expectedHash {
 		if d.metrics != nil {
@@ -458,14 +510,19 @@ func (d *Downloader) downloadChunked(
 			_ = d.stateManager.FailDownload(expectedHash, "hash mismatch")
 			_ = d.cache.CleanPartialDir(expectedHash)
 		}
+		_ = os.Remove(assemblyFile)
 		return nil, ErrHashMismatch
 	}
 
-	// Success - clean up state and partial files
+	// Success - clean up download state (but keep assembly file for cache)
 	if resumeEnabled {
 		_ = d.stateManager.CompleteDownload(expectedHash)
 		_ = d.stateManager.DeleteDownload(expectedHash)
-		_ = d.cache.CleanPartialDir(expectedHash)
+		// Clean up chunk files but not assembly file
+		for i := 0; i < numChunks; i++ {
+			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+			_ = os.Remove(chunkFile)
+		}
 	}
 
 	// Determine source type
@@ -477,9 +534,9 @@ func (d *Downloader) downloadChunked(
 	}
 
 	return &DownloadResult{
-		Data:          assembled,
+		FilePath:      assemblyFile, // Return file path instead of data
 		Hash:          actualHashHex,
-		Size:          int64(len(assembled)),
+		Size:          expectedSize,
 		Duration:      time.Since(startTime),
 		Source:        sourceType,
 		PeerBytes:     peerBytes,
@@ -497,21 +554,61 @@ func (d *Downloader) assembleFromDisk(
 	partialDir string,
 	startTime time.Time,
 ) (*DownloadResult, error) {
-	assembled := make([]byte, expectedSize)
-
-	for i := 0; i < numChunks; i++ {
-		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		data, err := os.ReadFile(chunkFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read chunk %d: %w", i, err)
-		}
-		start := int64(i) * d.chunkSize
-		copy(assembled[start:], data)
+	// Create temp file for assembly (streaming to disk, not memory)
+	assemblyFile := filepath.Join(partialDir, "assembled")
+	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create assembly file: %w", err)
 	}
 
-	// Verify hash
-	actualHash := sha256.Sum256(assembled)
-	actualHashHex := hex.EncodeToString(actualHash[:])
+	// Pre-allocate file size
+	if err := f.Truncate(expectedSize); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to allocate assembly file: %w", err)
+	}
+
+	// Copy chunks to assembly file at correct offsets
+	for i := 0; i < numChunks; i++ {
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		chunkF, err := os.Open(chunkFile)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("failed to open chunk %d: %w", i, err)
+		}
+
+		start := int64(i) * d.chunkSize
+		// Calculate chunk size, handling last chunk
+		chunkEnd := start + d.chunkSize
+		if chunkEnd > expectedSize {
+			chunkEnd = expectedSize
+		}
+		chunkSize := chunkEnd - start
+
+		buf := make([]byte, chunkSize)
+		_, err = io.ReadFull(chunkF, buf)
+		chunkF.Close()
+		if err != nil && err != io.ErrUnexpectedEOF {
+			f.Close()
+			return nil, fmt.Errorf("failed to read chunk %d: %w", i, err)
+		}
+		if _, err := f.WriteAt(buf, start); err != nil {
+			f.Close()
+			return nil, fmt.Errorf("failed to write chunk %d: %w", i, err)
+		}
+	}
+
+	// Verify hash by streaming read
+	if _, err := f.Seek(0, 0); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
+	}
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, f); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("failed to compute hash: %w", err)
+	}
+	actualHashHex := hex.EncodeToString(hasher.Sum(nil))
+	f.Close()
 
 	if actualHashHex != expectedHash {
 		if d.metrics != nil {
@@ -523,22 +620,25 @@ func (d *Downloader) assembleFromDisk(
 		if d.cache != nil {
 			_ = d.cache.CleanPartialDir(expectedHash)
 		}
+		_ = os.Remove(assemblyFile)
 		return nil, ErrHashMismatch
 	}
 
-	// Success - clean up
+	// Success - clean up state (but keep assembly file for cache)
 	if d.stateManager != nil {
 		_ = d.stateManager.CompleteDownload(expectedHash)
 		_ = d.stateManager.DeleteDownload(expectedHash)
 	}
-	if d.cache != nil {
-		_ = d.cache.CleanPartialDir(expectedHash)
+	// Clean up chunk files but not assembly file
+	for i := 0; i < numChunks; i++ {
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		_ = os.Remove(chunkFile)
 	}
 
 	return &DownloadResult{
-		Data:          assembled,
+		FilePath:      assemblyFile,
 		Hash:          actualHashHex,
-		Size:          int64(len(assembled)),
+		Size:          expectedSize,
 		Duration:      time.Since(startTime),
 		Source:        "resumed",
 		PeerBytes:     0,

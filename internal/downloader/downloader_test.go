@@ -1,6 +1,7 @@
 package downloader
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -536,7 +537,7 @@ func TestDownloadChunked_WithResume(t *testing.T) {
 		MinChunkedSize: 1, // Enable chunked download for small test files
 	})
 
-	// First download - should complete and clean up
+	// First download - should complete and return file path (streaming mode)
 	result, err := d.Download(context.Background(), hash, int64(len(data)), []Source{source}, nil)
 	if err != nil {
 		t.Fatalf("First download failed: %v", err)
@@ -544,6 +545,27 @@ func TestDownloadChunked_WithResume(t *testing.T) {
 
 	if result.Hash != hash {
 		t.Errorf("Hash mismatch: expected %s, got %s", hash, result.Hash)
+	}
+
+	// Chunked downloads now return FilePath instead of Data (streaming optimization)
+	if result.FilePath == "" {
+		t.Error("Expected chunked download to return FilePath")
+	}
+	if result.Data != nil {
+		t.Error("Expected chunked download to NOT return Data (streaming mode)")
+	}
+
+	// Verify the assembly file exists and has correct content
+	if result.FilePath != "" {
+		assembledData, err := os.ReadFile(result.FilePath)
+		if err != nil {
+			t.Fatalf("Failed to read assembly file: %v", err)
+		}
+		if !bytes.Equal(assembledData, data) {
+			t.Error("Assembly file content doesn't match expected data")
+		}
+		// Clean up the assembly file (caller's responsibility in production)
+		os.Remove(result.FilePath)
 	}
 
 	// Verify state was cleaned up
@@ -555,11 +577,8 @@ func TestDownloadChunked_WithResume(t *testing.T) {
 		t.Error("Expected download state to be cleaned up after completion")
 	}
 
-	// Verify partial dir was cleaned up
-	partialDir := cache.PartialDir(hash)
-	if _, err := os.Stat(partialDir); !os.IsNotExist(err) {
-		t.Error("Expected partial directory to be cleaned up")
-	}
+	// Partial dir may still exist with just the assembly file removed
+	// The dir itself will be cleaned up by t.TempDir() at test end
 }
 
 func TestDownloadChunked_ResumeFromPartial(t *testing.T) {

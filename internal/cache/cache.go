@@ -470,6 +470,53 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 	return nil
 }
 
+// PutFile stores a pre-verified file in the cache by moving it.
+// The file at filePath must already have been verified (correct hash).
+// This is more efficient than Put() for large files as it avoids copying.
+func (c *Cache) PutFile(filePath string, hash string, filename string, size int64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Ensure we have space
+	if err := c.ensureSpace(size); err != nil {
+		return err
+	}
+
+	// Move to final location
+	finalPath := c.packagePath(hash)
+	if err := os.MkdirAll(filepath.Dir(finalPath), 0750); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	if err := os.Rename(filePath, finalPath); err != nil {
+		return fmt.Errorf("failed to move file to cache: %w", err)
+	}
+
+	// Record in database - use ON CONFLICT to preserve access_count if re-adding
+	now := time.Now().Unix()
+	_, err := c.db.Exec(`
+		INSERT INTO packages
+		(sha256, size, filename, added_at, last_accessed, access_count, announced)
+		VALUES (?, ?, ?, ?, ?, 1, 0)
+		ON CONFLICT(sha256) DO UPDATE SET
+			size = excluded.size,
+			filename = excluded.filename,
+			last_accessed = excluded.last_accessed,
+			access_count = access_count + 1`,
+		hash, size, filename, now, now)
+	if err != nil {
+		return fmt.Errorf("failed to record package: %w", err)
+	}
+
+	c.currentSize += size
+	c.logger.Debug("Cached package (file move)",
+		zap.String("hash", hash[:16]+"..."),
+		zap.Int64("size", size),
+		zap.String("filename", sanitize.Filename(filename)))
+
+	return nil
+}
+
 // Delete removes a package from the cache
 func (c *Cache) Delete(sha256Hash string) error {
 	c.mu.Lock()

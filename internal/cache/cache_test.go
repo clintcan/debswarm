@@ -126,6 +126,62 @@ func TestPutHashMismatch(t *testing.T) {
 	}
 }
 
+func TestPutFile(t *testing.T) {
+	c, dir := testCache(t)
+
+	data := []byte("test package content for PutFile")
+	hash := hashData(data)
+
+	// Create a temp file with the data
+	tempFile := filepath.Join(dir, "temp_package")
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+
+	// PutFile (moves the file to cache)
+	err := c.PutFile(tempFile, hash, "test.deb", int64(len(data)))
+	if err != nil {
+		t.Fatalf("PutFile failed: %v", err)
+	}
+
+	// Verify temp file was moved (no longer exists)
+	if _, err := os.Stat(tempFile); !os.IsNotExist(err) {
+		t.Error("Temp file should have been moved")
+	}
+
+	// Has
+	if !c.Has(hash) {
+		t.Error("Has returned false for existing package")
+	}
+
+	// Get
+	reader, pkg, err := c.Get(hash)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	defer reader.Close()
+
+	// Verify content
+	retrieved, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("Failed to read content: %v", err)
+	}
+	if !bytes.Equal(retrieved, data) {
+		t.Error("Retrieved data doesn't match original")
+	}
+
+	// Verify metadata
+	if pkg.SHA256 != hash {
+		t.Errorf("Hash mismatch: got %s, want %s", pkg.SHA256, hash)
+	}
+	if pkg.Size != int64(len(data)) {
+		t.Errorf("Size mismatch: got %d, want %d", pkg.Size, len(data))
+	}
+	if pkg.Filename != "test.deb" {
+		t.Errorf("Filename mismatch: got %s, want test.deb", pkg.Filename)
+	}
+}
+
 func TestGetNotFound(t *testing.T) {
 	c, _ := testCache(t)
 
