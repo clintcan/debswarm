@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Streaming downloads**: Large file downloads (≥10MB) now stream directly to disk instead of buffering in memory
+  - Eliminates memory exhaustion for large packages (500MB+ files no longer allocate 500MB RAM)
+  - Chunks written to assembly file on disk, verified by streaming hash computation
+  - Memory usage for chunked downloads reduced from ~file_size to ~32MB (chunks in flight only)
+  - Racing strategy for small files (<10MB) unchanged for best latency
+- **Score cache TTL**: Increased peer score cache from 1 minute to 5 minutes to reduce CPU overhead
+
+### Added
+- `cache.PutFile()` method for atomic file moves from pre-verified temp files
+
+## [1.6.0] - 2025-12-18
+
+### Security
+- **Eclipse attack mitigation**: Block connections to/from private/reserved IP addresses in multiaddrs
+  - Prevents attackers from announcing private IPs in DHT provider records
+  - Filters multiaddrs in `InterceptAccept` and `InterceptAddrDial`
+- **DHT info leakage prevention**: Skip DHT announcements in private swarm mode (when peer allowlist is active)
+- **Range request validation**: Validate byte range bounds in transfer requests to prevent invalid ranges
+- **Provider address filtering**: Filter blocked addresses from DHT provider results before connecting
+
+### Added
+- `internal/security/multiaddr.go`: Multiaddr validation functions for blocking private/reserved IPs
+- `IsBlockedMultiaddr()` and `FilterBlockedAddrs()` functions
+
+## [1.5.1] - 2025-12-17
+
+### Fixed
+- Fix golangci-lint gofmt errors in rate limiting code
+- Fix ineffassign error in peer limiter test
+
 ## [1.5.0] - 2025-12-17
 
 ### Added
@@ -396,7 +427,10 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/clintcan/debswarm/compare/v1.5.1...v1.6.0
+[1.5.1]: https://github.com/clintcan/debswarm/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/clintcan/debswarm/compare/v1.4.2...v1.5.0
 [1.4.2]: https://github.com/clintcan/debswarm/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/clintcan/debswarm/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/clintcan/debswarm/compare/v1.3.3...v1.4.0

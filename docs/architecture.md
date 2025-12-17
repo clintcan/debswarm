@@ -95,12 +95,13 @@ Content-addressed storage with SQLite metadata:
 
 ### Downloader (`internal/downloader/`)
 
-Parallel chunked download engine with resume support:
+Parallel chunked download engine with resume support and streaming assembly:
 
 - **Chunk Management**: Splits large files into 4MB chunks
 - **Source Tracking**: Monitors performance of each source
-- **Racing**: Small files race P2P vs mirror
-- **Assembly**: Reassembles chunks and verifies hash
+- **Racing**: Small files (<10MB) race P2P vs mirror in memory
+- **Streaming Assembly**: Large files assembled directly to disk, not memory
+- **Memory Efficient**: Chunked downloads use ~32MB regardless of file size
 - **Resume Support**: Persists chunks to disk, tracks state in SQLite
 - **State Manager**: Tracks download progress for crash recovery
 
@@ -112,6 +113,13 @@ type Downloader struct {
     maxConc      int
     stateManager *StateManager
     cache        PartialCache
+}
+
+// DownloadResult returns either Data (small files) or FilePath (large files)
+type DownloadResult struct {
+    Data     []byte  // For racing (small files)
+    FilePath string  // For chunked (large files) - path to verified temp file
+    // ...
 }
 ```
 
