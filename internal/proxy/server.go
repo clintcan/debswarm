@@ -25,12 +25,14 @@ import (
 	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/downloader"
+	"github.com/debswarm/debswarm/internal/fleet"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/sanitize"
+	"github.com/debswarm/debswarm/internal/scheduler"
 	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
 )
@@ -50,6 +52,8 @@ type Server struct {
 	scorer       *peers.Scorer
 	audit        audit.Logger
 	connectivity *connectivity.Monitor
+	scheduler    *scheduler.Scheduler
+	fleet        *fleet.Coordinator
 
 	// Statistics (atomic)
 	requestsTotal   int64
@@ -102,6 +106,8 @@ type Config struct {
 	Scorer                     *peers.Scorer
 	Audit                      audit.Logger          // Audit logger for structured event logging
 	Connectivity               *connectivity.Monitor // Connectivity monitor for offline-first mode
+	Scheduler                  *scheduler.Scheduler  // Scheduler for time-based rate limiting
+	Fleet                      *fleet.Coordinator    // Fleet coordinator for LAN download coordination
 	// Retry settings
 	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
 	RetryInterval    time.Duration // How often to check for failed downloads
@@ -170,6 +176,8 @@ func NewServer(
 		scorer:           scorer,
 		audit:            auditLogger,
 		connectivity:     cfg.Connectivity,
+		scheduler:        cfg.Scheduler,
+		fleet:            cfg.Fleet,
 		p2pTimeout:       cfg.P2PTimeout,
 		dhtLookupLimit:   cfg.DHTLookupLimit,
 		metricsPort:      cfg.MetricsPort,
@@ -377,17 +385,33 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		p2pRatio = float64(stats.BytesFromP2P) / float64(stats.BytesFromP2P+stats.BytesFromMirror) * 100
 	}
 
+	// Get scheduler status if available
+	var schedStatus *scheduler.Status
+	if s.scheduler != nil {
+		status := s.scheduler.Status()
+		schedStatus = &status
+	}
+
+	// Get fleet status if available
+	var fleetStatus *fleet.Status
+	if s.fleet != nil {
+		status := s.fleet.Status()
+		fleetStatus = &status
+	}
+
 	response := struct {
-		RequestsTotal     int64   `json:"requests_total"`
-		RequestsP2P       int64   `json:"requests_p2p"`
-		RequestsMirror    int64   `json:"requests_mirror"`
-		BytesFromP2P      int64   `json:"bytes_from_p2p"`
-		BytesFromMirror   int64   `json:"bytes_from_mirror"`
-		CacheHits         int64   `json:"cache_hits"`
-		ActiveConnections int64   `json:"active_connections"`
-		P2PRatioPercent   float64 `json:"p2p_ratio_percent"`
-		CacheSizeBytes    int64   `json:"cache_size_bytes"`
-		CacheCount        int     `json:"cache_count"`
+		RequestsTotal     int64             `json:"requests_total"`
+		RequestsP2P       int64             `json:"requests_p2p"`
+		RequestsMirror    int64             `json:"requests_mirror"`
+		BytesFromP2P      int64             `json:"bytes_from_p2p"`
+		BytesFromMirror   int64             `json:"bytes_from_mirror"`
+		CacheHits         int64             `json:"cache_hits"`
+		ActiveConnections int64             `json:"active_connections"`
+		P2PRatioPercent   float64           `json:"p2p_ratio_percent"`
+		CacheSizeBytes    int64             `json:"cache_size_bytes"`
+		CacheCount        int               `json:"cache_count"`
+		Scheduler         *scheduler.Status `json:"scheduler,omitempty"`
+		Fleet             *fleet.Status     `json:"fleet,omitempty"`
 	}{
 		RequestsTotal:     stats.RequestsTotal,
 		RequestsP2P:       stats.RequestsP2P,
@@ -399,6 +423,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		P2PRatioPercent:   p2pRatio,
 		CacheSizeBytes:    s.cache.Size(),
 		CacheCount:        s.cache.Count(),
+		Scheduler:         schedStatus,
+		Fleet:             fleetStatus,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -760,6 +786,14 @@ type packageDownloadResult struct {
 
 // downloadPackage performs the actual download (called via singleflight)
 func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string) (*packageDownloadResult, error) {
+	// Check if this is a security update (for scheduler rate bypassing)
+	isSecurityUpdate := scheduler.IsSecurityUpdate(url)
+	if isSecurityUpdate && s.scheduler != nil {
+		s.logger.Debug("Security update detected, using full speed",
+			zap.String("url", sanitize.URL(url)))
+		s.metrics.SchedulerUrgentDownloads.Inc()
+	}
+
 	// Build download sources
 	var peerSources []downloader.Source
 	var mirrorSource downloader.Source
@@ -1319,5 +1353,22 @@ func (s *Server) UpdateMetrics() {
 	if s.p2pNode != nil {
 		s.metrics.ConnectedPeers.Set(float64(s.p2pNode.ConnectedPeers()))
 		s.metrics.RoutingTableSize.Set(float64(s.p2pNode.RoutingTableSize()))
+	}
+
+	// Update scheduler metrics
+	if s.scheduler != nil {
+		if s.scheduler.IsInWindow() {
+			s.metrics.SchedulerWindowActive.Set(1)
+		} else {
+			s.metrics.SchedulerWindowActive.Set(0)
+		}
+		s.metrics.SchedulerCurrentRate.Set(float64(s.scheduler.GetCurrentRate(false)))
+	}
+
+	// Update fleet metrics
+	if s.fleet != nil {
+		status := s.fleet.Status()
+		s.metrics.FleetPeers.Set(float64(status.PeerCount))
+		s.metrics.FleetInFlight.Set(float64(status.InFlightCount))
 	}
 }

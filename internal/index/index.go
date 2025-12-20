@@ -73,7 +73,7 @@ func (idx *Index) LoadFromFile(path string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
 	} else if strings.HasSuffix(path, ".xz") {
 		xzReader, err := xz.NewReader(f)
@@ -122,7 +122,7 @@ func (idx *Index) LoadFromURL(url string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
 	} else if strings.HasSuffix(url, ".xz") {
 		xzReader, err := xz.NewReader(resp.Body)
@@ -147,7 +147,7 @@ func (idx *Index) LoadFromData(data []byte, url string) error {
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
-		defer gzReader.Close()
+		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
 	} else if strings.HasSuffix(url, ".xz") {
 		xzReader, err := xz.NewReader(bytes.NewReader(data))

@@ -1028,6 +1028,30 @@ func (n *Node) GetPeerStats() []*peers.PeerScore {
 	return n.scorer.GetAllStats()
 }
 
+// GetMDNSPeers returns all connected peers discovered via mDNS.
+// For fleet coordination, this returns all connected peers since mDNS
+// discovery happens for LAN peers.
+func (n *Node) GetMDNSPeers() []peer.AddrInfo {
+	peerIDs := n.host.Network().Peers()
+	result := make([]peer.AddrInfo, 0, len(peerIDs))
+	for _, pid := range peerIDs {
+		// Get peer addresses from peerstore
+		addrs := n.host.Peerstore().Addrs(pid)
+		if len(addrs) > 0 {
+			result = append(result, peer.AddrInfo{
+				ID:    pid,
+				Addrs: addrs,
+			})
+		}
+	}
+	return result
+}
+
+// Host returns the underlying libp2p host for protocol registration.
+func (n *Node) Host() host.Host {
+	return n.host
+}
+
 // Close shuts down the P2P node
 func (n *Node) Close() error {
 	n.cancel()

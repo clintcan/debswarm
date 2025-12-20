@@ -47,6 +47,18 @@ type Metrics struct {
 	PeerRateLimitCurrent *GaugeVec   // Current rate limit per peer (labels: peer_id:direction)
 	AdaptiveAdjustments  *CounterVec // Adaptive rate adjustments (labels: type - boost/reduce)
 
+	// Scheduler metrics
+	SchedulerWindowActive    *Gauge   // 1 if currently in sync window, 0 otherwise
+	SchedulerCurrentRate     *Gauge   // Current rate limit in bytes/sec (0 = unlimited)
+	SchedulerUrgentDownloads *Counter // Number of security updates that got full speed
+
+	// Fleet coordination metrics
+	FleetPeers        *Gauge      // Number of fleet (mDNS) peers
+	FleetWANAvoided   *Counter    // Downloads fetched from fleet instead of WAN
+	FleetBytesAvoided *Counter    // Bytes saved by fetching from fleet
+	FleetCoordination *CounterVec // Coordination actions (labels: action - fetch_wan, wait_peer, fetch_lan)
+	FleetInFlight     *Gauge      // Number of in-flight fleet-coordinated downloads
+
 	// Histograms
 	DownloadDuration  *HistogramVec
 	PeerLatency       *HistogramVec
@@ -315,6 +327,18 @@ func New() *Metrics {
 		PeerRateLimitCurrent: NewGaugeVec(),
 		AdaptiveAdjustments:  NewCounterVec(),
 
+		// Scheduler
+		SchedulerWindowActive:    &Gauge{},
+		SchedulerCurrentRate:     &Gauge{},
+		SchedulerUrgentDownloads: &Counter{},
+
+		// Fleet coordination
+		FleetPeers:        &Gauge{},
+		FleetWANAvoided:   &Counter{},
+		FleetBytesAvoided: &Counter{},
+		FleetCoordination: NewCounterVec(),
+		FleetInFlight:     &Gauge{},
+
 		DownloadDuration:  NewHistogramVec(DurationBuckets),
 		PeerLatency:       NewHistogramVec(LatencyBuckets),
 		ChunkDownloadTime: NewHistogram(DurationBuckets),
@@ -374,6 +398,20 @@ func (m *Metrics) Handler() http.Handler {
 		for label, value := range m.AdaptiveAdjustments.Values() {
 			writeCounterWithLabel(w, "debswarm_adaptive_adjustments_total", "type", label, value)
 		}
+
+		// Scheduler metrics
+		writeGauge(w, "debswarm_scheduler_window_active", m.SchedulerWindowActive.Value())
+		writeGauge(w, "debswarm_scheduler_current_rate_bytes", m.SchedulerCurrentRate.Value())
+		writeCounter(w, "debswarm_scheduler_urgent_downloads_total", m.SchedulerUrgentDownloads.Value())
+
+		// Fleet coordination metrics
+		writeGauge(w, "debswarm_fleet_peers", m.FleetPeers.Value())
+		writeCounter(w, "debswarm_fleet_wan_avoided_total", m.FleetWANAvoided.Value())
+		writeCounter(w, "debswarm_fleet_bytes_avoided_total", m.FleetBytesAvoided.Value())
+		for label, value := range m.FleetCoordination.Values() {
+			writeCounterWithLabel(w, "debswarm_fleet_coordination_total", "action", label, value)
+		}
+		writeGauge(w, "debswarm_fleet_in_flight", m.FleetInFlight.Value())
 
 		// Histograms
 		writeHistogram(w, "debswarm_chunk_download_seconds", m.ChunkDownloadTime)

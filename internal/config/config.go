@@ -15,13 +15,15 @@ import (
 
 // Config holds all configuration for apt-p2p
 type Config struct {
-	Network  NetworkConfig  `toml:"network"`
-	Cache    CacheConfig    `toml:"cache"`
-	Transfer TransferConfig `toml:"transfer"`
-	DHT      DHTConfig      `toml:"dht"`
-	Privacy  PrivacyConfig  `toml:"privacy"`
-	Metrics  MetricsConfig  `toml:"metrics"`
-	Logging  LoggingConfig  `toml:"logging"`
+	Network   NetworkConfig   `toml:"network"`
+	Cache     CacheConfig     `toml:"cache"`
+	Transfer  TransferConfig  `toml:"transfer"`
+	DHT       DHTConfig       `toml:"dht"`
+	Privacy   PrivacyConfig   `toml:"privacy"`
+	Metrics   MetricsConfig   `toml:"metrics"`
+	Logging   LoggingConfig   `toml:"logging"`
+	Scheduler SchedulerConfig `toml:"scheduler"`
+	Fleet     FleetConfig     `toml:"fleet"`
 }
 
 // NetworkConfig holds network-related settings
@@ -172,6 +174,115 @@ func (c *AuditConfig) GetMaxBackups() int {
 		return 5
 	}
 	return c.MaxBackups
+}
+
+// SchedulerConfig holds scheduled sync window settings
+type SchedulerConfig struct {
+	Enabled           bool             `toml:"enabled"`                  // Enable scheduler (default: false)
+	Windows           []ScheduleWindow `toml:"windows"`                  // List of sync windows
+	Timezone          string           `toml:"timezone"`                 // IANA timezone (e.g., "America/New_York")
+	OutsideWindowRate string           `toml:"outside_window_rate"`      // Rate limit outside windows (e.g., "100KB/s")
+	InsideWindowRate  string           `toml:"inside_window_rate"`       // Rate limit inside windows (e.g., "unlimited")
+	UrgentFullSpeed   *bool            `toml:"urgent_always_full_speed"` // Security updates always get full speed
+}
+
+// ScheduleWindow represents a time window for sync operations
+type ScheduleWindow struct {
+	Days      []string `toml:"days"`       // "monday", "tuesday", etc. or "weekday", "weekend"
+	StartTime string   `toml:"start_time"` // "09:00" (24h format)
+	EndTime   string   `toml:"end_time"`   // "17:00"
+}
+
+// OutsideWindowRateBytes returns the rate limit in bytes/sec for outside windows.
+// Returns 100KB/s default if not configured.
+func (c *SchedulerConfig) OutsideWindowRateBytes() int64 {
+	if c.OutsideWindowRate == "" {
+		return 100 * 1024 // 100KB/s default
+	}
+	rate, err := ParseRate(c.OutsideWindowRate)
+	if err != nil {
+		return 100 * 1024
+	}
+	return rate
+}
+
+// InsideWindowRateBytes returns the rate limit in bytes/sec for inside windows.
+// Returns 0 (unlimited) if not configured or set to "unlimited".
+func (c *SchedulerConfig) InsideWindowRateBytes() int64 {
+	if c.InsideWindowRate == "" || c.InsideWindowRate == "unlimited" {
+		return 0 // unlimited
+	}
+	rate, err := ParseRate(c.InsideWindowRate)
+	if err != nil {
+		return 0
+	}
+	return rate
+}
+
+// IsUrgentFullSpeed returns whether security updates should always get full speed.
+// Returns true by default.
+func (c *SchedulerConfig) IsUrgentFullSpeed() bool {
+	if c.UrgentFullSpeed == nil {
+		return true // default
+	}
+	return *c.UrgentFullSpeed
+}
+
+// FleetConfig holds fleet coordination settings
+type FleetConfig struct {
+	Enabled         bool   `toml:"enabled"`          // Enable fleet coordination (default: false)
+	ClaimTimeout    string `toml:"claim_timeout"`    // How long to wait for peer to claim WAN download
+	MaxWaitTime     string `toml:"max_wait_time"`    // Max wait for peer to finish WAN download
+	AllowConcurrent int    `toml:"allow_concurrent"` // Number of concurrent WAN fetchers allowed
+	RefreshInterval string `toml:"refresh_interval"` // Progress broadcast interval
+}
+
+// ClaimTimeoutDuration returns the claim timeout duration.
+// Returns 5 seconds default if not configured.
+func (c *FleetConfig) ClaimTimeoutDuration() time.Duration {
+	if c.ClaimTimeout == "" {
+		return 5 * time.Second
+	}
+	d, err := time.ParseDuration(c.ClaimTimeout)
+	if err != nil {
+		return 5 * time.Second
+	}
+	return d
+}
+
+// MaxWaitTimeDuration returns the max wait time duration.
+// Returns 5 minutes default if not configured.
+func (c *FleetConfig) MaxWaitTimeDuration() time.Duration {
+	if c.MaxWaitTime == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(c.MaxWaitTime)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+// RefreshIntervalDuration returns the refresh interval duration.
+// Returns 1 second default if not configured.
+func (c *FleetConfig) RefreshIntervalDuration() time.Duration {
+	if c.RefreshInterval == "" {
+		return 1 * time.Second
+	}
+	d, err := time.ParseDuration(c.RefreshInterval)
+	if err != nil {
+		return 1 * time.Second
+	}
+	return d
+}
+
+// GetAllowConcurrent returns the number of concurrent WAN fetchers allowed.
+// Returns 1 default if not configured.
+func (c *FleetConfig) GetAllowConcurrent() int {
+	if c.AllowConcurrent <= 0 {
+		return 1
+	}
+	return c.AllowConcurrent
 }
 
 // MaxSizeBytes returns the parsed max size in bytes.
@@ -737,6 +848,62 @@ func (c *Config) Validate() error {
 			Field:   "logging.audit.max_backups",
 			Message: fmt.Sprintf("must be non-negative, got %d", c.Logging.Audit.MaxBackups),
 		})
+	}
+
+	// Validate scheduler config
+	if c.Scheduler.Enabled {
+		if c.Scheduler.Timezone != "" {
+			if _, err := time.LoadLocation(c.Scheduler.Timezone); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "scheduler.timezone",
+					Message: fmt.Sprintf("invalid timezone %q: %v", c.Scheduler.Timezone, err),
+				})
+			}
+		}
+		if c.Scheduler.OutsideWindowRate != "" && c.Scheduler.OutsideWindowRate != "unlimited" {
+			if _, err := ParseRate(c.Scheduler.OutsideWindowRate); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "scheduler.outside_window_rate",
+					Message: fmt.Sprintf("invalid rate %q: %v", c.Scheduler.OutsideWindowRate, err),
+				})
+			}
+		}
+		if c.Scheduler.InsideWindowRate != "" && c.Scheduler.InsideWindowRate != "unlimited" {
+			if _, err := ParseRate(c.Scheduler.InsideWindowRate); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "scheduler.inside_window_rate",
+					Message: fmt.Sprintf("invalid rate %q: %v", c.Scheduler.InsideWindowRate, err),
+				})
+			}
+		}
+	}
+
+	// Validate fleet config
+	if c.Fleet.Enabled {
+		if c.Fleet.ClaimTimeout != "" {
+			if _, err := time.ParseDuration(c.Fleet.ClaimTimeout); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "fleet.claim_timeout",
+					Message: fmt.Sprintf("invalid duration %q: %v", c.Fleet.ClaimTimeout, err),
+				})
+			}
+		}
+		if c.Fleet.MaxWaitTime != "" {
+			if _, err := time.ParseDuration(c.Fleet.MaxWaitTime); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "fleet.max_wait_time",
+					Message: fmt.Sprintf("invalid duration %q: %v", c.Fleet.MaxWaitTime, err),
+				})
+			}
+		}
+		if c.Fleet.RefreshInterval != "" {
+			if _, err := time.ParseDuration(c.Fleet.RefreshInterval); err != nil {
+				errs = append(errs, ValidationError{
+					Field:   "fleet.refresh_interval",
+					Message: fmt.Sprintf("invalid duration %q: %v", c.Fleet.RefreshInterval, err),
+				})
+			}
+		}
 	}
 
 	if len(errs) > 0 {

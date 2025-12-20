@@ -37,7 +37,7 @@ func cacheListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			packages, err := c.List()
 			if err != nil {
@@ -76,7 +76,7 @@ func cacheClearCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			packages, err := c.List()
 			if err != nil {
@@ -111,7 +111,7 @@ func cacheStatsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			packages, err := c.List()
 			if err != nil {

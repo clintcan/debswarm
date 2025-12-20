@@ -218,3 +218,70 @@ max_size_mb = 100
 # Number of rotated files to keep
 # Oldest files are deleted when this limit is exceeded
 max_backups = 5
+
+#─────────────────────────────────────────────────────────────────────────────
+# [scheduler] - Time-based download scheduling (v1.9+)
+#─────────────────────────────────────────────────────────────────────────────
+[scheduler]
+# Enable scheduled sync windows
+# When enabled, downloads are rate-limited outside of configured windows
+enabled = false
+
+# Timezone for window evaluation (IANA timezone name)
+# See: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones
+timezone = "America/New_York"
+
+# Rate limit outside sync windows
+# Downloads still work, just slower (never blocked)
+# Use "0" or "unlimited" for no limit
+outside_window_rate = "100KB/s"
+
+# Rate limit inside sync windows (usually unlimited)
+inside_window_rate = "0"
+
+# Security updates always download at full speed
+# Detected by URL patterns: security.debian.org, -security, -updates
+urgent_always_full_speed = true
+
+# Define sync windows when full-speed downloads are allowed
+# Multiple windows can be defined; downloads run at full speed if ANY window matches
+
+# Example: weeknights 10PM-6AM, unlimited on weekends
+# [[scheduler.windows]]
+# days = ["weekday"]        # or: ["mon", "tue", "wed", "thu", "fri"]
+# start_time = "22:00"       # 24-hour format
+# end_time = "06:00"         # Crosses midnight automatically
+#
+# [[scheduler.windows]]
+# days = ["weekend"]         # or: ["sat", "sun"]
+# start_time = "00:00"
+# end_time = "23:59"
+
+# Day options:
+#   Individual: "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"
+#   Short form: "mon", "tue", "wed", "thu", "fri", "sat", "sun"
+#   Groups: "weekday" (Mon-Fri), "weekend" (Sat-Sun), "all"/"everyday"/"daily"
+
+#─────────────────────────────────────────────────────────────────────────────
+# [fleet] - LAN fleet coordination (v1.9+)
+#─────────────────────────────────────────────────────────────────────────────
+[fleet]
+# Enable fleet coordination for LAN-aware downloads
+# When multiple debswarm nodes are on the same LAN, they coordinate
+# to avoid redundant WAN downloads of the same package
+enabled = false
+
+# How long to wait for another node to claim a WAN download
+# If no one claims within this time, this node will download
+claim_timeout = "5s"
+
+# Maximum time to wait for a peer to finish downloading
+# After this, fall back to downloading independently
+max_wait_time = "5m"
+
+# Number of concurrent WAN fetchers allowed in the fleet
+# Higher values = faster but more WAN traffic
+allow_concurrent = 1
+
+# How often to broadcast download progress to peers
+refresh_interval = "1s"

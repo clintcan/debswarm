@@ -84,7 +84,7 @@ func seedListCmd(cachePath *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer c.Close()
+			defer func() { _ = c.Close() }()
 
 			packages, err := c.List()
 			if err != nil {
@@ -129,7 +129,7 @@ func runSeedImport(args []string, recursive, announce, syncMode bool, cachePath 
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
-	defer pkgCache.Close()
+	defer func() { _ = pkgCache.Close() }()
 
 	// Initialize P2P node if announcing
 	var p2pNode *p2p.Node
@@ -146,7 +146,7 @@ func runSeedImport(args []string, recursive, announce, syncMode bool, cachePath 
 		if err != nil {
 			return fmt.Errorf("failed to initialize P2P: %w", err)
 		}
-		defer p2pNode.Close()
+		defer func() { _ = p2pNode.Close() }()
 
 		fmt.Println("Waiting for DHT bootstrap...")
 		p2pNode.WaitForBootstrap()

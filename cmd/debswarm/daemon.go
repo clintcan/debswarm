@@ -17,12 +17,14 @@ import (
 	"github.com/debswarm/debswarm/internal/config"
 	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/dashboard"
+	"github.com/debswarm/debswarm/internal/fleet"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/proxy"
+	"github.com/debswarm/debswarm/internal/scheduler"
 	"github.com/debswarm/debswarm/internal/timeouts"
 )
 
@@ -156,7 +158,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to initialize audit logger: %w", auditErr)
 		}
 		auditLogger = auditWriter
-		defer auditWriter.Close()
+		defer func() { _ = auditWriter.Close() }()
 		logger.Info("Audit logging enabled",
 			zap.String("path", cfg.Logging.Audit.Path),
 			zap.Int("maxSizeMB", cfg.Logging.Audit.GetMaxSizeMB()),
@@ -176,7 +178,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize cache: %w", err)
 	}
-	defer pkgCache.Close()
+	defer func() { _ = pkgCache.Close() }()
 
 	logger.Info("Initialized cache",
 		zap.String("path", cfg.Cache.Path),
@@ -265,7 +267,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize P2P node: %w", err)
 	}
-	defer p2pNode.Close()
+	defer func() { _ = p2pNode.Close() }()
 
 	// Wait for DHT bootstrap in background
 	go func() {
@@ -298,6 +300,57 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	// Start connectivity monitor in background
 	go connectivityMonitor.Start(ctx)
 
+	// Initialize scheduler if enabled
+	var sched *scheduler.Scheduler
+	if cfg.Scheduler.Enabled {
+		// Convert config windows to scheduler windows
+		var windows []scheduler.Window
+		for _, w := range cfg.Scheduler.Windows {
+			windows = append(windows, scheduler.Window{
+				Days:      w.Days,
+				StartTime: w.StartTime,
+				EndTime:   w.EndTime,
+			})
+		}
+
+		var err error
+		sched, err = scheduler.New(&scheduler.Config{
+			Enabled:           true,
+			Windows:           windows,
+			Timezone:          cfg.Scheduler.Timezone,
+			OutsideWindowRate: cfg.Scheduler.OutsideWindowRateBytes(),
+			InsideWindowRate:  cfg.Scheduler.InsideWindowRateBytes(),
+			UrgentFullSpeed:   cfg.Scheduler.IsUrgentFullSpeed(),
+		}, logger)
+		if err != nil {
+			return fmt.Errorf("failed to initialize scheduler: %w", err)
+		}
+		if sched != nil {
+			logger.Info("Scheduler enabled",
+				zap.Int("windows", len(windows)),
+				zap.String("timezone", cfg.Scheduler.Timezone),
+				zap.Int64("outside_rate", cfg.Scheduler.OutsideWindowRateBytes()),
+				zap.Bool("in_window", sched.IsInWindow()))
+		}
+	}
+
+	// Initialize fleet coordinator if enabled
+	var fleetCoord *fleet.Coordinator
+	if cfg.Fleet.Enabled {
+		fleetCoord = fleet.New(&fleet.Config{
+			ClaimTimeout:    cfg.Fleet.ClaimTimeoutDuration(),
+			MaxWaitTime:     cfg.Fleet.MaxWaitTimeDuration(),
+			AllowConcurrent: cfg.Fleet.AllowConcurrent,
+			RefreshInterval: cfg.Fleet.RefreshIntervalDuration(),
+		}, p2pNode, pkgCache, logger)
+		defer func() { _ = fleetCoord.Close() }()
+
+		logger.Info("Fleet coordination enabled",
+			zap.Duration("claimTimeout", cfg.Fleet.ClaimTimeoutDuration()),
+			zap.Duration("maxWaitTime", cfg.Fleet.MaxWaitTimeDuration()),
+			zap.Int("allowConcurrent", cfg.Fleet.AllowConcurrent))
+	}
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
 		Addr:                       fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
@@ -312,6 +365,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Scorer:                     scorer,
 		Audit:                      auditLogger,
 		Connectivity:               connectivityMonitor,
+		Scheduler:                  sched,
+		Fleet:                      fleetCoord,
 		RetryMaxAttempts:           cfg.Transfer.RetryMaxAttempts,
 		RetryInterval:              cfg.Transfer.RetryIntervalDuration(),
 		RetryMaxAge:                cfg.Transfer.RetryMaxAgeDuration(),
@@ -473,8 +528,8 @@ func checkDirectory(path, name string) error {
 	if err != nil {
 		return fmt.Errorf("%s directory %s is not writable: %w", name, path, err)
 	}
-	f.Close()
-	os.Remove(testFile)
+	_ = f.Close()
+	_ = os.Remove(testFile)
 
 	return nil
 }
