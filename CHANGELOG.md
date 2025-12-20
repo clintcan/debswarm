@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2025-12-21
+
+### Added
+- **Scheduled Sync Windows**: Time-based download scheduling with rate limiting
+  - Configure sync windows for off-peak downloading (e.g., nights, weekends)
+  - Rate limiting outside windows (default 100KB/s) instead of blocking
+  - Security updates always get full speed regardless of schedule
+  - Timezone-aware scheduling with flexible day patterns (weekday, weekend, specific days)
+  - New `internal/scheduler/` package with full test coverage
+- **Fleet Coordination**: LAN fleet coordination for download deduplication
+  - Peers coordinate to avoid redundant WAN downloads of the same package
+  - Election-based fetcher selection using random nonces
+  - Progress broadcasting across fleet peers
+  - Automatic fallback if coordination fails
+  - New `internal/fleet/` package with protocol handler
+- **New Prometheus metrics**:
+  - `debswarm_scheduler_window_active` - 1 if currently in sync window
+  - `debswarm_scheduler_current_rate_bytes` - Current rate limit in bytes/sec
+  - `debswarm_scheduler_urgent_downloads_total` - Security updates at full speed
+  - `debswarm_fleet_peers` - Number of fleet peers
+  - `debswarm_fleet_wan_avoided_total` - Downloads served from fleet vs WAN
+  - `debswarm_fleet_bytes_avoided_total` - Bytes saved by fleet coordination
+  - `debswarm_fleet_in_flight` - Current in-flight fleet downloads
+- **P2P node enhancements**: `GetMDNSPeers()` and `Host()` methods for fleet integration
+
+### Changed
+- Updated golangci-lint config for v2 format
+- CI now uses golangci-lint-action v7 with golangci-lint v2.7.2
+
+### Fixed
+- Fix errcheck lint issues with explicit error discarding in defer statements
+
+### Configuration
+New options in `config.toml`:
+```toml
+[scheduler]
+enabled = true
+timezone = "America/New_York"
+outside_window_rate = "100KB/s"
+inside_window_rate = "unlimited"
+urgent_always_full_speed = true
+
+[[scheduler.windows]]
+days = ["weekday"]
+start_time = "22:00"
+end_time = "06:00"
+
+[[scheduler.windows]]
+days = ["saturday", "sunday"]
+start_time = "00:00"
+end_time = "23:59"
+
+[fleet]
+enabled = true
+claim_timeout = "5s"
+max_wait_time = "5m"
+allow_concurrent = 1
+refresh_interval = "1s"
+```
+
 ## [1.8.0] - 2025-12-18
 
 ### Added
@@ -469,7 +529,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/clintcan/debswarm/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/clintcan/debswarm/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/clintcan/debswarm/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/clintcan/debswarm/compare/v1.5.1...v1.6.0

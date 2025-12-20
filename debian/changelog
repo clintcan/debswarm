@@ -1,3 +1,24 @@
+debswarm (1.9.0-2) stable; urgency=medium
+
+  * Scheduled Sync Windows - time-based download scheduling
+    - Configure sync windows for off-peak downloading (nights, weekends)
+    - Rate limiting outside windows (default 100KB/s) instead of blocking
+    - Security updates always get full speed regardless of schedule
+    - Timezone-aware scheduling with flexible day patterns
+    - New [scheduler] config section with [[scheduler.windows]] entries
+  * Fleet Coordination - LAN download deduplication
+    - Peers coordinate to avoid redundant WAN downloads
+    - Election-based fetcher selection using random nonces
+    - Progress broadcasting across fleet peers
+    - Automatic fallback if coordination fails
+    - New [fleet] config section
+  * New Prometheus metrics for scheduler and fleet monitoring
+  * P2P node: add GetMDNSPeers() and Host() methods
+  * Update golangci-lint to v2 format
+  * Fix errcheck lint issues
+
+ -- debswarm developers <debswarm@example.com>  Sat, 21 Dec 2025 00:00:00 +0000
+
 debswarm (1.8.0-1) stable; urgency=medium
 
   * LAN Peer Priority - mDNS-discovered peers get scoring boost
