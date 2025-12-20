@@ -19,6 +19,7 @@ vendor/
 coverage.out
 coverage.html
 *.test
+internal/downloader/assembled
 
 # OS
 .DS_Store
