@@ -456,6 +456,43 @@ apt-get download "${UBUNTU_SPECIFIC[@]}" 2>/dev/null
 rm -f *.deb
 ```
 
+## Using Ubuntu Popularity Contest Data
+
+Ubuntu also has a [Popularity Contest](https://popcon.ubuntu.com/) that tracks package usage. Use this script to download the most popular Ubuntu packages:
+
+```bash
+# Download and run the Ubuntu popcon script
+curl -sL https://raw.githubusercontent.com/clintcan/debswarm/main/scripts/prewarm-from-ubuntu-popcon.sh | sudo bash
+
+# Or specify the number of packages
+curl -sL https://raw.githubusercontent.com/clintcan/debswarm/main/scripts/prewarm-from-ubuntu-popcon.sh | sudo bash -s 1000
+```
+
+The script fetches real usage data from Ubuntu's popcon service and downloads the most-installed packages.
+
+## Linux Mint Packages
+
+Linux Mint doesn't have its own popularity contest, but you can use our curated script that includes Mint-specific packages (Cinnamon, MATE, Xfce, Mint tools) plus optionally pulls from Ubuntu's popcon:
+
+```bash
+# Download and run the Mint pre-warming script
+curl -sL https://raw.githubusercontent.com/clintcan/debswarm/main/scripts/prewarm-mint.sh | sudo bash
+
+# Mint packages only (skip Ubuntu popcon)
+curl -sL https://raw.githubusercontent.com/clintcan/debswarm/main/scripts/prewarm-mint.sh | sudo bash -s no
+
+# Mint packages + top 500 Ubuntu packages
+curl -sL https://raw.githubusercontent.com/clintcan/debswarm/main/scripts/prewarm-mint.sh | sudo bash -s yes 500
+```
+
+The script includes:
+- **Cinnamon desktop**: cinnamon, nemo, muffin, cjs
+- **MATE desktop**: mate-desktop, caja, pluma, atril
+- **Xfce desktop**: xfce4, thunar, mousepad, xfwm4
+- **Mint tools**: mintupdate, mintsources, timeshift, mintbackup
+- **XApps**: xed, xreader, xviewer, xplayer, pix
+- **Flatpak support**: flatpak, gnome-software-plugin-flatpak
+
 ## Scheduling Popular Package Updates
 
 Keep popular packages up-to-date with a weekly refresh:
