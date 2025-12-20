@@ -75,7 +75,7 @@ jobs:
         run: gosec -fmt=json -out=gosec-results.json -stdout -verbose=text ./... || true
 
       - name: Upload gosec results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: gosec-results
           path: gosec-results.json
@@ -114,7 +114,7 @@ jobs:
           fi
           go build -ldflags="-s -w" -o "${BINARY_NAME}" ./cmd/debswarm
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: debswarm-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goarm && format('v{0}', matrix.goarm) || '' }}
           path: debswarm-*
@@ -154,7 +154,7 @@ jobs:
           cp ../*.deb dist/
           ls -la dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: debswarm-deb-amd64
           path: dist/*.deb
