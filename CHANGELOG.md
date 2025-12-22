@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.1] - 2025-12-23
+
+### Fixed
+- Updated `packaging/config.system.toml` with missing configuration sections
+  - Added connectivity_mode comment
+  - Added per-peer rate limiting comments
+  - Added audit logging section (v1.8+)
+  - Added scheduler section (v1.9+)
+  - Added fleet coordination section (v1.9+)
+
 ## [1.11.0] - 2025-12-23
 
 ### Added

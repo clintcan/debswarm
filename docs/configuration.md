@@ -380,6 +380,90 @@ The audit log uses JSON Lines format (one JSON object per line), compatible with
 
 ---
 
+### [scheduler]
+
+Settings for scheduled sync windows (v1.9+). Allows rate limiting based on time of day.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable scheduled sync windows. |
+| `timezone` | string | system | IANA timezone (e.g., `"America/New_York"`). |
+| `outside_window_rate` | string | `"100KB/s"` | Rate limit outside sync windows. |
+| `inside_window_rate` | string | `"unlimited"` | Rate limit inside sync windows. |
+| `urgent_always_full_speed` | boolean | `true` | Security updates bypass rate limits. |
+| `windows` | array | `[]` | List of sync window definitions. |
+
+**Window Definition:**
+| Field | Type | Description |
+|-------|------|-------------|
+| `days` | string[] | Days of week: `"monday"` through `"sunday"`, or `"weekday"`, `"weekend"` |
+| `start_time` | string | Start time in 24h format: `"22:00"` |
+| `end_time` | string | End time in 24h format: `"06:00"` |
+
+**Example:**
+```toml
+[scheduler]
+enabled = true
+timezone = "America/New_York"
+outside_window_rate = "100KB/s"
+inside_window_rate = "unlimited"
+urgent_always_full_speed = true
+
+[[scheduler.windows]]
+days = ["weekday"]
+start_time = "22:00"
+end_time = "06:00"
+
+[[scheduler.windows]]
+days = ["saturday", "sunday"]
+start_time = "00:00"
+end_time = "23:59"
+```
+
+**Notes:**
+- Windows can span midnight (e.g., 22:00 to 06:00)
+- Security updates (from `-security` repos) always get full speed by default
+- Rate limiting applies to both P2P downloads and mirror fetches
+- Useful for reducing bandwidth usage during business hours
+
+---
+
+### [fleet]
+
+Settings for LAN fleet coordination (v1.9+). Prevents redundant WAN downloads across peers.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | boolean | `false` | Enable fleet coordination. |
+| `claim_timeout` | string | `"5s"` | Time to wait for a peer to claim WAN download responsibility. |
+| `max_wait_time` | string | `"5m"` | Maximum time to wait for a peer to complete WAN download. |
+| `allow_concurrent` | integer | `1` | Number of concurrent WAN fetchers allowed per package. |
+| `refresh_interval` | string | `"1s"` | Progress broadcast interval. |
+
+**Example:**
+```toml
+[fleet]
+enabled = true
+claim_timeout = "5s"
+max_wait_time = "5m"
+allow_concurrent = 1
+refresh_interval = "1s"
+```
+
+**How Fleet Coordination Works:**
+1. When a package is needed, peers coordinate via mDNS
+2. One peer "claims" responsibility to fetch from WAN
+3. Other peers wait and receive the package via P2P once downloaded
+4. If the claiming peer fails, another peer takes over
+
+**Notes:**
+- Requires mDNS to be enabled (`privacy.enable_mdns = true`)
+- Only useful when multiple debswarm instances are on the same LAN
+- Significantly reduces bandwidth for organizations with many machines
+- Falls back gracefully if coordination fails
+
+---
+
 ## Complete Example Configuration
 
 ```toml
@@ -455,6 +539,33 @@ bind = "127.0.0.1"
 # Log settings
 level = "info"
 file = ""
+
+# Audit logging (v1.8+)
+# [logging.audit]
+# enabled = true
+# path = "/var/log/debswarm/audit.json"
+# max_size_mb = 100
+# max_backups = 5
+
+# Scheduled sync windows (v1.9+)
+# [scheduler]
+# enabled = true
+# timezone = "America/New_York"
+# outside_window_rate = "100KB/s"
+# inside_window_rate = "unlimited"
+# urgent_always_full_speed = true
+#
+# [[scheduler.windows]]
+# days = ["weekday"]
+# start_time = "22:00"
+# end_time = "06:00"
+
+# Fleet coordination (v1.9+)
+# [fleet]
+# enabled = true
+# claim_timeout = "5s"
+# max_wait_time = "5m"
+# allow_concurrent = 1
 ```
 
 ---

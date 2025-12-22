@@ -1,3 +1,14 @@
+debswarm (1.11.1-1) stable; urgency=low
+
+  * Documentation: Updated config.system.toml with missing sections
+    - Added connectivity_mode comment
+    - Added per-peer rate limiting comments
+    - Added audit logging section (v1.8+)
+    - Added scheduler section (v1.9+)
+    - Added fleet coordination section (v1.9+)
+
+ -- debswarm developers <debswarm@example.com>  Mon, 23 Dec 2025 00:00:00 +0000
+
 debswarm (1.11.0-1) stable; urgency=medium
 
   * Enhanced seed import for debmirror integration

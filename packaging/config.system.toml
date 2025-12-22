@@ -1,11 +1,15 @@
 # debswarm system configuration
 # Installed to /etc/debswarm/config.toml by the .deb package
 # Paths configured for systemd service with DynamicUser
+#
+# For complete documentation, see:
+# https://github.com/debswarm/debswarm/blob/main/docs/configuration.md
 
 [network]
 listen_port = 4001
 proxy_port = 9977
 max_connections = 100
+# connectivity_mode = "auto"  # "auto", "lan_only", "online_only"
 
 # libp2p public bootstrap nodes
 bootstrap_peers = [
@@ -24,6 +28,10 @@ min_free_space = "1GB"
 [transfer]
 max_upload_rate = "0"
 max_download_rate = "0"
+# Per-peer rate limiting (default: auto)
+# per_peer_upload_rate = "auto"
+# per_peer_download_rate = "auto"
+# expected_peers = 10
 max_concurrent_uploads = 20
 max_concurrent_peer_downloads = 10
 retry_max_attempts = 3
@@ -48,3 +56,22 @@ bind = "127.0.0.1"
 [logging]
 level = "info"
 file = ""
+
+# Audit logging (v1.8+)
+# [logging.audit]
+# enabled = true
+# path = "/var/log/debswarm/audit.json"
+# max_size_mb = 100
+# max_backups = 5
+
+# Scheduled sync windows (v1.9+)
+# [scheduler]
+# enabled = true
+# timezone = "America/New_York"
+# outside_window_rate = "100KB/s"
+
+# Fleet coordination (v1.9+)
+# [fleet]
+# enabled = true
+# claim_timeout = "5s"
+# max_wait_time = "5m"
