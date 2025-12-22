@@ -180,7 +180,10 @@ debswarm cache clear        # Clear all cached packages
 debswarm seed import *.deb              # Import .deb files to cache and announce
 debswarm seed import -r /path/to/pool/  # Import directory recursively
 debswarm seed import -r --sync /mirror/ # Sync with mirror (import new, remove old)
-debswarm seed import --announce=false   # Import without announcing to DHT
+debswarm seed import -r -p 8 /mirror/   # Parallel import with 8 workers
+debswarm seed import -r --incremental   # Only import files modified since last sync
+debswarm seed import -r --watch /pool/  # Watch directory and auto-import changes
+debswarm seed import --dry-run          # Preview changes without making them
 debswarm seed list                      # List seeded packages
 
 # Private swarm (PSK) management
@@ -311,8 +314,17 @@ debswarm seed import --recursive /var/www/mirror/ubuntu/pool/
 # Sync with mirror (import new packages, remove old versions)
 debswarm seed import --recursive --sync /var/www/mirror/ubuntu/pool/
 
-# Seed specific packages without announcing (cache only)
-debswarm seed import --announce=false package.deb
+# Fast parallel import with 8 workers (great for large mirrors)
+debswarm seed import --recursive --parallel 8 /var/www/mirror/ubuntu/pool/
+
+# Incremental sync (only new/modified files since last run)
+debswarm seed import --recursive --sync --incremental /var/www/mirror/pool/
+
+# Watch mode: auto-import as debmirror adds new packages
+debswarm seed import --recursive --watch /var/www/mirror/ubuntu/pool/
+
+# Preview what would be imported without making changes
+debswarm seed import --recursive --sync --dry-run /var/www/mirror/pool/
 ```
 
 **How seeding works:**

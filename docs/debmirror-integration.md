@@ -206,6 +206,58 @@ This ensures:
 - Updated packages (new versions) are imported
 - Packages removed from mirror are removed from debswarm cache
 
+### Advanced Import Options
+
+**Parallel imports** for faster processing of large mirrors:
+
+```bash
+# Use 8 parallel workers (dramatically faster for large mirrors)
+debswarm seed import --recursive --parallel 8 /var/www/mirror/debian/pool/
+```
+
+**Incremental sync** to only process files modified since last sync:
+
+```bash
+# Only import new/modified files (much faster for daily syncs)
+debswarm seed import --recursive --sync --incremental /var/www/mirror/debian/pool/
+```
+
+**Dry-run mode** to preview changes without making them:
+
+```bash
+# See what would be imported/removed
+debswarm seed import --recursive --sync --dry-run /var/www/mirror/debian/pool/
+```
+
+**Watch mode** for continuous monitoring:
+
+```bash
+# Auto-import new packages as debmirror adds them
+debswarm seed import --recursive --watch /var/www/mirror/debian/pool/
+```
+
+**Progress bar** for large imports:
+
+```bash
+# Show progress bar instead of per-file output
+debswarm seed import --recursive --parallel 8 --progress /var/www/mirror/debian/pool/
+```
+
+### Combining Options
+
+For optimal performance with large mirrors:
+
+```bash
+# Fast daily sync with progress bar
+debswarm seed import \
+  --recursive \
+  --sync \
+  --incremental \
+  --parallel 8 \
+  --progress \
+  /var/www/mirror/debian/pool/
+```
+
 ## Step 6: Automate Everything
 
 Create a combined sync script:

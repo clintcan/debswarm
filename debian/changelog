@@ -1,3 +1,20 @@
+debswarm (1.11.0-1) stable; urgency=medium
+
+  * Enhanced seed import for debmirror integration
+  * Parallel imports - new --parallel N flag for concurrent processing
+    - Up to 32 workers for dramatically faster imports
+    - 8x+ speedup typical for large mirrors
+  * Dry-run mode - new --dry-run flag to preview changes
+  * Incremental sync - new --incremental flag
+    - Only process files modified since last sync
+    - Reduces daily sync time from hours to seconds
+  * Watch mode - new --watch flag for continuous monitoring
+    - Auto-import new packages as they appear
+    - Uses filesystem notifications (fsnotify)
+  * Progress bar - new --progress flag for visual feedback
+
+ -- debswarm developers <debswarm@example.com>  Mon, 23 Dec 2025 00:00:00 +0000
+
 debswarm (1.10.0-1) stable; urgency=medium
 
   * Cache Verification Command - debswarm cache verify

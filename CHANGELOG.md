@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2025-12-23
+
+### Added
+- **Parallel Imports**: New `--parallel N` flag for `seed import` command
+  - Process multiple .deb files concurrently (up to 32 workers)
+  - Dramatically faster imports for large mirrors (8x+ speedup typical)
+- **Dry-Run Mode**: New `--dry-run` flag to preview changes without making them
+  - Shows what would be imported, skipped, and removed
+  - Essential for validating sync operations before execution
+- **Incremental Sync**: New `--incremental` flag for faster daily syncs
+  - Only processes files modified since last successful sync
+  - Tracks sync state per source path
+  - Reduces sync time from hours to seconds for large mirrors
+- **Watch Mode**: New `--watch` flag for continuous monitoring
+  - Automatically imports new .deb files as they appear
+  - Uses filesystem notifications (fsnotify) for efficiency
+  - Debounces rapid changes to batch imports
+  - Eliminates need for cron-based polling
+- **Progress Bar**: New `--progress` flag for large imports
+  - Shows visual progress bar with statistics
+  - Displays imported, skipped, and failed counts in real-time
+
+### Changed
+- `seed import` now uses worker pool pattern for better resource utilization
+- Improved error handling with graceful degradation in watch mode
+
+### Dependencies
+- Added `github.com/fsnotify/fsnotify` v1.9.0 for watch mode
+
 ## [1.10.0] - 2025-12-23
 
 ### Added
