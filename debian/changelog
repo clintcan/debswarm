@@ -1,3 +1,19 @@
+debswarm (1.10.0-1) stable; urgency=medium
+
+  * Cache Verification Command - debswarm cache verify
+    - Computes SHA256 hash of each cached file against expected value
+    - Reports missing, corrupted, and verified packages
+    - Useful for incident response and cache integrity auditing
+  * Peer Blocklist - new privacy.peer_blocklist config option
+    - Block specific peer IDs from connecting
+    - Blocklist checked before allowlist (blocked peers always rejected)
+    - Useful for blocking malicious or misbehaving peers
+  * Documentation fixes
+    - Corrected security-hardening.md claims that didn't match implementation
+    - Removed non-existent CSP header and audit logging fields from docs
+
+ -- debswarm developers <debswarm@example.com>  Mon, 23 Dec 2025 00:00:00 +0000
+
 debswarm (1.9.0-2) stable; urgency=medium
 
   * Scheduled Sync Windows - time-based download scheduling

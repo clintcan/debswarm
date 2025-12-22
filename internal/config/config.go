@@ -137,6 +137,7 @@ type PrivacyConfig struct {
 	PSKPath          string   `toml:"psk_path"`       // Path to PSK file for private swarm
 	PSK              string   `toml:"psk"`            // Inline PSK (hex), mutually exclusive with path
 	PeerAllowlist    []string `toml:"peer_allowlist"` // List of allowed peer IDs
+	PeerBlocklist    []string `toml:"peer_blocklist"` // List of blocked peer IDs
 }
 
 // MetricsConfig holds metrics/monitoring settings

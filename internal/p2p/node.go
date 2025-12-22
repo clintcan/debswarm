@@ -107,6 +107,7 @@ type Config struct {
 	MaxConcurrentUploads int      // Maximum concurrent uploads (0 = default 20)
 	PSK                  []byte   // Pre-shared key for private swarm
 	PeerAllowlist        []string // Allowed peer IDs (empty = all allowed)
+	PeerBlocklist        []string // Blocked peer IDs
 	Scorer               *peers.Scorer
 	Timeouts             *timeouts.Manager
 	Metrics              *metrics.Metrics
@@ -238,24 +239,42 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 			zap.String("fingerprint", PSKFingerprint(cfg.PSK)))
 	}
 
-	// Add peer allowlist if configured
+	// Add peer allowlist/blocklist if configured
 	// Also track if we're in private swarm mode to skip DHT announcements
 	var privateSwarmMode bool
-	if len(cfg.PeerAllowlist) > 0 {
-		peerIDs := make([]peer.ID, 0, len(cfg.PeerAllowlist))
+	if len(cfg.PeerAllowlist) > 0 || len(cfg.PeerBlocklist) > 0 {
+		// Parse allowlist
+		allowedPeerIDs := make([]peer.ID, 0, len(cfg.PeerAllowlist))
 		for _, pidStr := range cfg.PeerAllowlist {
 			pid, decodeErr := peer.Decode(pidStr)
 			if decodeErr != nil {
 				logger.Warn("Invalid peer ID in allowlist", zap.String("peer", pidStr), zap.Error(decodeErr))
 				continue
 			}
-			peerIDs = append(peerIDs, pid)
+			allowedPeerIDs = append(allowedPeerIDs, pid)
 		}
-		if len(peerIDs) > 0 {
-			gater := NewAllowlistGater(peerIDs)
+
+		// Parse blocklist
+		blockedPeerIDs := make([]peer.ID, 0, len(cfg.PeerBlocklist))
+		for _, pidStr := range cfg.PeerBlocklist {
+			pid, decodeErr := peer.Decode(pidStr)
+			if decodeErr != nil {
+				logger.Warn("Invalid peer ID in blocklist", zap.String("peer", pidStr), zap.Error(decodeErr))
+				continue
+			}
+			blockedPeerIDs = append(blockedPeerIDs, pid)
+		}
+
+		if len(allowedPeerIDs) > 0 || len(blockedPeerIDs) > 0 {
+			gater := NewGater(allowedPeerIDs, blockedPeerIDs)
 			opts = append(opts, libp2p.ConnectionGater(gater))
-			privateSwarmMode = true // Enable private swarm mode to skip DHT announcements
-			logger.Info("Peer allowlist enabled", zap.Int("count", len(peerIDs)))
+			if len(allowedPeerIDs) > 0 {
+				privateSwarmMode = true // Enable private swarm mode to skip DHT announcements
+				logger.Info("Peer allowlist enabled", zap.Int("count", len(allowedPeerIDs)))
+			}
+			if len(blockedPeerIDs) > 0 {
+				logger.Info("Peer blocklist enabled", zap.Int("count", len(blockedPeerIDs)))
+			}
 		}
 	}
 

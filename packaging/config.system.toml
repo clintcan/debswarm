@@ -39,6 +39,7 @@ enable_mdns = true
 announce_packages = true
 # psk_path = "/etc/debswarm/swarm.key"
 # peer_allowlist = []
+# peer_blocklist = []
 
 [metrics]
 port = 9978

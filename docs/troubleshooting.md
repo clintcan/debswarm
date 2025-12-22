@@ -71,6 +71,9 @@ ls -la ~/.cache/debswarm/*.corrupted.*
 
 # Rebuild metadata from existing package files (if available)
 debswarm cache rebuild
+
+# After rebuild, verify package integrity
+debswarm cache verify
 ```
 
 #### Port already in use
@@ -207,6 +210,9 @@ debswarm config show | grep path
 
 # Check what's actually cached
 debswarm cache list
+
+# Verify all cached packages have valid checksums
+debswarm cache verify
 
 # Verify database integrity
 sqlite3 ~/.cache/debswarm/state.db "PRAGMA integrity_check;"

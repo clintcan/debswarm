@@ -144,6 +144,7 @@ enable_mdns = true              # Local network discovery
 announce_packages = true        # Share packages with network
 psk_path = ""                   # Private swarm key file
 peer_allowlist = []             # Restrict to specific peer IDs
+peer_blocklist = []             # Block specific peer IDs
 
 [metrics]
 port = 9978                     # Metrics/dashboard port (0 = disabled)
@@ -172,6 +173,7 @@ debswarm status
 # Cache management
 debswarm cache list         # List cached packages
 debswarm cache stats        # Show cache statistics
+debswarm cache verify       # Verify integrity of cached packages
 debswarm cache clear        # Clear all cached packages
 
 # Seeding packages
@@ -355,12 +357,18 @@ peer_allowlist = [
   "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz...",
   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
 ]
+
+# Optional: block malicious or unwanted peers
+peer_blocklist = [
+  "12D3KooWMaliciousPeerIdHere...",
+]
 ```
 
 **How it works:**
 - Nodes with the same PSK form an isolated network
 - Connections to/from nodes without the PSK are rejected
 - Peer allowlist provides additional filtering by peer ID
+- Peer blocklist blocks specific peers regardless of other settings
 - PSK fingerprints can be shared safely to verify key matches
 
 **Use cases:**
@@ -459,6 +467,7 @@ journalctl -u debswarm -f
 ## Documentation
 
 - [Configuration Reference](docs/configuration.md) - Complete guide to all configuration options
+- [Security Hardening](docs/security-hardening.md) - Production security recommendations
 - [Technical Comparison](docs/comparison.md) - debswarm vs apt-p2p, DebTorrent, apt-cacher-ng
 - [Bootstrap Node Setup](docs/bootstrap-node.md) - Running a dedicated seeder/bootstrap node
 - [Cache Pre-warming](docs/cache-prewarming.md) - Pre-populate cache for your network

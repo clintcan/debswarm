@@ -250,6 +250,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		MaxConcurrentUploads: cfg.Transfer.MaxConcurrentUploads,
 		PSK:                  psk,
 		PeerAllowlist:        cfg.Privacy.PeerAllowlist,
+		PeerBlocklist:        cfg.Privacy.PeerBlocklist,
 		Scorer:               scorer,
 		Timeouts:             tm,
 		Metrics:              m,

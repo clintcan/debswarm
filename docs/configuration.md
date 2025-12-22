@@ -217,6 +217,7 @@ Settings for network privacy and access control.
 | `psk_path` | string | `""` | Path to Pre-Shared Key file for private swarm. |
 | `psk` | string | `""` | Inline Pre-Shared Key (hex format). Mutually exclusive with `psk_path`. |
 | `peer_allowlist` | string[] | `[]` | List of allowed peer IDs. Empty = allow all peers. |
+| `peer_blocklist` | string[] | `[]` | List of blocked peer IDs. Connections from these peers are always rejected. |
 
 **Example:**
 ```toml
@@ -233,6 +234,11 @@ peer_allowlist = [
   "12D3KooWAbCdEfGhIjKlMnOpQrStUvWxYz...",
   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
 ]
+
+# Block specific peers (optional)
+peer_blocklist = [
+  "12D3KooWMaliciousPeerIdHere...",
+]
 ```
 
 **Private Swarm (PSK):**
@@ -245,6 +251,11 @@ peer_allowlist = [
 - Provides additional filtering beyond PSK
 - Peer IDs can be found with: `debswarm identity show`
 - Empty list means all peers are allowed (subject to PSK if configured)
+
+**Peer Blocklist:**
+- Blocks specific peers regardless of other settings
+- Useful for blocking malicious or misbehaving peers
+- Blocklist is checked before allowlist (blocked peers are always rejected)
 
 **Notes:**
 - Set `announce_packages = false` to run in download-only mode (no sharing)
@@ -433,6 +444,7 @@ announce_packages = true
 # Private swarm (uncomment to enable)
 # psk_path = "/etc/debswarm/swarm.key"
 # peer_allowlist = []
+# peer_blocklist = []
 
 [metrics]
 # Metrics server (localhost only by default)

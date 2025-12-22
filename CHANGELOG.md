@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2025-12-23
+
+### Added
+- **Cache Verification Command**: `debswarm cache verify` to check integrity of all cached packages
+  - Computes SHA256 hash of each cached file and compares against expected value
+  - Reports missing, corrupted, and verified packages
+  - Useful for incident response and cache integrity auditing
+- **Peer Blocklist**: New `privacy.peer_blocklist` configuration option
+  - Block specific peer IDs from connecting
+  - Blocklist is checked before allowlist (blocked peers always rejected)
+  - Useful for blocking malicious or misbehaving peers
+  - New gater methods: `BlockPeer()`, `UnblockPeer()`, `ListBlockedPeers()`
+
+### Fixed
+- **Documentation**: Corrected security-hardening.md claims that didn't match implementation
+  - Removed non-existent CSP header from security headers list
+  - Removed non-existent granular audit logging fields (`log_downloads`, `log_uploads`, etc.)
+
+### Configuration
+New option in `config.toml`:
+```toml
+[privacy]
+# Block specific peers (connections always rejected)
+peer_blocklist = [
+  "12D3KooWMaliciousPeerIdHere...",
+]
+```
+
 ## [1.9.0] - 2025-12-21
 
 ### Added

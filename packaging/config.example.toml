@@ -165,6 +165,15 @@ peer_allowlist = []
 #   "12D3KooWBcDeFgHiJkLmNoPqRsTuVwXyZa...",
 # ]
 
+# List of blocked peer IDs
+# Connections from these peers will always be rejected
+# Useful for blocking malicious or misbehaving peers
+peer_blocklist = []
+# Example:
+# peer_blocklist = [
+#   "12D3KooWMaliciousPeerIdHere...",
+# ]
+
 #─────────────────────────────────────────────────────────────────────────────
 # [metrics] - Monitoring and dashboard
 #─────────────────────────────────────────────────────────────────────────────
