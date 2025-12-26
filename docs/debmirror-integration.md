@@ -129,6 +129,8 @@ debmirror \
     /var/www/mirror/ubuntu
 ```
 
+> **Note on Ubuntu security updates:** The `noble-security` distribution can be mirrored from `archive.ubuntu.com` because security packages are copied there. The dedicated `security.ubuntu.com` server cannot be mirrored directly (by design). This approach works correctly for local mirrors.
+
 ### Partial Mirror (specific packages only)
 
 For a smaller mirror, use `--include` and `--exclude`:
@@ -166,13 +168,17 @@ sudo /usr/local/bin/sync-debian-mirror.sh
 ```
 
 **Storage requirements:**
+
+> **Note:** These are estimates for partial mirrors (specific releases only, e.g., bookworm + updates + security). Full archive mirrors are much larger. See [Debian Mirror Size](https://www.debian.org/mirror/size) for current totals.
+
 | Mirror Type | Approximate Size |
 |-------------|------------------|
-| Debian main (amd64) | ~60 GB |
-| Debian full (amd64) | ~150 GB |
-| Debian full (amd64+arm64) | ~250 GB |
-| Ubuntu main (amd64) | ~80 GB |
-| Ubuntu full (amd64) | ~200 GB |
+| Debian main only (amd64, 3 releases) | 80-120 GB |
+| Debian all sections (amd64, 3 releases) | 200-300 GB |
+| Debian all sections (amd64+arm64) | 400-500 GB |
+| Ubuntu main+universe (amd64, 3 releases) | 150-250 GB |
+| Ubuntu full (amd64) | 300-500 GB |
+| Full Debian archive (all archs, all releases) | 4+ TB |
 
 ## Step 5: Integrate with debswarm
 
@@ -442,17 +448,23 @@ APT clients ──▶ debswarm proxy ──▶ Cache ──▶ P2P Network
                     └──▶ Local Mirror (fallback)
 ```
 
-Configure debswarm to use local mirror as upstream:
+Configure APT clients to use the local mirror through debswarm:
 
-```toml
-# /etc/debswarm/config.toml
-[mirror]
-# Use local mirror instead of internet
-upstream_mirrors = [
-    "http://localhost/debian",
-    "http://deb.debian.org/debian",  # fallback
-]
+```bash
+# /etc/apt/sources.list.d/local-mirror.list
+# Point to local mirror (debswarm will proxy and cache these requests)
+deb http://mirror.local/debian bookworm main
+deb http://mirror.local/debian bookworm-updates main
+deb http://mirror.local/debian bookworm-security main
 ```
+
+```bash
+# /etc/apt/apt.conf.d/90debswarm
+# Route all APT traffic through debswarm proxy
+Acquire::http::Proxy "http://127.0.0.1:9977";
+```
+
+> **Note:** debswarm acts as a transparent proxy - it fetches from whatever mirror URL APT requests. Configure your sources.list to use your local mirror for fastest access.
 
 ### Option B: Direct Mirror Access + debswarm for P2P
 
