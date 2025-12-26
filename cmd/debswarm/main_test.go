@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -213,8 +214,8 @@ func TestPskGenerateCommand(t *testing.T) {
 	if os.IsNotExist(err) {
 		t.Error("PSK file was not created")
 	}
-	// Check permissions (should be 0600)
-	if info.Mode().Perm() != 0600 {
+	// Check permissions (should be 0600) - skip on Windows as it uses a different permission model
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0600 {
 		t.Errorf("PSK file permissions = %o, want 0600", info.Mode().Perm())
 	}
 }
