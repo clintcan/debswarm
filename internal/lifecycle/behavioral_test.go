@@ -20,7 +20,7 @@ func TestBehavior_MatchesOriginalPattern(t *testing.T) {
 	// cancel()
 	// wg.Wait()
 
-	m := New(nil)
+	m := New(context.Background())
 
 	var started, stopped int32
 	m.Go(func(ctx context.Context) {
@@ -56,7 +56,7 @@ func TestBehavior_TickerMatchesOriginal(t *testing.T) {
 	//     }
 	// }
 
-	m := New(nil)
+	m := New(context.Background())
 
 	var tickCount int32
 	interval := 20 * time.Millisecond
@@ -78,7 +78,7 @@ func TestBehavior_TickerMatchesOriginal(t *testing.T) {
 // TestBehavior_MultipleTickersIndependent verifies multiple tickers
 // run independently (like cleanupLoop and adaptiveLoop)
 func TestBehavior_MultipleTickersIndependent(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var count1, count2 int32
 

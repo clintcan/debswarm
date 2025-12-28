@@ -172,10 +172,11 @@ func TestBehavior_TimeoutIsRespected(t *testing.T) {
 	client := WithTimeout(50 * time.Millisecond)
 
 	start := time.Now()
-	_, err := client.Get(server.URL)
+	resp, err := client.Get(server.URL)
 	elapsed := time.Since(start)
 
 	if err == nil {
+		resp.Body.Close()
 		t.Error("expected timeout error, got nil")
 	}
 
@@ -232,10 +233,11 @@ func TestBehavior_ContextCancellation(t *testing.T) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 
 	start := time.Now()
-	_, err := client.Do(req)
+	resp, err := client.Do(req)
 	elapsed := time.Since(start)
 
 	if err == nil {
+		resp.Body.Close()
 		t.Error("expected context cancellation error")
 	}
 

@@ -291,4 +291,3 @@ func TestGo_PanicRecovery(t *testing.T) {
 	// Note: The goroutine panicked but the manager should still work
 	// The WaitGroup counter is decremented in the defer
 }
-

@@ -20,7 +20,7 @@ func TestBackoffTiming_MatchesOriginal(t *testing.T) {
 	// Original loop: for attempt := 0; attempt < maxRetries; attempt++
 	// Backoff only applied when attempt > 0
 	expectedDelays := []time.Duration{
-		0,              // attempt 0: no delay (first attempt)
+		0,               // attempt 0: no delay (first attempt)
 		1 * time.Second, // attempt 1: 1*1 = 1 second
 		4 * time.Second, // attempt 2: 2*2 = 4 seconds
 		9 * time.Second, // attempt 3: 3*3 = 9 seconds

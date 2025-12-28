@@ -8,7 +8,7 @@ import (
 )
 
 // Manager coordinates the lifecycle of background goroutines.
-// It provides a context that is cancelled on Stop, and tracks
+// It provides a context that is canceled on Stop, and tracks
 // goroutines via a WaitGroup for graceful shutdown.
 type Manager struct {
 	ctx    context.Context
@@ -29,7 +29,7 @@ func New(parent context.Context) *Manager {
 	}
 }
 
-// Context returns the manager's context, which is cancelled when Stop is called.
+// Context returns the manager's context, which is canceled when Stop is called.
 func (m *Manager) Context() context.Context {
 	return m.ctx
 }
@@ -55,7 +55,7 @@ func (m *Manager) GoN(n int, fn func(ctx context.Context, id int)) {
 }
 
 // RunTicker starts a goroutine that executes fn on each tick.
-// The goroutine exits when the manager's context is cancelled.
+// The goroutine exits when the manager's context is canceled.
 func (m *Manager) RunTicker(interval time.Duration, fn func()) {
 	m.Go(func(ctx context.Context) {
 		ticker := time.NewTicker(interval)
