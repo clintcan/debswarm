@@ -2,9 +2,7 @@
 package cache
 
 import (
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +14,7 @@ import (
 	"go.uber.org/zap"
 	_ "modernc.org/sqlite"
 
+	"github.com/debswarm/debswarm/internal/hashutil"
 	"github.com/debswarm/debswarm/internal/sanitize"
 )
 
@@ -392,10 +391,9 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 
-	hasher := sha256.New()
-	writer := io.MultiWriter(f, hasher)
+	hw := hashutil.NewHashingWriter(f)
 
-	size, err := io.Copy(writer, data)
+	size, err := io.Copy(hw, data)
 	if err != nil {
 		if closeErr := f.Close(); closeErr != nil {
 			c.logger.Warn("Failed to close file during cleanup", zap.Error(closeErr))
@@ -413,7 +411,7 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 	}
 
 	// Verify hash
-	actualHash := hex.EncodeToString(hasher.Sum(nil))
+	actualHash := hw.Sum()
 	if actualHash != expectedHash {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))

@@ -3,8 +3,6 @@ package downloader
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +15,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 
+	"github.com/debswarm/debswarm/internal/hashutil"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/peers"
 )
@@ -494,12 +493,11 @@ func (d *Downloader) downloadChunked(
 		f.Close()
 		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
 	}
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, f); err != nil {
+	actualHashHex, err := hashutil.HashReader(f)
+	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("failed to compute hash: %w", err)
 	}
-	actualHashHex := hex.EncodeToString(hasher.Sum(nil))
 	f.Close()
 
 	if actualHashHex != expectedHash {
@@ -602,12 +600,11 @@ func (d *Downloader) assembleFromDisk(
 		f.Close()
 		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
 	}
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, f); err != nil {
+	actualHashHex, err := hashutil.HashReader(f)
+	if err != nil {
 		f.Close()
 		return nil, fmt.Errorf("failed to compute hash: %w", err)
 	}
-	actualHashHex := hex.EncodeToString(hasher.Sum(nil))
 	f.Close()
 
 	if actualHashHex != expectedHash {
@@ -787,8 +784,7 @@ func (d *Downloader) downloadRacing(
 			}
 
 			// Verify hash
-			actualHash := sha256.Sum256(res.data)
-			actualHashHex := hex.EncodeToString(actualHash[:])
+			actualHashHex := hashutil.HashBytes(res.data)
 
 			if actualHashHex != expectedHash {
 				if d.metrics != nil {

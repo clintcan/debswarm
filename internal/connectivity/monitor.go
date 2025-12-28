@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/debswarm/debswarm/internal/httpclient"
 )
 
 // Mode represents the current connectivity state
@@ -105,9 +107,7 @@ func NewMonitor(cfg *Config, logger *zap.Logger) *Monitor {
 		onModeChange:  cfg.OnModeChange,
 		getMDNSPeers:  cfg.GetMDNSPeerCount,
 		logger:        logger,
-		client: &http.Client{
-			Timeout: cfg.CheckTimeout,
-		},
+		client:        httpclient.WithTimeout(cfg.CheckTimeout),
 	}
 
 	// Set initial mode based on configuration

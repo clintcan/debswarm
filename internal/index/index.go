@@ -19,6 +19,7 @@ import (
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/httpclient"
 	"github.com/debswarm/debswarm/internal/sanitize"
 	"github.com/debswarm/debswarm/internal/security"
 )
@@ -44,6 +45,7 @@ type Index struct {
 	byBasename map[string][]*PackageInfo          // basename → packages (for O(1) lookup)
 	mu         sync.RWMutex
 	logger     *zap.Logger
+	client     *http.Client
 }
 
 // New creates a new Index manager
@@ -54,6 +56,7 @@ func New(cachePath string, logger *zap.Logger) *Index {
 		byRepo:     make(map[string]map[string]*PackageInfo),
 		byBasename: make(map[string][]*PackageInfo),
 		logger:     logger,
+		client:     httpclient.Default(),
 	}
 }
 
@@ -104,7 +107,7 @@ func (idx *Index) LoadFromURL(url string) error {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := idx.client.Do(req)
 	if err != nil {
 		return err
 	}

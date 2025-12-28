@@ -1,3 +1,19 @@
+debswarm (1.11.2-1) stable; urgency=low
+
+  * Internal refactoring: Extract common patterns into reusable libraries
+    - internal/retry: Generic retry with exponential/linear/constant backoff
+    - internal/lifecycle: Goroutine lifecycle management (context + waitgroup)
+    - internal/hashutil: Streaming hash computation (HashingWriter/HashingReader)
+    - internal/httpclient: HTTP client factory with connection pooling
+  * Refactored mirror/fetcher.go to use retry.Do() for retries
+  * Refactored downloader/downloader.go to use retry.Do() for chunk retries
+  * Refactored ratelimit/peer_limiter.go to use lifecycle.Manager
+  * Refactored proxy/server.go announcement worker to use lifecycle.Manager
+  * Refactored cache/cache.go to use hashutil.HashingWriter
+  * Refactored HTTP clients to use httpclient factory
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sun, 29 Dec 2025 00:00:00 +0000
+
 debswarm (1.11.1-1) stable; urgency=low
 
   * Documentation: Updated config.system.toml with missing sections

@@ -90,18 +90,24 @@ sudo apt install vim
 
 ```
 internal/
+├── audit/          # Structured event logging for compliance
 ├── benchmark/      # Performance testing with simulated peers
 ├── cache/          # Content-addressed SQLite-backed cache
 ├── config/         # TOML configuration management
+├── connectivity/   # Network connectivity monitoring
 ├── dashboard/      # Real-time web dashboard
 ├── downloader/     # Parallel chunked download engine with resume support
+├── hashutil/       # Streaming hash computation utilities
+├── httpclient/     # HTTP client factory with connection pooling
 ├── index/          # Debian Packages file parser
+├── lifecycle/      # Goroutine lifecycle management
 ├── metrics/        # Prometheus metrics
 ├── mirror/         # HTTP mirror client with retry
 ├── p2p/            # libp2p node with Kademlia DHT, PSK support
 ├── peers/          # Peer scoring and selection
 ├── proxy/          # HTTP proxy server for APT
 ├── ratelimit/      # Bandwidth limiting for uploads/downloads
+├── retry/          # Generic retry with exponential backoff
 ├── security/       # SSRF validation, URL allowlisting
 └── timeouts/       # Adaptive timeout management
 ```

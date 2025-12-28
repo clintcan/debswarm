@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 
+	"github.com/debswarm/debswarm/internal/lifecycle"
 	"github.com/debswarm/debswarm/internal/peers"
 )
 
@@ -104,15 +105,11 @@ type PeerLimiterManager struct {
 	logger          *zap.Logger
 
 	// Lifecycle
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	lc *lifecycle.Manager
 }
 
 // NewPeerLimiterManager creates a new per-peer rate limiter manager
 func NewPeerLimiterManager(cfg PeerLimiterConfig, globalLimiter *Limiter, scorer *peers.Scorer) *PeerLimiterManager {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	// Calculate effective per-peer limit
 	perPeerLimit := cfg.PerPeerLimit
 	if perPeerLimit == 0 && cfg.GlobalLimit > 0 {
@@ -133,6 +130,16 @@ func NewPeerLimiterManager(cfg PeerLimiterConfig, globalLimiter *Limiter, scorer
 		logger = zap.NewNop()
 	}
 
+	// Ensure we have valid timeouts
+	idleTimeout := cfg.IdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = DefaultIdleTimeout
+	}
+	recalcInterval := cfg.AdaptiveRecalcInterval
+	if recalcInterval <= 0 {
+		recalcInterval = DefaultAdaptiveRecalc
+	}
+
 	m := &PeerLimiterManager{
 		peerLimiters:    make(map[peer.ID]*PeerLimiter),
 		globalLimit:     cfg.GlobalLimit,
@@ -141,32 +148,21 @@ func NewPeerLimiterManager(cfg PeerLimiterConfig, globalLimiter *Limiter, scorer
 		expectedPeers:   cfg.ExpectedPeers,
 		maxBoostFactor:  cfg.MaxBoostFactor,
 		latencyThresh:   cfg.LatencyThresholdMs,
-		idleTimeout:     cfg.IdleTimeout,
-		recalcInterval:  cfg.AdaptiveRecalcInterval,
+		idleTimeout:     idleTimeout,
+		recalcInterval:  recalcInterval,
 		globalLimiter:   globalLimiter,
 		scorer:          scorer,
 		adaptiveEnabled: cfg.AdaptiveEnabled && scorer != nil,
 		logger:          logger,
-		ctx:             ctx,
-		cancel:          cancel,
+		lc:              lifecycle.New(nil),
 	}
 
 	// Only start background goroutines if per-peer limiting is enabled
 	if m.perPeerLimit > 0 {
-		// Ensure we have valid timeouts
-		if m.idleTimeout <= 0 {
-			m.idleTimeout = DefaultIdleTimeout
-		}
-		if m.recalcInterval <= 0 {
-			m.recalcInterval = DefaultAdaptiveRecalc
-		}
-
-		m.wg.Add(1)
-		go m.cleanupLoop()
+		m.lc.RunTicker(m.idleTimeout, m.cleanupIdleLimiters)
 
 		if m.adaptiveEnabled {
-			m.wg.Add(1)
-			go m.adaptiveLoop()
+			m.lc.RunTicker(m.recalcInterval, m.recalculateRates)
 		}
 	}
 
@@ -325,23 +321,6 @@ func (m *PeerLimiterManager) adjustForPeerScore(peerID peer.ID, baseLimit int64)
 	return newLimit
 }
 
-// cleanupLoop periodically removes idle peer limiters
-func (m *PeerLimiterManager) cleanupLoop() {
-	defer m.wg.Done()
-
-	ticker := time.NewTicker(m.idleTimeout)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			m.cleanupIdleLimiters()
-		}
-	}
-}
-
 // cleanupIdleLimiters removes limiters that haven't been used recently
 func (m *PeerLimiterManager) cleanupIdleLimiters() {
 	m.mu.Lock()
@@ -363,23 +342,6 @@ func (m *PeerLimiterManager) cleanupIdleLimiters() {
 
 	if removed > 0 {
 		m.logger.Debug("Cleaned up idle peer limiters", zap.Int("removed", removed))
-	}
-}
-
-// adaptiveLoop periodically recalculates per-peer rates based on scorer metrics
-func (m *PeerLimiterManager) adaptiveLoop() {
-	defer m.wg.Done()
-
-	ticker := time.NewTicker(m.recalcInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			m.recalculateRates()
-		}
 	}
 }
 
@@ -441,8 +403,7 @@ func (m *PeerLimiterManager) PeerCount() int {
 
 // Close shuts down the peer limiter manager
 func (m *PeerLimiterManager) Close() {
-	m.cancel()
-	m.wg.Wait()
+	m.lc.Stop()
 }
 
 // ComposedLimitedReader applies both global and per-peer rate limits

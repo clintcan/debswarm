@@ -377,3 +377,85 @@ Additional security measures beyond content verification:
 - **PSK Security**: Only fingerprints logged, never full keys
 - **File Permissions**: Directories use 0750, files use 0600 for sensitive data
 - **Error Handling**: All Close/Remove operations properly handle errors
+
+## Reusable Internal Libraries
+
+The codebase includes several internal libraries that reduce code duplication and provide consistent patterns across components.
+
+### Retry Library (`internal/retry/`)
+
+Generic retry logic with configurable backoff strategies:
+
+```go
+type Config struct {
+    MaxAttempts int                           // Required: max attempts (not retries)
+    Backoff     func(attempt int) time.Duration // Optional: backoff strategy
+}
+
+// Backoff strategies
+func Exponential(base time.Duration) func(int) time.Duration  // attempt² * base
+func Linear(base time.Duration) func(int) time.Duration       // attempt * base
+func Constant(d time.Duration) func(int) time.Duration        // always d
+
+// Generic retry function
+func Do[T any](ctx context.Context, cfg Config, fn func() (T, error)) (T, error)
+```
+
+Used by: `mirror/fetcher.go`, `downloader/downloader.go`
+
+### Lifecycle Manager (`internal/lifecycle/`)
+
+Manages goroutine lifecycles with context cancellation and wait group tracking:
+
+```go
+type Manager struct {
+    // Internal: ctx, cancel, wg
+}
+
+func New(parent context.Context) *Manager
+func (m *Manager) Context() context.Context
+func (m *Manager) Go(fn func(ctx context.Context))           // Start tracked goroutine
+func (m *Manager) GoTicker(interval time.Duration, fn func()) // Periodic task
+func (m *Manager) Stop()                                      // Cancel + wait all
+func (m *Manager) StopWithTimeout(d time.Duration) error      // Cancel + wait with deadline
+```
+
+Used by: `ratelimit/peer_limiter.go`, `proxy/server.go`
+
+### Hash Utilities (`internal/hashutil/`)
+
+Streaming hash computation during I/O operations:
+
+```go
+// Hash while writing
+type HashingWriter struct { /* wraps io.Writer */ }
+func NewHashingWriter(w io.Writer) *HashingWriter
+func (hw *HashingWriter) Write(p []byte) (int, error)
+func (hw *HashingWriter) Sum() string  // Hex-encoded SHA256
+
+// Hash while reading
+type HashingReader struct { /* wraps io.Reader */ }
+func NewHashingReader(r io.Reader) *HashingReader
+func (hr *HashingReader) Read(p []byte) (int, error)
+func (hr *HashingReader) Sum() string
+```
+
+Used by: `cache/cache.go`, `downloader/downloader.go`
+
+### HTTP Client Factory (`internal/httpclient/`)
+
+Centralized HTTP client creation with sensible defaults:
+
+```go
+type Config struct {
+    Timeout             time.Duration  // Default: 60s
+    MaxIdleConnsPerHost int            // Default: 10
+    IdleConnTimeout     time.Duration  // Default: 90s
+}
+
+func New(cfg *Config) *http.Client     // Full-featured client
+func Default() *http.Client            // Pre-configured defaults
+func WithTimeout(timeout time.Duration) *http.Client  // Simple timeout-only
+```
+
+Used by: `mirror/fetcher.go`, `index/index.go`, `connectivity/monitor.go`

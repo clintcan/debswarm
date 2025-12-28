@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/debswarm/debswarm/internal/httpclient"
+	"github.com/debswarm/debswarm/internal/retry"
 )
 
 // Stats holds statistics for a mirror
@@ -63,15 +66,10 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 		cfg = DefaultConfig()
 	}
 
-	transport := &http.Transport{
+	client := httpclient.New(&httpclient.Config{
+		Timeout:             cfg.Timeout,
 		MaxIdleConnsPerHost: cfg.MaxIdleConn,
-		IdleConnTimeout:     90 * time.Second,
-	}
-
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   cfg.Timeout,
-	}
+	})
 
 	maxResponseSize := cfg.MaxResponseSize
 	if maxResponseSize <= 0 {
@@ -98,36 +96,27 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
-	var lastErr error
-	for attempt := 0; attempt < f.maxRetries; attempt++ {
-		if attempt > 0 {
-			// Exponential backoff with context check
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Duration(attempt*attempt) * time.Second):
-			}
-		}
-
+	data, err := retry.Do(ctx, retry.Config{
+		MaxAttempts: f.maxRetries,
+		Backoff:     retry.Exponential(time.Second),
+	}, func() ([]byte, error) {
 		resp, err := f.client.Do(req)
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return nil, err
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			f.recordError(url)
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 				// Don't retry client errors
-				f.recordError(url)
-				return nil, lastErr
+				return nil, retry.NonRetryable(httpErr)
 			}
-			f.recordError(url)
-			continue
+			return nil, httpErr
 		}
 
 		// Limit response size to prevent memory exhaustion attacks
@@ -137,26 +126,29 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 		}
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return nil, err
 		}
 
 		// Check if we hit the size limit
 		if int64(len(data)) > f.maxResponseSize {
-			lastErr = fmt.Errorf("response size exceeds maximum allowed (%d bytes)", f.maxResponseSize)
+			sizeErr := fmt.Errorf("response size exceeds maximum allowed (%d bytes)", f.maxResponseSize)
 			f.recordError(url)
-			return nil, lastErr
+			return nil, retry.NonRetryable(sizeErr)
 		}
 
-		// Record success
-		duration := time.Since(start)
-		f.recordSuccess(url, int64(len(data)), duration)
-
 		return data, nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("failed after %d retries: %w", f.maxRetries, lastErr)
+	// Record success
+	duration := time.Since(start)
+	f.recordSuccess(url, int64(len(data)), duration)
+
+	return data, nil
 }
 
 // FetchToWriter downloads content and writes to a writer
@@ -169,35 +161,26 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
-	var lastErr error
-	for attempt := 0; attempt < f.maxRetries; attempt++ {
-		if attempt > 0 {
-			// Exponential backoff with context check
-			select {
-			case <-ctx.Done():
-				return 0, ctx.Err()
-			case <-time.After(time.Duration(attempt*attempt) * time.Second):
-			}
-		}
-
+	written, err := retry.Do(ctx, retry.Config{
+		MaxAttempts: f.maxRetries,
+		Backoff:     retry.Exponential(time.Second),
+	}, func() (int64, error) {
 		resp, err := f.client.Do(req)
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return 0, err
 		}
 
 		if resp.StatusCode != http.StatusOK {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-				f.recordError(url)
-				return 0, lastErr
-			}
+			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 			f.recordError(url)
-			continue
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return 0, retry.NonRetryable(httpErr)
+			}
+			return 0, httpErr
 		}
 
 		written, err := io.Copy(w, resp.Body)
@@ -205,17 +188,20 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 		}
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return 0, err
 		}
 
-		duration := time.Since(start)
-		f.recordSuccess(url, written, duration)
 		return written, nil
+	})
+
+	if err != nil {
+		return 0, err
 	}
 
-	return 0, fmt.Errorf("failed after %d retries: %w", f.maxRetries, lastErr)
+	duration := time.Since(start)
+	f.recordSuccess(url, written, duration)
+	return written, nil
 }
 
 // Stream returns a reader for streaming content
@@ -257,9 +243,9 @@ func (f *Fetcher) Head(ctx context.Context, url string) (*http.Response, error) 
 // FetchRange downloads a specific byte range from a URL using HTTP Range headers.
 // If start is 0 and end is -1, it fetches the entire content.
 // The range is inclusive: bytes start-end (both included).
-func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) ([]byte, error) {
+func (f *Fetcher) FetchRange(ctx context.Context, url string, rangeStart, rangeEnd int64) ([]byte, error) {
 	// If fetching full file, use regular Fetch
-	if start == 0 && end < 0 {
+	if rangeStart == 0 && rangeEnd < 0 {
 		return f.Fetch(ctx, url)
 	}
 
@@ -272,28 +258,21 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) 
 	req.Header.Set("User-Agent", f.userAgent)
 
 	// Set Range header (HTTP ranges are inclusive)
-	if end < 0 {
+	if rangeEnd < 0 {
 		// Open-ended range: from start to end of file
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", rangeStart))
 	} else {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd))
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < f.maxRetries; attempt++ {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			case <-time.After(time.Duration(attempt*attempt) * time.Second):
-			}
-		}
-
+	data, err := retry.Do(ctx, retry.Config{
+		MaxAttempts: f.maxRetries,
+		Backoff:     retry.Exponential(time.Second),
+	}, func() ([]byte, error) {
 		resp, err := f.client.Do(req)
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return nil, err
 		}
 
 		// Accept both 200 OK (server doesn't support range) and 206 Partial Content
@@ -301,32 +280,28 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) 
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			lastErr = fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-				f.recordError(url)
-				return nil, lastErr
-			}
+			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
 			f.recordError(url)
-			continue
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+				return nil, retry.NonRetryable(httpErr)
+			}
+			return nil, httpErr
 		}
 
 		// If server returned 200 instead of 206, it doesn't support ranges
 		// We need to read and discard bytes before start, then read until end
 		if resp.StatusCode == http.StatusOK {
-			data, handleErr := f.handleNonRangeResponse(resp, start, end)
+			data, handleErr := f.handleNonRangeResponse(resp, rangeStart, rangeEnd)
 			if handleErr != nil {
-				lastErr = handleErr
 				f.recordError(url)
-				continue
+				return nil, handleErr
 			}
-			duration := time.Since(startTime)
-			f.recordSuccess(url, int64(len(data)), duration)
 			return data, nil
 		}
 
 		// Server supports ranges - read the response
-		expectedSize := end - start + 1
-		if end < 0 {
+		expectedSize := rangeEnd - rangeStart + 1
+		if rangeEnd < 0 {
 			expectedSize = f.maxResponseSize // Use max as limit for open-ended ranges
 		}
 
@@ -336,17 +311,20 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, start, end int64) 
 			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 		}
 		if err != nil {
-			lastErr = err
 			f.recordError(url)
-			continue
+			return nil, err
 		}
 
-		duration := time.Since(startTime)
-		f.recordSuccess(url, int64(len(data)), duration)
 		return data, nil
+	})
+
+	if err != nil {
+		return nil, err
 	}
 
-	return nil, fmt.Errorf("failed after %d retries: %w", f.maxRetries, lastErr)
+	duration := time.Since(startTime)
+	f.recordSuccess(url, int64(len(data)), duration)
+	return data, nil
 }
 
 // handleNonRangeResponse handles the case where server doesn't support Range requests

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.2] - 2025-12-29
+
+### Changed
+- **Internal refactoring**: Extracted common patterns into reusable libraries
+  - `internal/retry/` - Generic retry with exponential/linear/constant backoff (Go generics)
+  - `internal/lifecycle/` - Goroutine lifecycle management with context + waitgroup
+  - `internal/hashutil/` - Streaming hash computation (HashingWriter/HashingReader)
+  - `internal/httpclient/` - HTTP client factory with connection pooling and sensible defaults
+- Refactored `mirror/fetcher.go` to use `retry.Do()` instead of inline retry loops
+- Refactored `downloader/downloader.go` to use `retry.Do()` for chunk retries
+- Refactored `ratelimit/peer_limiter.go` to use `lifecycle.Manager` for goroutine management
+- Refactored `proxy/server.go` announcement worker to use `lifecycle.Manager`
+- Refactored `cache/cache.go` to use `hashutil.HashingWriter` for hash computation
+- Refactored `mirror/fetcher.go`, `index/index.go`, `connectivity/monitor.go` to use `httpclient`
+
 ## [1.11.1] - 2025-12-23
 
 ### Fixed

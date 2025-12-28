@@ -175,7 +175,7 @@ func TestFetchAllRetriesFail(t *testing.T) {
 	if err == nil {
 		t.Fatal("Expected error after all retries fail")
 	}
-	if !strings.Contains(err.Error(), "failed after 2 retries") {
+	if !strings.Contains(err.Error(), "failed after 2 attempts") {
 		t.Errorf("Expected retry failure message, got: %v", err)
 	}
 	if atomic.LoadInt32(&attempts) != 2 {
