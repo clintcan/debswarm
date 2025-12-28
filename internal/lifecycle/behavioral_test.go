@@ -113,7 +113,7 @@ func TestBehavior_MultipleTickersIndependent(t *testing.T) {
 // TestBehavior_StopWaitsForAllGoroutines verifies Stop blocks until
 // all goroutines complete (like wg.Wait())
 func TestBehavior_StopWaitsForAllGoroutines(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var completed int32
 	numGoroutines := 5
@@ -140,30 +140,30 @@ func TestBehavior_StopWaitsForAllGoroutines(t *testing.T) {
 	}
 }
 
-// TestBehavior_ContextCancellationOrder verifies context is cancelled
+// TestBehavior_ContextCancellationOrder verifies context is canceled
 // before waiting (like cancel() before wg.Wait())
 func TestBehavior_ContextCancellationOrder(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
-	var contextCancelledFirst int32
+	var contextCanceledFirst int32
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()
-		// If context is cancelled first, this should run
-		atomic.StoreInt32(&contextCancelledFirst, 1)
+		// If context is canceled first, this should run
+		atomic.StoreInt32(&contextCanceledFirst, 1)
 	})
 
 	time.Sleep(10 * time.Millisecond)
 	m.Stop()
 
-	if atomic.LoadInt32(&contextCancelledFirst) != 1 {
-		t.Error("context should be cancelled before goroutine completes")
+	if atomic.LoadInt32(&contextCanceledFirst) != 1 {
+		t.Error("context should be canceled before goroutine completes")
 	}
 }
 
 // TestBehavior_ConcurrentAccess verifies thread-safe operations
 func TestBehavior_ConcurrentAccess(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var wg sync.WaitGroup
 	var started int32
@@ -192,7 +192,7 @@ func TestBehavior_ConcurrentAccess(t *testing.T) {
 
 // TestBehavior_StopIdempotent verifies Stop can be called multiple times
 func TestBehavior_StopIdempotent(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()
@@ -208,7 +208,7 @@ func TestBehavior_StopIdempotent(t *testing.T) {
 
 // TestBehavior_NoGoroutines verifies Stop works with no goroutines started
 func TestBehavior_NoGoroutines(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	// Stop without starting any goroutines
 	start := time.Now()
@@ -222,7 +222,7 @@ func TestBehavior_NoGoroutines(t *testing.T) {
 
 // TestBehavior_TickerStopsCleanly verifies ticker goroutines stop properly
 func TestBehavior_TickerStopsCleanly(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var tickCount int32
 	m.RunTicker(10*time.Millisecond, func() {
@@ -246,7 +246,7 @@ func TestBehavior_TickerStopsCleanly(t *testing.T) {
 
 // TestBehavior_ContextDoneBeforeTick verifies ticker doesn't tick after Stop
 func TestBehavior_ContextDoneBeforeTick(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var tickCount int32
 	m.RunTicker(100*time.Millisecond, func() {
@@ -264,12 +264,12 @@ func TestBehavior_ContextDoneBeforeTick(t *testing.T) {
 
 // TestBehavior_GoAfterStop verifies behavior when Go is called after Stop
 func TestBehavior_GoAfterStop(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 	m.Stop()
 
 	var executed int32
 	m.Go(func(ctx context.Context) {
-		// Context is already cancelled, so this should return immediately
+		// Context is already canceled, so this should return immediately
 		select {
 		case <-ctx.Done():
 			atomic.StoreInt32(&executed, 1)
@@ -280,15 +280,15 @@ func TestBehavior_GoAfterStop(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 
-	// The goroutine should still run, but context is cancelled
+	// The goroutine should still run, but context is canceled
 	if atomic.LoadInt32(&executed) != 1 {
-		t.Error("goroutine should execute even after Stop, with cancelled context")
+		t.Error("goroutine should execute even after Stop, with canceled context")
 	}
 }
 
 // TestBehavior_RunTickerAfterStop verifies ticker after Stop
 func TestBehavior_RunTickerAfterStop(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 	m.Stop()
 
 	var tickCount int32
@@ -298,7 +298,7 @@ func TestBehavior_RunTickerAfterStop(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Ticker should not tick because context is cancelled
+	// Ticker should not tick because context is canceled
 	if atomic.LoadInt32(&tickCount) != 0 {
 		t.Errorf("ticker should not tick after Stop, got %d ticks", tickCount)
 	}
@@ -323,7 +323,7 @@ func TestBehavior_ParentContextCancellation(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	if atomic.LoadInt32(&stopped) != 1 {
-		t.Error("child should stop when parent is cancelled")
+		t.Error("child should stop when parent is canceled")
 	}
 
 	// Clean up
@@ -332,7 +332,7 @@ func TestBehavior_ParentContextCancellation(t *testing.T) {
 
 // TestBehavior_StopWithTimeoutSuccess verifies timeout with fast cleanup
 func TestBehavior_StopWithTimeoutSuccess(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()
@@ -349,7 +349,7 @@ func TestBehavior_StopWithTimeoutSuccess(t *testing.T) {
 
 // TestBehavior_StopWithTimeoutFailure verifies timeout with slow cleanup
 func TestBehavior_StopWithTimeoutFailure(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()

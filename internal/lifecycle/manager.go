@@ -97,13 +97,13 @@ func (m *Manager) StopWithTimeout(timeout time.Duration) error {
 	}
 }
 
-// Done returns a channel that is closed when the manager's context is cancelled.
+// Done returns a channel that is closed when the manager's context is canceled.
 // This is a convenience method equivalent to m.Context().Done().
 func (m *Manager) Done() <-chan struct{} {
 	return m.ctx.Done()
 }
 
-// Err returns the context's error after it has been cancelled.
+// Err returns the context's error after it has been canceled.
 // This is a convenience method equivalent to m.Context().Err().
 func (m *Manager) Err() error {
 	return m.ctx.Err()

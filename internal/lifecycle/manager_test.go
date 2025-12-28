@@ -9,7 +9,7 @@ import (
 )
 
 func TestNew_WithNilParent(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 	if m == nil {
 		t.Fatal("expected non-nil manager")
 	}
@@ -31,7 +31,7 @@ func TestNew_WithParent(t *testing.T) {
 }
 
 func TestGo_TracksGoroutine(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var started, stopped int32
 	m.Go(func(ctx context.Context) {
@@ -58,7 +58,7 @@ func TestGo_TracksGoroutine(t *testing.T) {
 }
 
 func TestGo_MultipleGoroutines(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var count int32
 	for i := 0; i < 5; i++ {
@@ -77,7 +77,7 @@ func TestGo_MultipleGoroutines(t *testing.T) {
 }
 
 func TestGoN_StartsNGoroutines(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var ids []int
 	var mu sync.Mutex
@@ -112,7 +112,7 @@ func TestGoN_StartsNGoroutines(t *testing.T) {
 }
 
 func TestRunTicker_ExecutesPeriodically(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var count int32
 	m.RunTicker(20*time.Millisecond, func() {
@@ -131,7 +131,7 @@ func TestRunTicker_ExecutesPeriodically(t *testing.T) {
 }
 
 func TestRunTicker_StopsOnCancel(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var count int32
 	m.RunTicker(10*time.Millisecond, func() {
@@ -152,7 +152,7 @@ func TestRunTicker_StopsOnCancel(t *testing.T) {
 }
 
 func TestStop_WaitsForGoroutines(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var stopped int32
 	m.Go(func(ctx context.Context) {
@@ -176,7 +176,7 @@ func TestStop_WaitsForGoroutines(t *testing.T) {
 }
 
 func TestStopWithTimeout_Success(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()
@@ -192,7 +192,7 @@ func TestStopWithTimeout_Success(t *testing.T) {
 }
 
 func TestStopWithTimeout_Timeout(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	m.Go(func(ctx context.Context) {
 		<-ctx.Done()
@@ -214,7 +214,7 @@ func TestStopWithTimeout_Timeout(t *testing.T) {
 }
 
 func TestDone_ReturnsContextDone(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	select {
 	case <-m.Done():
@@ -234,7 +234,7 @@ func TestDone_ReturnsContextDone(t *testing.T) {
 }
 
 func TestErr_ReturnsContextErr(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	if m.Err() != nil {
 		t.Error("Err should be nil before Stop")
@@ -265,7 +265,7 @@ func TestParentContextCancellation(t *testing.T) {
 	time.Sleep(10 * time.Millisecond)
 
 	if atomic.LoadInt32(&stopped) != 1 {
-		t.Error("goroutine should stop when parent is cancelled")
+		t.Error("goroutine should stop when parent is canceled")
 	}
 
 	// Stop should still work (idempotent)
@@ -273,7 +273,7 @@ func TestParentContextCancellation(t *testing.T) {
 }
 
 func TestGo_PanicRecovery(t *testing.T) {
-	m := New(nil)
+	m := New(context.Background())
 
 	var recovered int32
 	m.Go(func(ctx context.Context) {

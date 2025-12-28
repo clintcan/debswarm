@@ -133,7 +133,7 @@ func TestContextCancellationDuringBackoff(t *testing.T) {
 
 	_, err := Do(ctx, Config{
 		MaxAttempts: 5,
-		Backoff:     Constant(1 * time.Second), // Long enough to be cancelled
+		Backoff:     Constant(1 * time.Second), // Long enough to be canceled
 	}, func() (string, error) {
 		atomic.AddInt32(&attemptCount, 1)
 		return "", errors.New("error")

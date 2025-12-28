@@ -154,7 +154,7 @@ func NewPeerLimiterManager(cfg PeerLimiterConfig, globalLimiter *Limiter, scorer
 		scorer:          scorer,
 		adaptiveEnabled: cfg.AdaptiveEnabled && scorer != nil,
 		logger:          logger,
-		lc:              lifecycle.New(nil),
+		lc:              lifecycle.New(context.Background()),
 	}
 
 	// Only start background goroutines if per-peer limiting is enabled

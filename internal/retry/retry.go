@@ -69,7 +69,7 @@ func Constant(d time.Duration) func(int) time.Duration {
 
 // Do executes fn until it succeeds or max attempts are exhausted.
 // It waits between attempts according to the backoff strategy.
-// If context is cancelled during backoff, it returns ctx.Err().
+// If context is canceled during backoff, it returns ctx.Err().
 func Do[T any](ctx context.Context, cfg Config, fn func() (T, error)) (T, error) {
 	var zero T
 
