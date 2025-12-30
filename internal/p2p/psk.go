@@ -51,7 +51,7 @@ func ParsePSK(r io.Reader) (pnet.PSK, error) {
 
 	// Read the hex-encoded key
 	if !scanner.Scan() {
-		return nil, fmt.Errorf("PSK file missing key data")
+		return nil, fmt.Errorf("psk file missing key data")
 	}
 
 	keyHex := strings.TrimSpace(scanner.Text())

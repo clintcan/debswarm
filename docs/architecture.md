@@ -102,6 +102,7 @@ Parallel chunked download engine with resume support and streaming assembly:
 - **Racing**: Small files (<10MB) race P2P vs mirror in memory
 - **Streaming Assembly**: Large files assembled directly to disk, not memory
 - **Memory Efficient**: Chunked downloads use ~32MB regardless of file size
+- **Buffer Pooling**: Reuses 4MB buffers via sync.Pool for zero-allocation chunk I/O
 - **Resume Support**: Persists chunks to disk, tracks state in SQLite
 - **State Manager**: Tracks download progress for crash recovery
 
@@ -113,6 +114,7 @@ type Downloader struct {
     maxConc      int
     stateManager *StateManager
     cache        PartialCache
+    bufferPool   *sync.Pool  // Reusable buffers for chunk I/O
 }
 
 // DownloadResult returns either Data (small files) or FilePath (large files)

@@ -114,7 +114,7 @@ func (idx *Index) LoadFromURL(url string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 	}
 
 	var reader io.Reader = resp.Body

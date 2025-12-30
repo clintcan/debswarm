@@ -134,6 +134,7 @@ type Downloader struct {
 	stateManager   *StateManager
 	cache          PartialCache
 	minChunkedSize int64
+	bufferPool     *sync.Pool // Reusable buffers for chunk I/O
 }
 
 // Config holds downloader configuration
@@ -165,7 +166,7 @@ func New(cfg *Config) *Downloader {
 		}
 	}
 
-	return &Downloader{
+	d := &Downloader{
 		scorer:         cfg.Scorer,
 		metrics:        cfg.Metrics,
 		chunkSize:      chunkSize,
@@ -174,6 +175,16 @@ func New(cfg *Config) *Downloader {
 		cache:          cfg.Cache,
 		minChunkedSize: minChunked,
 	}
+
+	// Initialize buffer pool for chunk I/O operations
+	d.bufferPool = &sync.Pool{
+		New: func() interface{} {
+			buf := make([]byte, d.chunkSize)
+			return &buf
+		},
+	}
+
+	return d
 }
 
 // SetStateManager sets the state manager for download resume support
@@ -475,17 +486,22 @@ func (d *Downloader) downloadChunked(
 		chunkSize := chunkEnd - start
 
 		// Read chunk and write to assembly file at correct offset
-		buf := make([]byte, chunkSize)
+		// Use pooled buffer to reduce allocations
+		bufPtr := d.bufferPool.Get().(*[]byte)
+		buf := (*bufPtr)[:chunkSize] // Slice to actual chunk size
 		_, err = io.ReadFull(chunkF, buf)
 		chunkF.Close()
 		if err != nil && err != io.ErrUnexpectedEOF {
+			d.bufferPool.Put(bufPtr)
 			f.Close()
 			return nil, fmt.Errorf("failed to read resumed chunk %d: %w", i, err)
 		}
 		if _, err := f.WriteAt(buf, start); err != nil {
+			d.bufferPool.Put(bufPtr)
 			f.Close()
 			return nil, fmt.Errorf("failed to write resumed chunk %d: %w", i, err)
 		}
+		d.bufferPool.Put(bufPtr)
 	}
 
 	// Verify hash by streaming read (no memory allocation for full file)
@@ -582,17 +598,22 @@ func (d *Downloader) assembleFromDisk(
 		}
 		chunkSize := chunkEnd - start
 
-		buf := make([]byte, chunkSize)
+		// Use pooled buffer to reduce allocations
+		bufPtr := d.bufferPool.Get().(*[]byte)
+		buf := (*bufPtr)[:chunkSize] // Slice to actual chunk size
 		_, err = io.ReadFull(chunkF, buf)
 		chunkF.Close()
 		if err != nil && err != io.ErrUnexpectedEOF {
+			d.bufferPool.Put(bufPtr)
 			f.Close()
 			return nil, fmt.Errorf("failed to read chunk %d: %w", i, err)
 		}
 		if _, err := f.WriteAt(buf, start); err != nil {
+			d.bufferPool.Put(bufPtr)
 			f.Close()
 			return nil, fmt.Errorf("failed to write chunk %d: %w", i, err)
 		}
+		d.bufferPool.Put(bufPtr)
 	}
 
 	// Verify hash by streaming read
@@ -700,7 +721,7 @@ func (d *Downloader) chunkWorker(
 		}
 
 		if lastErr != nil {
-			chunk.Error = fmt.Errorf("all retries failed: %v (history: %v)", lastErr, allErrors)
+			chunk.Error = fmt.Errorf("all retries failed: %w (history: %v)", lastErr, allErrors)
 		} else if int64(len(data)) != chunk.End-chunk.Start {
 			chunk.Error = fmt.Errorf("incomplete chunk: got %d, expected %d (history: %v)", len(data), chunk.End-chunk.Start, allErrors)
 		} else {

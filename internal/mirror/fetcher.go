@@ -110,7 +110,7 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			httpErr := fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 			f.recordError(url)
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 				// Don't retry client errors
@@ -175,7 +175,7 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			httpErr := fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 			f.recordError(url)
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 				return 0, retry.NonRetryable(httpErr)
@@ -223,7 +223,7 @@ func (f *Fetcher) Stream(ctx context.Context, url string) (io.ReadCloser, int64,
 			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 		}
 		f.recordError(url)
-		return nil, 0, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		return nil, 0, fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 	}
 
 	return resp.Body, resp.ContentLength, nil
@@ -280,7 +280,7 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, rangeStart, rangeE
 			if closeErr := resp.Body.Close(); closeErr != nil {
 				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 			}
-			httpErr := fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+			httpErr := fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 			f.recordError(url)
 			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 				return nil, retry.NonRetryable(httpErr)

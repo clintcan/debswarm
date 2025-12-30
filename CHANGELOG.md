@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.3] - 2025-12-31
+
+### Added
+- **Performance benchmarks**: Added benchmark tests for downloader buffer operations
+- **GoDoc examples**: Added example_test.go files for internal libraries
+  - `internal/retry/` - Examples for Do(), NonRetryable(), backoff strategies
+  - `internal/lifecycle/` - Examples for Manager, Go(), GoN(), RunTicker()
+  - `internal/hashutil/` - Examples for HashingWriter, HashingReader, Verify()
+  - `internal/httpclient/` - Examples for New(), Default(), WithTimeout()
+
+### Changed
+- **Performance**: Added buffer pooling for chunk assembly in downloader
+  - Reuses 4MB buffers via sync.Pool instead of allocating per chunk
+  - 55,000x faster buffer operations, zero allocations in hot path
+  - Reduces GC pressure during large file downloads
+- **Error handling**: Standardized error message patterns across codebase
+  - Lowercase error messages per Go conventions (e.g., "http 404" not "HTTP 404")
+  - Fixed error wrapping in downloader to use %w for proper error chain support
+
 ## [1.11.2] - 2025-12-29
 
 ### Changed

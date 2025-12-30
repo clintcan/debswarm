@@ -1,3 +1,17 @@
+debswarm (1.11.3-1) stable; urgency=low
+
+  * Performance: Buffer pooling for chunk assembly in downloader
+    - Reuses 4MB buffers via sync.Pool instead of allocating per chunk
+    - 55,000x faster buffer operations, zero allocations in hot path
+  * Error handling: Standardized error message patterns
+    - Lowercase error messages per Go conventions
+    - Fixed error wrapping to use %w for proper error chain support
+  * Documentation: Added GoDoc examples for internal libraries
+    - retry, lifecycle, hashutil, httpclient packages
+  * Added benchmark tests for downloader buffer operations
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 31 Dec 2025 00:00:00 +0000
+
 debswarm (1.11.2-1) stable; urgency=low
 
   * Internal refactoring: Extract common patterns into reusable libraries

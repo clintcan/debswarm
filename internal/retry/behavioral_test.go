@@ -65,7 +65,7 @@ func TestNonRetryableStopsImmediately(t *testing.T) {
 	// }
 
 	var attemptCount int32
-	clientErr := errors.New("HTTP 404: Not Found")
+	clientErr := errors.New("http 404: Not Found")
 
 	_, err := Do(context.Background(), Config{
 		MaxAttempts: 5,
@@ -93,7 +93,7 @@ func TestServerErrorRetries(t *testing.T) {
 	// continue  // This is 5xx, retry
 
 	var attemptCount int32
-	serverErr := errors.New("HTTP 500: Internal Server Error")
+	serverErr := errors.New("http 500: Internal Server Error")
 
 	_, err := Do(context.Background(), Config{
 		MaxAttempts: 3,
