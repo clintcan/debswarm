@@ -4,16 +4,16 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.6.x   | :white_check_mark: |
-| 0.5.x   | :white_check_mark: |
-| 0.4.x   | :x:                |
-| < 0.4   | :x:                |
+| 1.11.x  | :white_check_mark: |
+| 1.10.x  | :white_check_mark: |
+| 1.9.x   | :x:                |
+| < 1.9   | :x:                |
 
 ## Reporting a Vulnerability
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report them via email to: security@example.com
+Instead, please report them via email to: clintcan@users.noreply.github.com
 
 You should receive a response within 48 hours. If for some reason you do not, please follow up via email to ensure we received your original message.
 
@@ -55,12 +55,13 @@ debswarm is designed to maintain APT's existing security guarantees while adding
 
 - **Hash Verification**: All P2P downloads verified against SHA256
 - **Peer Blacklisting**: Peers serving bad data are automatically blacklisted
-- **SSRF Protection** (v0.5.3+): URL validation blocks localhost, cloud metadata (169.254.x.x), and private networks
-- **Response Limits** (v0.5.5+): Mirror responses capped at 500MB to prevent memory exhaustion
-- **HTTP Security Headers** (v0.5.5+): Dashboard/metrics serve X-Content-Type-Options, X-Frame-Options, Content-Security-Policy
-- **Error Disclosure Prevention** (v0.5.3+): Dashboard hides internal error details from users
+- **SSRF Protection**: URL validation blocks localhost, cloud metadata (169.254.x.x), and private networks
+- **Response Limits**: Mirror responses capped at 500MB to prevent memory exhaustion
+- **HTTP Security Headers**: Dashboard/metrics serve X-Content-Type-Options, X-Frame-Options, Content-Security-Policy
+- **Error Disclosure Prevention**: Dashboard hides internal error details from users
 - **Identity Protection**: Ed25519 keys stored with 0600 permissions
 - **PSK Security**: Pre-shared keys never logged, only fingerprints displayed
+- **Audit Logging** (v1.8+): Comprehensive audit trails for security events
 - **Sandboxing**: systemd service runs with restricted permissions:
   - `DynamicUser=yes`
   - `ProtectSystem=strict`
