@@ -13,7 +13,7 @@ require (
 	go.uber.org/zap v1.27.1
 	golang.org/x/sync v0.19.0
 	golang.org/x/time v0.14.0
-	modernc.org/sqlite v1.43.0
+	modernc.org/sqlite v1.44.1
 )
 
 require (
@@ -71,7 +71,7 @@ require (
 	github.com/multiformats/go-multistream v0.6.1 // indirect
 	github.com/multiformats/go-varint v0.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pbnjay/memory v0.0.0-20210728143218-7b4eea64cf58 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v2 v2.2.12 // indirect
@@ -125,7 +125,7 @@ require (
 	gonum.org/v1/gonum v0.16.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
-	modernc.org/libc v1.66.10 // indirect
+	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
