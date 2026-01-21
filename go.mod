@@ -5,7 +5,7 @@ go 1.24.6
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/libp2p/go-libp2p v0.46.0
-	github.com/libp2p/go-libp2p-kad-dht v0.36.0
+	github.com/libp2p/go-libp2p-kad-dht v0.37.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/spf13/cobra v1.10.2
