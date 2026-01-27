@@ -31,14 +31,16 @@ jobs:
 
       - name: Check if tag is on main branch
         id: check
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
-          TAG_COMMIT=$(git rev-list -n 1 ${{ env.RELEASE_TAG }})
+          TAG_COMMIT=$(git rev-list -n 1 "$RELEASE_TAG")
           if git branch -r --contains "$TAG_COMMIT" | grep -q 'origin/main'; then
             echo "on_main=true" >> $GITHUB_OUTPUT
-            echo "✅ Tag ${{ env.RELEASE_TAG }} is on main branch"
+            echo "✅ Tag $RELEASE_TAG is on main branch"
           else
             echo "on_main=false" >> $GITHUB_OUTPUT
-            echo "❌ Tag ${{ env.RELEASE_TAG }} is NOT on main branch - skipping release"
+            echo "❌ Tag $RELEASE_TAG is NOT on main branch - skipping release"
           fi
 
   release:
@@ -117,8 +119,9 @@ jobs:
       - name: Upload deb to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           for deb in ../*.deb; do
             echo "Uploading $deb..."
-            gh release upload ${{ env.RELEASE_TAG }} "$deb" --clobber
+            gh release upload "$RELEASE_TAG" "$deb" --clobber
           done
