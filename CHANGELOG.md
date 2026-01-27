@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `TestNew_IPv6WithQUIC`: Verifies IPv6 QUIC addresses when QUIC is preferred
   - `TestNode_TwoNodes_ConnectIPv6`: Tests two nodes connecting over IPv6 only
   - `TestNode_Download_IPv6`: Tests full content transfer over IPv6
-- Completes all Medium Priority roadmap items for 1.0 release
+- Completes all Medium Priority roadmap items
 
 ## [1.11.5] - 2026-01-28
 

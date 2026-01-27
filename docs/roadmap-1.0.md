@@ -1,6 +1,6 @@
 # Roadmap to 1.0 Release
 
-This document tracks the gaps and improvements needed before a production-ready 1.0 release of debswarm.
+This document tracked the gaps and improvements completed for the production-ready 1.0 release of debswarm. **v1.0.0 was released on 2025-12-15.** All items below have been completed.
 
 ## Critical (Must Fix)
 
@@ -190,6 +190,7 @@ Implemented in `internal/p2p/node_test.go`:
 - **v1.11.4** (2026-01-28): Security - GitHub Actions hardening (script injection fix, SHA-pinning)
 - **v1.5.0** (2025-12-17): Low priority - Per-peer rate limiting and adaptive rate limiting
 - **v1.4.0** (2025-12-17): Low priority - Automatic resume retry for failed downloads
+- **v1.0.0** (2025-12-15): Initial stable release
 - **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
 - **v0.8.0** (2025-12-15): Medium priority - systemd directory validation
 - **v0.7.0** (2025-12-15): High priority items - config validation, database recovery, SIGHUP reload, documentation
@@ -198,8 +199,10 @@ Implemented in `internal/p2p/node_test.go`:
 - **v0.6.0** (2025-12-15): Download resume support, security fixes
 - **v0.5.x**: Core functionality, peer scoring, bandwidth limiting, benchmarking
 
-## Target: v1.0.0
+## Status
 
-All Critical, High Priority, and Medium Priority items are resolved. E2E tests and IPv6 validation are complete.
+**v1.0.0 Released** - All Critical, High Priority, and Medium Priority roadmap items are complete.
 
-**Ready for 1.0 release** - All pre-1.0 roadmap items complete. Only low-priority post-1.0 items remain (request tracing).
+Remaining post-1.0 work:
+- Request tracing (low priority)
+- Fleet coordinator completion (future)
