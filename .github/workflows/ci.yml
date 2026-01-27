@@ -74,6 +74,18 @@ jobs:
       - name: Run gosec security scanner
         run: gosec -fmt=json -out=gosec-results.json -stdout -verbose=text ./... || true
 
+      - name: Check for high-severity findings
+        run: |
+          if [ -f gosec-results.json ]; then
+            HIGH_COUNT=$(jq '[.Issues[]? | select(.severity == "HIGH" or .severity == "CRITICAL")] | length' gosec-results.json)
+            if [ "$HIGH_COUNT" -gt 0 ]; then
+              echo "❌ Found $HIGH_COUNT high/critical severity issues:"
+              jq '.Issues[] | select(.severity == "HIGH" or .severity == "CRITICAL")' gosec-results.json
+              exit 1
+            fi
+            echo "✅ No high/critical severity issues found"
+          fi
+
       - name: Upload gosec results
         uses: actions/upload-artifact@v6
         with:
