@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.5] - 2026-01-28
+
+### Security
+- **Integer overflow fixes**: Resolve all gosec high-severity integer overflow warnings (G115)
+  - Add overflow validation for uint64/int64 conversions in P2P transfer protocol
+  - Add bounds checking before int-to-uint16 conversion in fleet messages
+  - Add explicit bitmask for int64-to-uint32 truncation in fleet coordinator
+  - Add nosec annotations for intentional conversions (benchmark math/rand, diskspace)
+
+## [1.11.4] - 2026-01-28
+
+### Security
+- **GitHub Actions hardening**: Fix security vulnerabilities in CI/CD workflows
+  - Fix script injection vulnerability in release.yml workflow_dispatch input
+  - Add high-severity check to gosec scanner (fail CI on HIGH findings)
+  - SHA-pin all GitHub Actions to prevent supply chain attacks
+    - actions/checkout@v4.3.0
+    - actions/setup-go@v5.6.0
+    - actions/upload-artifact@v6.0.0
+    - codecov/codecov-action@v5.5.2
+    - golangci/golangci-lint-action@v7.0.1
+    - goreleaser/goreleaser-action@v6.4.0
+
 ## [1.11.3] - 2025-12-31
 
 ### Added
@@ -630,7 +653,14 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.11.5...HEAD
+[1.11.5]: https://github.com/clintcan/debswarm/compare/v1.11.4...v1.11.5
+[1.11.4]: https://github.com/clintcan/debswarm/compare/v1.11.3...v1.11.4
+[1.11.3]: https://github.com/clintcan/debswarm/compare/v1.11.2...v1.11.3
+[1.11.2]: https://github.com/clintcan/debswarm/compare/v1.11.1...v1.11.2
+[1.11.1]: https://github.com/clintcan/debswarm/compare/v1.11.0...v1.11.1
+[1.11.0]: https://github.com/clintcan/debswarm/compare/v1.10.0...v1.11.0
+[1.10.0]: https://github.com/clintcan/debswarm/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/clintcan/debswarm/compare/v1.8.0...v1.9.0
 [1.8.0]: https://github.com/clintcan/debswarm/compare/v1.7.0...v1.8.0
 [1.7.0]: https://github.com/clintcan/debswarm/compare/v1.6.0...v1.7.0

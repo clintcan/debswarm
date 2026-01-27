@@ -1,3 +1,21 @@
+debswarm (1.11.5-1) stable; urgency=medium
+
+  * Security: Resolve all gosec high-severity integer overflow warnings (G115)
+    - Add overflow validation for uint64/int64 conversions in P2P transfers
+    - Add bounds checking for int-to-uint16 conversion in fleet messages
+    - Add nosec annotations for intentional conversions
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
+debswarm (1.11.4-1) stable; urgency=medium
+
+  * Security: Fix GitHub Actions vulnerabilities
+    - Fix script injection in release.yml workflow_dispatch input
+    - Add high-severity check to gosec scanner
+    - SHA-pin all GitHub Actions to prevent supply chain attacks
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
 debswarm (1.11.3-1) stable; urgency=low
 
   * Performance: Buffer pooling for chunk assembly in downloader

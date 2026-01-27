@@ -178,6 +178,8 @@ Implemented adaptive rate adjustment based on peer performance metrics:
 
 ## Version History
 
+- **v1.11.5** (2026-01-28): Security - Resolve all gosec high-severity integer overflow warnings
+- **v1.11.4** (2026-01-28): Security - GitHub Actions hardening (script injection fix, SHA-pinning)
 - **v1.5.0** (2025-12-17): Low priority - Per-peer rate limiting and adaptive rate limiting
 - **v1.4.0** (2025-12-17): Low priority - Automatic resume retry for failed downloads
 - **v0.8.1** (2025-12-15): Medium priority - MaxConcurrentUploads/Downloads enforcement
