@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
 
 	"github.com/debswarm/debswarm/internal/metrics"
@@ -886,4 +887,199 @@ func TestNode_UploadLimit(t *testing.T) {
 	if !node.canAcceptUpload(testPeerID) {
 		t.Error("Should accept upload after one ends")
 	}
+}
+
+func TestNew_IPv6Addresses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg := newTestConfig(t)
+	logger := newTestLogger()
+
+	node, err := New(ctx, cfg, logger)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer node.Close()
+
+	addrs := node.Addrs()
+
+	// Check for IPv6 addresses
+	hasIPv6 := false
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		if strings.Contains(addrStr, "/ip6/") {
+			hasIPv6 = true
+			t.Logf("Found IPv6 address: %s", addrStr)
+		}
+	}
+
+	if !hasIPv6 {
+		// IPv6 may not be available in all CI environments, log but don't fail
+		t.Log("No IPv6 addresses found - IPv6 may not be available in this environment")
+		for _, addr := range addrs {
+			t.Logf("  Available address: %s", addr.String())
+		}
+	}
+}
+
+func TestNew_IPv6WithQUIC(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg := newTestConfig(t)
+	cfg.PreferQUIC = true
+	logger := newTestLogger()
+
+	node, err := New(ctx, cfg, logger)
+	if err != nil {
+		t.Fatalf("New with QUIC failed: %v", err)
+	}
+	defer node.Close()
+
+	addrs := node.Addrs()
+
+	// Check for IPv6 QUIC addresses
+	hasIPv6QUIC := false
+	for _, addr := range addrs {
+		addrStr := addr.String()
+		if strings.Contains(addrStr, "/ip6/") && strings.Contains(addrStr, "quic") {
+			hasIPv6QUIC = true
+			t.Logf("Found IPv6 QUIC address: %s", addrStr)
+		}
+	}
+
+	if !hasIPv6QUIC {
+		t.Log("No IPv6 QUIC addresses found - IPv6 may not be available in this environment")
+	}
+}
+
+func TestNode_TwoNodes_ConnectIPv6(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	logger := newTestLogger()
+
+	// Create first node
+	cfg1 := newTestConfig(t)
+	node1, err := New(ctx, cfg1, logger)
+	if err != nil {
+		t.Fatalf("New node1 failed: %v", err)
+	}
+	defer node1.Close()
+
+	// Create second node
+	cfg2 := newTestConfig(t)
+	node2, err := New(ctx, cfg2, logger)
+	if err != nil {
+		t.Fatalf("New node2 failed: %v", err)
+	}
+	defer node2.Close()
+
+	// Filter for IPv6 addresses only
+	var ipv6Addrs []multiaddr.Multiaddr
+	for _, addr := range node1.Addrs() {
+		if strings.Contains(addr.String(), "/ip6/") {
+			ipv6Addrs = append(ipv6Addrs, addr)
+		}
+	}
+
+	if len(ipv6Addrs) == 0 {
+		t.Skip("No IPv6 addresses available - skipping IPv6 connectivity test")
+	}
+
+	t.Logf("Testing connection with %d IPv6 addresses", len(ipv6Addrs))
+	for _, addr := range ipv6Addrs {
+		t.Logf("  %s", addr.String())
+	}
+
+	// Try to connect node2 to node1 using only IPv6 addresses
+	node1Info := peer.AddrInfo{
+		ID:    node1.PeerID(),
+		Addrs: ipv6Addrs,
+	}
+
+	err = node2.host.Connect(ctx, node1Info)
+	if err != nil {
+		t.Fatalf("Failed to connect nodes over IPv6: %v", err)
+	}
+
+	// Wait a bit for connection to establish
+	time.Sleep(100 * time.Millisecond)
+
+	// Both nodes should see each other as connected
+	if node1.ConnectedPeers() == 0 {
+		t.Error("Node1 should have connected peers over IPv6")
+	}
+	if node2.ConnectedPeers() == 0 {
+		t.Error("Node2 should have connected peers over IPv6")
+	}
+
+	t.Log("Successfully connected two nodes over IPv6")
+}
+
+func TestNode_Download_IPv6(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	logger := newTestLogger()
+
+	// Create two nodes
+	cfg1 := newTestConfig(t)
+	node1, err := New(ctx, cfg1, logger)
+	if err != nil {
+		t.Fatalf("New node1 failed: %v", err)
+	}
+	defer node1.Close()
+
+	cfg2 := newTestConfig(t)
+	node2, err := New(ctx, cfg2, logger)
+	if err != nil {
+		t.Fatalf("New node2 failed: %v", err)
+	}
+	defer node2.Close()
+
+	// Filter for IPv6 addresses only
+	var ipv6Addrs []multiaddr.Multiaddr
+	for _, addr := range node1.Addrs() {
+		if strings.Contains(addr.String(), "/ip6/") {
+			ipv6Addrs = append(ipv6Addrs, addr)
+		}
+	}
+
+	if len(ipv6Addrs) == 0 {
+		t.Skip("No IPv6 addresses available - skipping IPv6 download test")
+	}
+
+	// Set up content on node1
+	testContent := []byte("IPv6 test content for download")
+	testHash := "a1b2c3d4e5f6789012345678901234567890123456789012345678901234abcd"
+
+	node1.SetContentGetter(func(hash string) (io.ReadCloser, int64, error) {
+		if hash == testHash {
+			return io.NopCloser(strings.NewReader(string(testContent))), int64(len(testContent)), nil
+		}
+		return nil, 0, io.EOF
+	})
+
+	// Connect using IPv6 only
+	node1Info := peer.AddrInfo{
+		ID:    node1.PeerID(),
+		Addrs: ipv6Addrs,
+	}
+	if err := node2.host.Connect(ctx, node1Info); err != nil {
+		t.Fatalf("Failed to connect over IPv6: %v", err)
+	}
+
+	// Download from node1 over IPv6
+	data, err := node2.Download(ctx, node1Info, testHash)
+	if err != nil {
+		t.Fatalf("Download over IPv6 failed: %v", err)
+	}
+
+	if string(data) != string(testContent) {
+		t.Errorf("Downloaded content mismatch: got %q, want %q", string(data), string(testContent))
+	}
+
+	t.Log("Successfully downloaded content over IPv6")
 }

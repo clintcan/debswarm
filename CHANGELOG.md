@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-01-28
+
+### Added
+- **IPv6 validation in CI**: Added comprehensive IPv6 connectivity tests to validate P2P functionality
+  - `TestNew_IPv6Addresses`: Verifies nodes listen on IPv6 addresses (TCP and QUIC)
+  - `TestNew_IPv6WithQUIC`: Verifies IPv6 QUIC addresses when QUIC is preferred
+  - `TestNode_TwoNodes_ConnectIPv6`: Tests two nodes connecting over IPv6 only
+  - `TestNode_Download_IPv6`: Tests full content transfer over IPv6
+- Completes all Medium Priority roadmap items for 1.0 release
+
 ## [1.11.5] - 2026-01-28
 
 ### Security

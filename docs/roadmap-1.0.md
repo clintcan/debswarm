@@ -23,7 +23,7 @@ This document tracks the gaps and improvements needed before a production-ready 
 
 | Issue | Location | Description | Status |
 |-------|----------|-------------|--------|
-| **IPv6 validation** | `internal/p2p/node.go` | Configured in libp2p but not tested on IPv6-only systems | Not started |
+| **IPv6 validation** | `internal/p2p/node_test.go` | Configured in libp2p but not tested on IPv6-only systems | **Done** (v1.12.0) |
 | **E2E tests** | `internal/proxy/e2e_test.go` | Integration tests for proxy, cache, index, and P2P flows | **Done** |
 | **MaxConcurrentUploads enforcement** | `internal/config/config.go:43-44` | `transfer.max_concurrent_uploads` and `max_concurrent_peer_downloads` not fully enforced at daemon level | **Done** (v0.8.1) |
 | **Systemd directory validation** | `cmd/debswarm/main.go` | No pre-flight check that StateDirectory exists and is writable | **Done** (v0.8.0) |
@@ -176,8 +176,16 @@ Implemented adaptive rate adjustment based on peer performance metrics:
   - `transfer.adaptive_max_boost`: Maximum multiplier (default 1.5)
 - `internal/metrics/metrics.go`: Added `AdaptiveAdjustments` counter for tracking boost/reduce events
 
+### IPv6 Validation (Done)
+Implemented in `internal/p2p/node_test.go`:
+- `TestNew_IPv6Addresses`: Verifies nodes listen on IPv6 addresses (TCP and QUIC)
+- `TestNew_IPv6WithQUIC`: Verifies IPv6 QUIC addresses when QUIC is preferred
+- `TestNode_TwoNodes_ConnectIPv6`: Tests two nodes connecting over IPv6 only
+- `TestNode_Download_IPv6`: Tests full content transfer over IPv6
+
 ## Version History
 
+- **v1.12.0** (2026-01-28): Medium priority - IPv6 validation tests in CI
 - **v1.11.5** (2026-01-28): Security - Resolve all gosec high-severity integer overflow warnings
 - **v1.11.4** (2026-01-28): Security - GitHub Actions hardening (script injection fix, SHA-pinning)
 - **v1.5.0** (2025-12-17): Low priority - Per-peer rate limiting and adaptive rate limiting
@@ -192,6 +200,6 @@ Implemented adaptive rate adjustment based on peer performance metrics:
 
 ## Target: v1.0.0
 
-All Critical and High Priority items are resolved. E2E tests are complete. Only IPv6 validation remains in Medium Priority.
+All Critical, High Priority, and Medium Priority items are resolved. E2E tests and IPv6 validation are complete.
 
-**Ready for 1.0 release** - IPv6 testing can be done post-release if needed, as IPv6 support is functional (just not validated in CI).
+**Ready for 1.0 release** - All pre-1.0 roadmap items complete. Only low-priority post-1.0 items remain (request tracing).

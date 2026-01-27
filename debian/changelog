@@ -1,3 +1,14 @@
+debswarm (1.12.0-1) stable; urgency=low
+
+  * IPv6 validation: Added comprehensive IPv6 connectivity tests in CI
+    - TestNew_IPv6Addresses: Verifies nodes listen on IPv6 addresses
+    - TestNew_IPv6WithQUIC: Verifies IPv6 QUIC addresses
+    - TestNode_TwoNodes_ConnectIPv6: Tests two nodes connecting over IPv6
+    - TestNode_Download_IPv6: Tests full content transfer over IPv6
+  * Completes all Medium Priority roadmap items for 1.0 release
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
 debswarm (1.11.5-1) stable; urgency=medium
 
   * Security: Resolve all gosec high-severity integer overflow warnings (G115)
