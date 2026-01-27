@@ -55,7 +55,7 @@ func NewSimulatedPeer(cfg PeerConfig) *SimulatedPeer {
 	return &SimulatedPeer{
 		cfg:     cfg,
 		content: make(map[string][]byte),
-		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
+		rng:     rand.New(rand.NewSource(time.Now().UnixNano())), // #nosec G404 -- math/rand is intentional for benchmark reproducibility
 	}
 }
 

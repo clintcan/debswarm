@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 	"time"
 
@@ -715,11 +716,15 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	// Send request
 	var request []byte
 	if proto == ProtocolTransferRange {
+		// Validate range values to prevent integer overflow
+		if start < 0 || end < 0 {
+			return nil, fmt.Errorf("invalid range: start=%d, end=%d (negative values not allowed)", start, end)
+		}
 		// Range request: hash + start (8 bytes) + end (8 bytes) + newline
 		request = make([]byte, 64+16+1)
 		copy(request, sha256Hash)
-		binary.BigEndian.PutUint64(request[64:72], uint64(start))
-		binary.BigEndian.PutUint64(request[72:80], uint64(end))
+		binary.BigEndian.PutUint64(request[64:72], uint64(start)) // #nosec G115 -- validated non-negative above
+		binary.BigEndian.PutUint64(request[72:80], uint64(end))   // #nosec G115 -- validated non-negative above
 		request[80] = '\n'
 	} else {
 		// Simple request: hash + newline
@@ -738,7 +743,11 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		return nil, fmt.Errorf("failed to read size: %w", err)
 	}
 
-	size := int64(binary.BigEndian.Uint64(sizeBuf))
+	sizeU64 := binary.BigEndian.Uint64(sizeBuf)
+	if sizeU64 > math.MaxInt64 {
+		return nil, fmt.Errorf("size overflow: %d exceeds max int64", sizeU64)
+	}
+	size := int64(sizeU64) // #nosec G115 -- validated above
 
 	if size == 0 {
 		return nil, fmt.Errorf("peer does not have the requested content")
@@ -833,8 +842,17 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 
 		if len(line) >= 80 {
 			sha256Hash = string(line[:64])
-			start = int64(binary.BigEndian.Uint64(line[64:72]))
-			end = int64(binary.BigEndian.Uint64(line[72:80]))
+			startU64 := binary.BigEndian.Uint64(line[64:72])
+			endU64 := binary.BigEndian.Uint64(line[72:80])
+			// Validate values fit in int64 to prevent overflow
+			if startU64 > math.MaxInt64 || endU64 > math.MaxInt64 {
+				n.logger.Warn("Invalid range values in request (overflow)",
+					zap.Uint64("start", startU64),
+					zap.Uint64("end", endU64))
+				return
+			}
+			start = int64(startU64) // #nosec G115 -- validated above
+			end = int64(endU64)     // #nosec G115 -- validated above
 		} else {
 			sha256Hash = string(line)
 		}
@@ -960,7 +978,11 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 
 func (n *Node) writeSize(stream network.Stream, size int64) {
 	sizeBuf := make([]byte, 8)
-	binary.BigEndian.PutUint64(sizeBuf, uint64(size))
+	// Size is always non-negative (file sizes), safe to convert
+	if size < 0 {
+		size = 0
+	}
+	binary.BigEndian.PutUint64(sizeBuf, uint64(size)) // #nosec G115 -- validated non-negative above
 	_, _ = stream.Write(sizeBuf)
 }
 

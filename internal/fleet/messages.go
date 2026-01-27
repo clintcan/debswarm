@@ -4,6 +4,7 @@ package fleet
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -91,6 +92,10 @@ func (m *Message) Encode(w io.Writer) error {
 
 	// Write hash length and hash
 	hashBytes := []byte(m.Hash)
+	if len(hashBytes) > 65535 {
+		return fmt.Errorf("hash too long: %d bytes (max 65535)", len(hashBytes))
+	}
+	// #nosec G115 -- length validated above to fit in uint16
 	if err := binary.Write(w, binary.BigEndian, uint16(len(hashBytes))); err != nil {
 		return err
 	}

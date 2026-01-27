@@ -454,8 +454,9 @@ func (c *Coordinator) handleFetchFailed(from peer.ID, msg Message) {
 func (c *Coordinator) generateNonce() uint32 {
 	var buf [4]byte
 	if _, err := rand.Read(buf[:]); err != nil {
-		// Fallback to time-based if crypto/rand fails
-		return uint32(time.Now().UnixNano())
+		// Fallback to time-based if crypto/rand fails (extremely rare)
+		// Intentional truncation to 32 bits - only need randomness, not full precision
+		return uint32(time.Now().UnixNano() & 0xFFFFFFFF) // #nosec G115 -- intentional truncation for nonce
 	}
 	return binary.BigEndian.Uint32(buf[:])
 }
