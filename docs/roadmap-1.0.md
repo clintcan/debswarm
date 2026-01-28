@@ -185,6 +185,7 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Version History
 
+- **v1.12.1** (2026-01-28): Fleet coordinator message response completion and race fixes
 - **v1.12.0** (2026-01-28): Medium priority - IPv6 validation tests in CI
 - **v1.11.5** (2026-01-28): Security - Resolve all gosec high-severity integer overflow warnings
 - **v1.11.4** (2026-01-28): Security - GitHub Actions hardening (script injection fix, SHA-pinning)
@@ -205,4 +206,4 @@ Implemented in `internal/p2p/node_test.go`:
 
 Remaining post-1.0 work:
 - Request tracing (low priority)
-- Fleet coordinator completion (future)
+- Fleet coordinator completion - **Done** (v1.12.1)
