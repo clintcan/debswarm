@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-01-29
+
+### Added
+- **Package rollback commands**: List and fetch old package versions from cache or P2P peers
+  - `debswarm rollback list <package>` - Show all cached versions of a package
+  - `debswarm rollback fetch <package> <version>` - Download specific version from cache
+  - `debswarm rollback migrate` - Populate metadata for existing cache entries
+  - Cache schema extended with `package_name`, `package_version`, `architecture` columns
+  - New `ParseDebFilename()` utility to extract metadata from Debian package filenames
+  - Useful for downgrading after problematic updates or testing compatibility
+
+### Fixed
+- **Double-close in proxy shutdown**: Fixed verifier being closed twice during proxy server shutdown
+- **Metrics formatting**: Corrected gofmt alignment in metrics.go
+
+### Changed
+- **Audit events**: Added dedicated `ProviderCount` field to audit Event struct (previously embedded in details)
+
+### Documentation
+- Added multi-source verification section to security hardening guide
+
 ## [1.14.0] - 2026-01-28
 
 ### Added

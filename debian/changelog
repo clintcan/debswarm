@@ -1,3 +1,47 @@
+debswarm (1.15.0-1) stable; urgency=low
+
+  * Package rollback commands: List and fetch old package versions
+    - debswarm rollback list <package>: Show cached versions
+    - debswarm rollback fetch <package> <version>: Download specific version
+    - debswarm rollback migrate: Populate metadata for existing cache
+  * Cache schema extended with package_name, package_version, architecture
+  * Fix: Double-close of verifier in proxy shutdown
+  * Fix: gofmt alignment in metrics.go
+  * Refactor: Added dedicated ProviderCount field to audit Event
+  * Docs: Added multi-source verification to security hardening guide
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Wed, 29 Jan 2026 00:00:00 +0000
+
+debswarm (1.14.0-1) stable; urgency=low
+
+  * Multi-source verification: Asynchronous verification via DHT provider queries
+    - Near-zero bandwidth overhead (queries DHT, doesn't re-download)
+    - Non-blocking verification after successful download
+    - Configurable minimum providers for "verified" status (default: 2)
+    - New audit events: multi_source_verified, multi_source_unverified
+    - New metrics: verification_results, verification_providers, verification_duration
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
+debswarm (1.13.0-1) stable; urgency=low
+
+  * Configurable NAT traversal options
+    - network.enable_relay: Use circuit relays (default: true)
+    - network.enable_hole_punching: Enable NAT hole punching (default: true)
+    - Client-only relay mode (uses relays, doesn't act as one)
+  * Documentation: Added NAT Traversal section to configuration.md
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
+debswarm (1.12.1-1) stable; urgency=low
+
+  * Fix: Fleet coordination message responses (WantPackage handler)
+  * Fix: Data race in handleWantPackage reading state outside lock
+  * Fix: Lock contention in StartProgressBroadcaster
+  * Tests: Added handleWantPackage response handling tests
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 28 Jan 2026 00:00:00 +0000
+
 debswarm (1.12.0-1) stable; urgency=low
 
   * IPv6 validation: Added comprehensive IPv6 connectivity tests in CI
