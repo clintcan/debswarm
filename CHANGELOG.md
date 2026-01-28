@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-01-28
+
+### Added
+- **Multi-source verification**: Asynchronous verification of downloaded packages by querying the DHT for other providers
+  - Near-zero bandwidth overhead - only queries DHT for provider list, doesn't re-download data
+  - Non-blocking verification runs after successful download and caching
+  - Configurable minimum providers for "verified" status (default: 2)
+  - New audit events: `multi_source_verified`, `multi_source_unverified`
+  - New metrics: `debswarm_verification_results`, `debswarm_verification_providers`, `debswarm_verification_duration`
+  - Part of v2.0 Security & Resilience roadmap
+
 ## [1.13.0] - 2026-01-28
 
 ### Added

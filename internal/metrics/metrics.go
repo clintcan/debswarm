@@ -59,6 +59,11 @@ type Metrics struct {
 	FleetCoordination *CounterVec // Coordination actions (labels: action - fetch_wan, wait_peer, fetch_lan)
 	FleetInFlight     *Gauge      // Number of in-flight fleet-coordinated downloads
 
+	// Multi-source verification metrics
+	VerificationResults  *CounterVec // Verification outcomes (labels: status - verified, partial, unverified, error)
+	VerificationProviders *Histogram // Distribution of provider counts found
+	VerificationDuration  *Histogram // Time taken for verification queries
+
 	// Histograms
 	DownloadDuration  *HistogramVec
 	PeerLatency       *HistogramVec
@@ -338,6 +343,11 @@ func New() *Metrics {
 		FleetBytesAvoided: &Counter{},
 		FleetCoordination: NewCounterVec(),
 		FleetInFlight:     &Gauge{},
+
+		// Multi-source verification
+		VerificationResults:   NewCounterVec(),
+		VerificationProviders: NewHistogram([]float64{0, 1, 2, 3, 5, 10}),
+		VerificationDuration:  NewHistogram(DurationBuckets),
 
 		DownloadDuration:  NewHistogramVec(DurationBuckets),
 		PeerLatency:       NewHistogramVec(LatencyBuckets),

@@ -185,6 +185,7 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Version History
 
+- **v1.14.0** (2026-01-28): Multi-source verification (DHT query for other providers, supply chain defense)
 - **v1.13.0** (2026-01-28): Configurable NAT traversal (circuit relay and hole punching)
 - **v1.12.1** (2026-01-28): Fleet coordinator message response completion and race fixes
 - **v1.12.0** (2026-01-28): Medium priority - IPv6 validation tests in CI

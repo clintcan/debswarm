@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/debswarm/debswarm/internal/proxy"
 	"github.com/debswarm/debswarm/internal/scheduler"
 	"github.com/debswarm/debswarm/internal/timeouts"
+	"github.com/debswarm/debswarm/internal/verify"
 )
 
 func daemonCmd() *cobra.Command {
@@ -355,6 +357,17 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			zap.Int("allowConcurrent", cfg.Fleet.AllowConcurrent))
 	}
 
+	// Initialize multi-source verifier
+	verifier := verify.New(
+		verify.DefaultConfig(),
+		&providerFinderAdapter{node: p2pNode},
+		logger,
+		m,
+		auditLogger,
+	)
+	defer func() { _ = verifier.Close() }()
+	logger.Debug("Multi-source verifier initialized")
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
 		Addr:                       fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
@@ -371,6 +384,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Connectivity:               connectivityMonitor,
 		Scheduler:                  sched,
 		Fleet:                      fleetCoord,
+		Verifier:                   verifier,
 		RetryMaxAttempts:           cfg.Transfer.RetryMaxAttempts,
 		RetryInterval:              cfg.Transfer.RetryIntervalDuration(),
 		RetryMaxAge:                cfg.Transfer.RetryMaxAgeDuration(),
@@ -438,6 +452,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	logger.Info("Shutdown complete")
 	return nil
+}
+
+// providerFinderAdapter adapts p2p.Node to the verify.ProviderFinder interface
+type providerFinderAdapter struct {
+	node *p2p.Node
+}
+
+func (a *providerFinderAdapter) FindProviders(ctx context.Context, sha256Hash string, limit int) ([]peer.AddrInfo, error) {
+	return a.node.FindProviders(ctx, sha256Hash, limit)
+}
+
+func (a *providerFinderAdapter) ID() peer.ID {
+	return a.node.PeerID()
 }
 
 func runPeriodicTasks(

@@ -21,6 +21,10 @@ const (
 	EventCacheHit EventType = "cache_hit"
 	// EventPeerBlacklisted is logged when a peer is blacklisted
 	EventPeerBlacklisted EventType = "peer_blacklisted"
+	// EventMultiSourceVerified is logged when a package is verified by multiple providers
+	EventMultiSourceVerified EventType = "multi_source_verified"
+	// EventMultiSourceUnverified is logged when no other providers found for a package
+	EventMultiSourceUnverified EventType = "multi_source_unverified"
 )
 
 // Event represents a single audit log entry

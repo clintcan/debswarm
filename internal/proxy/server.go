@@ -35,6 +35,7 @@ import (
 	"github.com/debswarm/debswarm/internal/scheduler"
 	"github.com/debswarm/debswarm/internal/security"
 	"github.com/debswarm/debswarm/internal/timeouts"
+	"github.com/debswarm/debswarm/internal/verify"
 )
 
 // Server is the HTTP proxy server
@@ -54,6 +55,7 @@ type Server struct {
 	connectivity *connectivity.Monitor
 	scheduler    *scheduler.Scheduler
 	fleet        *fleet.Coordinator
+	verifier     *verify.Verifier
 
 	// Statistics (atomic)
 	requestsTotal   int64
@@ -108,6 +110,7 @@ type Config struct {
 	Connectivity               *connectivity.Monitor // Connectivity monitor for offline-first mode
 	Scheduler                  *scheduler.Scheduler  // Scheduler for time-based rate limiting
 	Fleet                      *fleet.Coordinator    // Fleet coordinator for LAN download coordination
+	Verifier                   *verify.Verifier      // Multi-source verifier for download validation
 	// Retry settings
 	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
 	RetryInterval    time.Duration // How often to check for failed downloads
@@ -178,6 +181,7 @@ func NewServer(
 		connectivity:     cfg.Connectivity,
 		scheduler:        cfg.Scheduler,
 		fleet:            cfg.Fleet,
+		verifier:         cfg.Verifier,
 		p2pTimeout:       cfg.P2PTimeout,
 		dhtLookupLimit:   cfg.DHTLookupLimit,
 		metricsPort:      cfg.MetricsPort,
@@ -457,6 +461,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		case <-ctx.Done():
 			// Timeout waiting for retry worker
 		}
+	}
+
+	// Close verifier (waits for pending verifications)
+	if s.verifier != nil {
+		_ = s.verifier.Close()
 	}
 
 	return s.server.Shutdown(ctx)
@@ -1041,6 +1050,11 @@ func (s *Server) cacheAndAnnounce(data []byte, hash, path string) {
 		return
 	}
 	s.announceAsync(hash)
+
+	// Asynchronously verify via multi-source query
+	if s.verifier != nil {
+		s.verifier.VerifyAsync(hash, path)
+	}
 }
 
 func (s *Server) announceAsync(hash string) {
