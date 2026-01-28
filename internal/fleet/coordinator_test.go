@@ -3,6 +3,7 @@ package fleet
 import (
 	"bytes"
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -185,6 +186,7 @@ func TestCoordinatorStatus(t *testing.T) {
 
 // mockMessageSender implements MessageSender for testing
 type mockMessageSender struct {
+	mu       sync.Mutex
 	messages []struct {
 		peerID peer.ID
 		msg    *Message
@@ -192,11 +194,28 @@ type mockMessageSender struct {
 }
 
 func (m *mockMessageSender) SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.messages = append(m.messages, struct {
 		peerID peer.ID
 		msg    *Message
 	}{peerID, msg})
 	return nil
+}
+
+func (m *mockMessageSender) getMessages() []struct {
+	peerID peer.ID
+	msg    *Message
+} {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Return a copy to avoid race
+	result := make([]struct {
+		peerID peer.ID
+		msg    *Message
+	}, len(m.messages))
+	copy(result, m.messages)
+	return result
 }
 
 func TestHandleWantPackageWithCache(t *testing.T) {
@@ -219,14 +238,24 @@ func TestHandleWantPackageWithCache(t *testing.T) {
 
 	c.HandleMessage(fromPeer, msg)
 
-	// Give message handler time to process
-	time.Sleep(50 * time.Millisecond)
-
-	if len(sender.messages) != 1 {
-		t.Fatalf("expected 1 message sent, got %d", len(sender.messages))
+	// Wait for message handler to process
+	var messages []struct {
+		peerID peer.ID
+		msg    *Message
+	}
+	for i := 0; i < 50; i++ {
+		time.Sleep(10 * time.Millisecond)
+		messages = sender.getMessages()
+		if len(messages) > 0 {
+			break
+		}
 	}
 
-	sent := sender.messages[0]
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message sent, got %d", len(messages))
+	}
+
+	sent := messages[0]
 	if sent.peerID != fromPeer {
 		t.Errorf("expected message to %v, got %v", fromPeer, sent.peerID)
 	}
@@ -261,14 +290,24 @@ func TestHandleWantPackageWhileFetching(t *testing.T) {
 
 	c.HandleMessage(fromPeer, msg)
 
-	// Give message handler time to process
-	time.Sleep(50 * time.Millisecond)
-
-	if len(sender.messages) != 1 {
-		t.Fatalf("expected 1 message sent, got %d", len(sender.messages))
+	// Wait for message handler to process
+	var messages []struct {
+		peerID peer.ID
+		msg    *Message
+	}
+	for i := 0; i < 50; i++ {
+		time.Sleep(10 * time.Millisecond)
+		messages = sender.getMessages()
+		if len(messages) > 0 {
+			break
+		}
 	}
 
-	sent := sender.messages[0]
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message sent, got %d", len(messages))
+	}
+
+	sent := messages[0]
 	if sent.peerID != fromPeer {
 		t.Errorf("expected message to %v, got %v", fromPeer, sent.peerID)
 	}
