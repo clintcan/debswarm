@@ -55,12 +55,18 @@ type CacheChecker interface {
 	Has(hash string) bool
 }
 
+// MessageSender sends fleet messages to peers
+type MessageSender interface {
+	SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error
+}
+
 // Coordinator manages fleet coordination for download deduplication
 type Coordinator struct {
 	config *Config
 	logger *zap.Logger
 	peers  PeerProvider
 	cache  CacheChecker
+	sender MessageSender
 
 	// In-flight downloads being coordinated
 	inFlight map[string]*FetchState
@@ -106,6 +112,12 @@ func (c *Coordinator) Close() error {
 	c.cancel()
 	c.wg.Wait()
 	return nil
+}
+
+// SetSender sets the message sender for responding to peers.
+// This is called after Protocol is created to avoid circular dependency.
+func (c *Coordinator) SetSender(sender MessageSender) {
+	c.sender = sender
 }
 
 // WantPackage initiates a package request to the fleet.
@@ -355,19 +367,52 @@ func (c *Coordinator) handleWantPackage(from peer.ID, msg Message) {
 		c.logger.Debug("Responding to WantPackage with HavePackage",
 			zap.String("peer", from.String()[:min(12, len(from.String()))]),
 			zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))
-		// TODO: Send MsgHavePackage response
+
+		if c.sender != nil {
+			resp := &Message{
+				Type: MsgHavePackage,
+				Hash: msg.Hash,
+			}
+			if err := c.sender.SendMessage(c.ctx, from, resp); err != nil {
+				c.logger.Debug("Failed to send HavePackage response",
+					zap.Error(err),
+					zap.String("peer", from.String()[:min(12, len(from.String()))]))
+			}
+		}
+		return // We have it, no need to check if we're fetching
 	}
 
 	// If we're fetching, respond with Fetching
+	var isSelfFetching bool
+	var nonce uint32
+	var size int64
+
 	c.mu.RLock()
-	state, fetching := c.inFlight[msg.Hash]
+	if state, ok := c.inFlight[msg.Hash]; ok && state.Fetcher == "" {
+		isSelfFetching = true
+		nonce = state.Nonce
+		size = state.Size
+	}
 	c.mu.RUnlock()
 
-	if fetching && state.Fetcher == "" {
+	if isSelfFetching {
 		c.logger.Debug("Responding to WantPackage with Fetching",
 			zap.String("peer", from.String()[:min(12, len(from.String()))]),
 			zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))
-		// TODO: Send MsgFetching response
+
+		if c.sender != nil {
+			resp := &Message{
+				Type:  MsgFetching,
+				Hash:  msg.Hash,
+				Nonce: nonce,
+				Size:  size,
+			}
+			if err := c.sender.SendMessage(c.ctx, from, resp); err != nil {
+				c.logger.Debug("Failed to send Fetching response",
+					zap.Error(err),
+					zap.String("peer", from.String()[:min(12, len(from.String()))]))
+			}
+		}
 	}
 }
 

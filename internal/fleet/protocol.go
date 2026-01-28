@@ -36,6 +36,9 @@ func NewProtocol(h host.Host, coord *Coordinator, logger *zap.Logger) *Protocol 
 	// Register stream handler
 	h.SetStreamHandler(ProtocolID, p.handleStream)
 
+	// Register as message sender for coordinator responses
+	coord.SetSender(p)
+
 	return p
 }
 
@@ -203,23 +206,29 @@ func (p *Protocol) StartProgressBroadcaster(ctx context.Context, interval time.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Collect progress data under the lock
+			var messages []Message
 			p.coordinator.mu.RLock()
 			for hash, state := range p.coordinator.inFlight {
 				if state.Fetcher == "" { // We're the fetcher
-					msg := &Message{
+					messages = append(messages, Message{
 						Type:   MsgFetchProgress,
 						Hash:   hash,
 						Size:   state.Size,
 						Offset: state.Offset,
-					}
-					if err := p.BroadcastMessage(ctx, msg); err != nil {
-						p.logger.Debug("Failed to broadcast progress",
-							zap.Error(err),
-							zap.String("hash", hash[:min(16, len(hash))]+"..."))
-					}
+					})
 				}
 			}
 			p.coordinator.mu.RUnlock()
+
+			// Broadcast outside the lock to avoid blocking on network I/O
+			for i := range messages {
+				if err := p.BroadcastMessage(ctx, &messages[i]); err != nil {
+					p.logger.Debug("Failed to broadcast progress",
+						zap.Error(err),
+						zap.String("hash", messages[i].Hash[:min(16, len(messages[i].Hash))]+"..."))
+				}
+			}
 		}
 	}
 }

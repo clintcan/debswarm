@@ -183,6 +183,103 @@ func TestCoordinatorStatus(t *testing.T) {
 	}
 }
 
+// mockMessageSender implements MessageSender for testing
+type mockMessageSender struct {
+	messages []struct {
+		peerID peer.ID
+		msg    *Message
+	}
+}
+
+func (m *mockMessageSender) SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error {
+	m.messages = append(m.messages, struct {
+		peerID peer.ID
+		msg    *Message
+	}{peerID, msg})
+	return nil
+}
+
+func TestHandleWantPackageWithCache(t *testing.T) {
+	logger := zap.NewNop()
+	peers := &mockPeerProvider{}
+	cache := &mockCacheChecker{hashes: map[string]bool{"cached123": true}}
+
+	c := New(nil, peers, cache, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockMessageSender{}
+	c.SetSender(sender)
+
+	fromPeer := peer.ID("peer123")
+	msg := Message{
+		Type: MsgWantPackage,
+		Hash: "cached123",
+		Size: 1000,
+	}
+
+	c.HandleMessage(fromPeer, msg)
+
+	// Give message handler time to process
+	time.Sleep(50 * time.Millisecond)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("expected 1 message sent, got %d", len(sender.messages))
+	}
+
+	sent := sender.messages[0]
+	if sent.peerID != fromPeer {
+		t.Errorf("expected message to %v, got %v", fromPeer, sent.peerID)
+	}
+	if sent.msg.Type != MsgHavePackage {
+		t.Errorf("expected MsgHavePackage, got %d", sent.msg.Type)
+	}
+	if sent.msg.Hash != "cached123" {
+		t.Errorf("expected hash 'cached123', got %s", sent.msg.Hash)
+	}
+}
+
+func TestHandleWantPackageWhileFetching(t *testing.T) {
+	logger := zap.NewNop()
+	peers := &mockPeerProvider{}
+	cache := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	c := New(nil, peers, cache, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockMessageSender{}
+	c.SetSender(sender)
+
+	// Start fetching a package
+	c.NotifyFetching("fetching456", 2000)
+
+	fromPeer := peer.ID("peer456")
+	msg := Message{
+		Type: MsgWantPackage,
+		Hash: "fetching456",
+		Size: 2000,
+	}
+
+	c.HandleMessage(fromPeer, msg)
+
+	// Give message handler time to process
+	time.Sleep(50 * time.Millisecond)
+
+	if len(sender.messages) != 1 {
+		t.Fatalf("expected 1 message sent, got %d", len(sender.messages))
+	}
+
+	sent := sender.messages[0]
+	if sent.peerID != fromPeer {
+		t.Errorf("expected message to %v, got %v", fromPeer, sent.peerID)
+	}
+	if sent.msg.Type != MsgFetching {
+		t.Errorf("expected MsgFetching, got %d", sent.msg.Type)
+	}
+	if sent.msg.Hash != "fetching456" {
+		t.Errorf("expected hash 'fetching456', got %s", sent.msg.Hash)
+	}
+}
+
 func TestMessageEncodeDecode(t *testing.T) {
 	tests := []struct {
 		name string
