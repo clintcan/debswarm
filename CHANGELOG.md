@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-01-28
+
+### Added
+- **Configurable NAT traversal**: New configuration options for circuit relay and hole punching
+  - `network.enable_relay`: Use circuit relays to reach NAT'd peers (default: true)
+  - `network.enable_hole_punching`: Enable direct NAT hole punching (default: true)
+  - Both features were already enabled but are now configurable and documented
+  - Client-only relay mode - uses public relays but doesn't act as one
+
+### Documentation
+- Added NAT Traversal section to configuration.md explaining relay and hole punching options
+
 ## [1.12.1] - 2026-01-28
 
 ### Fixed
