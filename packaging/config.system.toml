@@ -11,6 +11,10 @@ proxy_port = 9977
 max_connections = 100
 # connectivity_mode = "auto"  # "auto", "lan_only", "online_only"
 
+# NAT traversal (v1.13+)
+# enable_relay = true         # Use circuit relays to reach NAT'd peers
+# enable_hole_punching = true # Enable direct NAT hole punching
+
 # libp2p public bootstrap nodes
 bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",

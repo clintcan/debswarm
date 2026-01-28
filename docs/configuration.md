@@ -36,6 +36,8 @@ Network settings for P2P communication and the HTTP proxy.
 | `connectivity_mode` | string | `"auto"` | Connectivity mode: `"auto"`, `"lan_only"`, or `"online_only"`. |
 | `connectivity_check_interval` | string | `"30s"` | How often to check connectivity in auto mode. |
 | `connectivity_check_url` | string | `"https://deb.debian.org"` | URL for connectivity checks. |
+| `enable_relay` | boolean | `true` | Enable circuit relay to reach NAT'd peers via relay nodes. (v1.13+) |
+| `enable_hole_punching` | boolean | `true` | Enable direct NAT hole punching for peer-to-peer connections. (v1.13+) |
 
 **Example:**
 ```toml
@@ -48,6 +50,10 @@ max_connections = 100
 connectivity_mode = "auto"           # "auto", "lan_only", "online_only"
 connectivity_check_interval = "30s"
 # connectivity_check_url = "https://deb.debian.org"
+
+# NAT traversal (v1.13+)
+enable_relay = true         # Use circuit relays to reach NAT'd peers
+enable_hole_punching = true # Enable direct NAT hole punching
 
 # Bootstrap peers (libp2p public nodes)
 bootstrap_peers = [
@@ -64,6 +70,17 @@ bootstrap_peers = [
 | `auto` | Automatically detect connectivity. Uses DHT + mirrors when online, falls back to mDNS peers only when internet is unavailable. |
 | `lan_only` | Only use mDNS-discovered peers. Never try DHT or remote mirrors. Useful for air-gapped networks. |
 | `online_only` | Require internet connectivity. Fail requests if mirrors are unreachable (no LAN-only fallback). |
+
+**NAT Traversal (v1.13+):**
+
+debswarm uses libp2p's NAT traversal techniques to connect peers behind NAT/firewalls:
+
+| Option | Description |
+|--------|-------------|
+| `enable_relay` | Allows connecting to NAT'd peers via public relay nodes. The relay forwards traffic when direct connection fails. This is client-only - debswarm uses relays but doesn't act as one. |
+| `enable_hole_punching` | Attempts to establish direct connections through NAT using coordinated hole punching. More efficient than relays when successful. |
+
+Both are enabled by default. Disable if you're on a restricted network that blocks these techniques.
 
 **Notes:**
 - The `listen_port` should be accessible through your firewall for incoming P2P connections

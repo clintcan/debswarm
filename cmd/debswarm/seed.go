@@ -192,10 +192,12 @@ func runSeedImport(args []string, opts *seedImportOptions) error {
 	if opts.announce && !opts.dryRun {
 		ctx := context.Background()
 		p2pCfg := &p2p.Config{
-			ListenPort:     cfg.Network.ListenPort,
-			BootstrapPeers: cfg.Network.BootstrapPeers,
-			EnableMDNS:     cfg.Privacy.EnableMDNS,
-			PreferQUIC:     true,
+			ListenPort:         cfg.Network.ListenPort,
+			BootstrapPeers:     cfg.Network.BootstrapPeers,
+			EnableMDNS:         cfg.Privacy.EnableMDNS,
+			PreferQUIC:         true,
+			EnableRelay:        cfg.Network.IsRelayEnabled(),
+			EnableHolePunching: cfg.Network.IsHolePunchingEnabled(),
 		}
 
 		p2pNode, err = p2p.New(ctx, p2pCfg, logger)

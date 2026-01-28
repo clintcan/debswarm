@@ -255,6 +255,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		Timeouts:             tm,
 		Metrics:              m,
 		Audit:                auditLogger,
+		// NAT traversal configuration
+		EnableRelay:        cfg.Network.IsRelayEnabled(),
+		EnableHolePunching: cfg.Network.IsHolePunchingEnabled(),
 		// Per-peer rate limiting configuration
 		PerPeerUploadRate:   cfg.Transfer.PerPeerUploadRateBytes(),
 		PerPeerDownloadRate: cfg.Transfer.PerPeerDownloadRateBytes(),

@@ -114,6 +114,10 @@ type Config struct {
 	Metrics              *metrics.Metrics
 	Audit                audit.Logger // Audit logger for structured event logging
 
+	// NAT traversal configuration
+	EnableRelay        bool // Use circuit relays to reach NAT'd peers (default: true)
+	EnableHolePunching bool // Enable NAT hole punching (default: true)
+
 	// Per-peer rate limiting configuration
 	PerPeerUploadRate   int64   // bytes per second, 0 = auto-calculate from global/expected
 	PerPeerDownloadRate int64   // bytes per second, 0 = auto-calculate from global/expected
@@ -226,11 +230,21 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.ConnectionManager(connMgr),
 
-		// NAT traversal
+		// NAT traversal (always enabled)
 		libp2p.EnableNATService(),
-		libp2p.EnableRelay(),
-		libp2p.EnableHolePunching(),
 		libp2p.NATPortMap(),
+	}
+
+	// Optional: Circuit relay for reaching NAT'd peers
+	if cfg.EnableRelay {
+		opts = append(opts, libp2p.EnableRelay())
+		logger.Info("Circuit relay enabled (can reach NAT'd peers via relays)")
+	}
+
+	// Optional: NAT hole punching
+	if cfg.EnableHolePunching {
+		opts = append(opts, libp2p.EnableHolePunching())
+		logger.Debug("NAT hole punching enabled")
 	}
 
 	// Add PSK for private swarm if configured

@@ -37,6 +37,10 @@ type NetworkConfig struct {
 	ConnectivityMode          string `toml:"connectivity_mode"`           // "auto", "lan_only", "online_only"
 	ConnectivityCheckInterval string `toml:"connectivity_check_interval"` // How often to check connectivity
 	ConnectivityCheckURL      string `toml:"connectivity_check_url"`      // URL to check for internet access
+
+	// NAT traversal settings
+	EnableRelay        *bool `toml:"enable_relay"`         // Use circuit relays to reach NAT'd peers (default: true)
+	EnableHolePunching *bool `toml:"enable_hole_punching"` // Enable NAT hole punching (default: true)
 }
 
 // GetConnectivityMode returns the connectivity mode with a default of "auto"
@@ -67,6 +71,24 @@ func (c *NetworkConfig) GetConnectivityCheckURL() string {
 		return "https://deb.debian.org"
 	}
 	return c.ConnectivityCheckURL
+}
+
+// IsRelayEnabled returns whether circuit relay is enabled.
+// Defaults to true if not configured.
+func (c *NetworkConfig) IsRelayEnabled() bool {
+	if c.EnableRelay == nil {
+		return true
+	}
+	return *c.EnableRelay
+}
+
+// IsHolePunchingEnabled returns whether NAT hole punching is enabled.
+// Defaults to true if not configured.
+func (c *NetworkConfig) IsHolePunchingEnabled() bool {
+	if c.EnableHolePunching == nil {
+		return true
+	}
+	return *c.EnableHolePunching
 }
 
 // CacheConfig holds cache-related settings
