@@ -27,13 +27,16 @@ var (
 
 // Package represents a cached package entry
 type Package struct {
-	SHA256       string
-	Size         int64
-	Filename     string
-	AddedAt      time.Time
-	LastAccessed time.Time
-	AccessCount  int64
-	Announced    time.Time
+	SHA256         string
+	Size           int64
+	Filename       string
+	AddedAt        time.Time
+	LastAccessed   time.Time
+	AccessCount    int64
+	Announced      time.Time
+	PackageName    string
+	PackageVersion string
+	Architecture   string
 }
 
 // Cache manages local package storage
@@ -232,7 +235,10 @@ func createTables(db *sql.DB) error {
 			added_at INTEGER NOT NULL,
 			last_accessed INTEGER NOT NULL,
 			access_count INTEGER DEFAULT 1,
-			announced INTEGER DEFAULT 0
+			announced INTEGER DEFAULT 0,
+			package_name TEXT DEFAULT '',
+			package_version TEXT DEFAULT '',
+			architecture TEXT DEFAULT ''
 		);
 
 		CREATE TABLE IF NOT EXISTS indices (
@@ -274,6 +280,9 @@ func createTables(db *sql.DB) error {
 		CREATE INDEX IF NOT EXISTS idx_packages_announced
 		ON packages(announced);
 
+		CREATE INDEX IF NOT EXISTS idx_packages_name
+		ON packages(package_name);
+
 		CREATE INDEX IF NOT EXISTS idx_downloads_status
 		ON downloads(status);
 
@@ -284,8 +293,12 @@ func createTables(db *sql.DB) error {
 		return err
 	}
 
-	// Migration: Add retry_count column if it doesn't exist (for existing databases)
+	// Migrations for existing databases
 	_, _ = db.Exec(`ALTER TABLE downloads ADD COLUMN retry_count INTEGER DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_name TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_version TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN architecture TEXT DEFAULT ''`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_name ON packages(package_name)`)
 
 	return nil
 }
@@ -443,18 +456,24 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return renameErr
 	}
 
+	// Parse package metadata from filename
+	pkgName, pkgVersion, arch, _ := ParseDebFilename(filename)
+
 	// Record in database - use ON CONFLICT to preserve access_count if re-adding
 	now := time.Now().Unix()
 	_, err = c.db.Exec(`
 		INSERT INTO packages
-		(sha256, size, filename, added_at, last_accessed, access_count, announced)
-		VALUES (?, ?, ?, ?, ?, 1, 0)
+		(sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
+		VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
 		ON CONFLICT(sha256) DO UPDATE SET
 			size = excluded.size,
 			filename = excluded.filename,
 			last_accessed = excluded.last_accessed,
-			access_count = access_count + 1`,
-		expectedHash, size, filename, now, now)
+			access_count = access_count + 1,
+			package_name = CASE WHEN excluded.package_name != '' THEN excluded.package_name ELSE packages.package_name END,
+			package_version = CASE WHEN excluded.package_version != '' THEN excluded.package_version ELSE packages.package_version END,
+			architecture = CASE WHEN excluded.architecture != '' THEN excluded.architecture ELSE packages.architecture END`,
+		expectedHash, size, filename, now, now, pkgName, pkgVersion, arch)
 	if err != nil {
 		return fmt.Errorf("failed to record package: %w", err)
 	}
@@ -490,18 +509,24 @@ func (c *Cache) PutFile(filePath string, hash string, filename string, size int6
 		return fmt.Errorf("failed to move file to cache: %w", err)
 	}
 
+	// Parse package metadata from filename
+	pkgName, pkgVersion, arch, _ := ParseDebFilename(filename)
+
 	// Record in database - use ON CONFLICT to preserve access_count if re-adding
 	now := time.Now().Unix()
 	_, err := c.db.Exec(`
 		INSERT INTO packages
-		(sha256, size, filename, added_at, last_accessed, access_count, announced)
-		VALUES (?, ?, ?, ?, ?, 1, 0)
+		(sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
+		VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
 		ON CONFLICT(sha256) DO UPDATE SET
 			size = excluded.size,
 			filename = excluded.filename,
 			last_accessed = excluded.last_accessed,
-			access_count = access_count + 1`,
-		hash, size, filename, now, now)
+			access_count = access_count + 1,
+			package_name = CASE WHEN excluded.package_name != '' THEN excluded.package_name ELSE packages.package_name END,
+			package_version = CASE WHEN excluded.package_version != '' THEN excluded.package_version ELSE packages.package_version END,
+			architecture = CASE WHEN excluded.architecture != '' THEN excluded.architecture ELSE packages.architecture END`,
+		hash, size, filename, now, now, pkgName, pkgVersion, arch)
 	if err != nil {
 		return fmt.Errorf("failed to record package: %w", err)
 	}
@@ -564,8 +589,9 @@ func (c *Cache) List() ([]*Package, error) {
 	defer c.mu.RUnlock()
 
 	rows, err := c.db.Query(`
-		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced 
-		FROM packages 
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
 		ORDER BY last_accessed DESC`)
 	if err != nil {
 		return nil, err
@@ -578,7 +604,8 @@ func (c *Cache) List() ([]*Package, error) {
 		var addedAt, lastAccessed, announced int64
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
-			&addedAt, &lastAccessed, &pkg.AccessCount, &announced)
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
 		if err != nil {
 			return nil, err
 		}
@@ -598,8 +625,9 @@ func (c *Cache) GetUnannounced() ([]*Package, error) {
 
 	threshold := time.Now().Add(-12 * time.Hour).Unix()
 	rows, err := c.db.Query(`
-		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced 
-		FROM packages 
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
 		WHERE announced < ?`, threshold)
 	if err != nil {
 		return nil, err
@@ -612,7 +640,8 @@ func (c *Cache) GetUnannounced() ([]*Package, error) {
 		var addedAt, lastAccessed, announced int64
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
-			&addedAt, &lastAccessed, &pkg.AccessCount, &announced)
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
 		if err != nil {
 			return nil, err
 		}
@@ -668,10 +697,12 @@ func (c *Cache) getPackageInfo(sha256Hash string) (*Package, error) {
 	var addedAt, lastAccessed, announced int64
 
 	err := c.db.QueryRow(`
-		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced 
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
 		FROM packages WHERE sha256 = ?`, sha256Hash).Scan(
 		&pkg.SHA256, &pkg.Size, &pkg.Filename,
-		&addedAt, &lastAccessed, &pkg.AccessCount, &announced)
+		&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
 	if err != nil {
 		return nil, err
 	}
@@ -781,4 +812,128 @@ func (c *Cache) CleanPartialDir(hash string) error {
 // BasePath returns the cache base path
 func (c *Cache) BasePath() string {
 	return c.basePath
+}
+
+// ListByPackageName returns all cached versions of a package by name.
+// Results are sorted by last_accessed descending (most recently used first).
+func (c *Cache) ListByPackageName(name string) ([]*Package, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	rows, err := c.db.Query(`
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
+		WHERE package_name = ?
+		ORDER BY last_accessed DESC`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []*Package
+	for rows.Next() {
+		pkg := &Package{}
+		var addedAt, lastAccessed, announced int64
+		err := rows.Scan(
+			&pkg.SHA256, &pkg.Size, &pkg.Filename,
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+		if err != nil {
+			return nil, err
+		}
+		pkg.AddedAt = time.Unix(addedAt, 0)
+		pkg.LastAccessed = time.Unix(lastAccessed, 0)
+		pkg.Announced = time.Unix(announced, 0)
+		packages = append(packages, pkg)
+	}
+
+	return packages, rows.Err()
+}
+
+// GetByNameVersionArch returns a specific package version if cached.
+// Returns ErrNotFound if the package is not in the cache.
+func (c *Cache) GetByNameVersionArch(name, version, arch string) (*Package, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	pkg := &Package{}
+	var addedAt, lastAccessed, announced int64
+
+	err := c.db.QueryRow(`
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
+		WHERE package_name = ? AND package_version = ? AND architecture = ?`, name, version, arch).Scan(
+		&pkg.SHA256, &pkg.Size, &pkg.Filename,
+		&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+
+	pkg.AddedAt = time.Unix(addedAt, 0)
+	pkg.LastAccessed = time.Unix(lastAccessed, 0)
+	pkg.Announced = time.Unix(announced, 0)
+	return pkg, nil
+}
+
+// PopulateMissingMetadata scans packages with empty metadata fields and
+// attempts to populate them by parsing the filename. This is useful for
+// migrating existing cache entries after adding metadata columns.
+func (c *Cache) PopulateMissingMetadata() (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	rows, err := c.db.Query(`
+		SELECT sha256, filename FROM packages
+		WHERE package_name = '' OR package_name IS NULL`)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var updates []struct {
+		hash, name, version, arch string
+	}
+
+	for rows.Next() {
+		var hash, filename string
+		if err := rows.Scan(&hash, &filename); err != nil {
+			continue
+		}
+
+		name, version, arch, ok := ParseDebFilename(filename)
+		if !ok {
+			continue
+		}
+
+		updates = append(updates, struct {
+			hash, name, version, arch string
+		}{hash, name, version, arch})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// Apply updates
+	updated := 0
+	for _, u := range updates {
+		_, err := c.db.Exec(`
+			UPDATE packages
+			SET package_name = ?, package_version = ?, architecture = ?
+			WHERE sha256 = ?`, u.name, u.version, u.arch, u.hash)
+		if err != nil {
+			c.logger.Warn("Failed to update package metadata",
+				zap.String("hash", u.hash[:16]+"..."),
+				zap.Error(err))
+			continue
+		}
+		updated++
+	}
+
+	return updated, nil
 }

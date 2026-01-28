@@ -750,3 +750,244 @@ func TestMultipleReadersSimultaneous(t *testing.T) {
 		t.Errorf("Delete after closing readers failed: %v", err)
 	}
 }
+
+func TestListByPackageName(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Add packages with proper Debian naming
+	packages := []struct {
+		content  string
+		filename string
+	}{
+		{"curl v1", "curl_7.88.1-10_amd64.deb"},
+		{"curl v2", "curl_7.88.1-11_amd64.deb"},
+		{"curl arm", "curl_7.88.1-10_arm64.deb"},
+		{"nginx", "nginx_1.22.1-9_amd64.deb"},
+	}
+
+	for _, p := range packages {
+		data := []byte(p.content)
+		hash := hashData(data)
+		if err := c.Put(bytes.NewReader(data), hash, p.filename); err != nil {
+			t.Fatalf("Put %s failed: %v", p.filename, err)
+		}
+	}
+
+	// Query for curl packages
+	curlPkgs, err := c.ListByPackageName("curl")
+	if err != nil {
+		t.Fatalf("ListByPackageName failed: %v", err)
+	}
+
+	if len(curlPkgs) != 3 {
+		t.Errorf("Expected 3 curl packages, got %d", len(curlPkgs))
+	}
+
+	// Verify package metadata was parsed correctly
+	for _, pkg := range curlPkgs {
+		if pkg.PackageName != "curl" {
+			t.Errorf("Expected package name 'curl', got %q", pkg.PackageName)
+		}
+		if pkg.PackageVersion == "" {
+			t.Error("Package version should not be empty")
+		}
+		if pkg.Architecture == "" {
+			t.Error("Architecture should not be empty")
+		}
+	}
+
+	// Query for nginx packages
+	nginxPkgs, err := c.ListByPackageName("nginx")
+	if err != nil {
+		t.Fatalf("ListByPackageName failed: %v", err)
+	}
+
+	if len(nginxPkgs) != 1 {
+		t.Errorf("Expected 1 nginx package, got %d", len(nginxPkgs))
+	}
+
+	// Query for non-existent package
+	nonePkgs, err := c.ListByPackageName("nonexistent")
+	if err != nil {
+		t.Fatalf("ListByPackageName failed: %v", err)
+	}
+
+	if len(nonePkgs) != 0 {
+		t.Errorf("Expected 0 packages, got %d", len(nonePkgs))
+	}
+}
+
+func TestGetByNameVersionArch(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Add a package
+	data := []byte("curl package content")
+	hash := hashData(data)
+	filename := "curl_7.88.1-10_amd64.deb"
+
+	if err := c.Put(bytes.NewReader(data), hash, filename); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Get by exact name/version/arch
+	pkg, err := c.GetByNameVersionArch("curl", "7.88.1-10", "amd64")
+	if err != nil {
+		t.Fatalf("GetByNameVersionArch failed: %v", err)
+	}
+
+	if pkg.PackageName != "curl" {
+		t.Errorf("Expected name 'curl', got %q", pkg.PackageName)
+	}
+	if pkg.PackageVersion != "7.88.1-10" {
+		t.Errorf("Expected version '7.88.1-10', got %q", pkg.PackageVersion)
+	}
+	if pkg.Architecture != "amd64" {
+		t.Errorf("Expected arch 'amd64', got %q", pkg.Architecture)
+	}
+	if pkg.SHA256 != hash {
+		t.Errorf("Expected hash %q, got %q", hash, pkg.SHA256)
+	}
+
+	// Try to get non-existent version
+	_, err = c.GetByNameVersionArch("curl", "9.99.99", "amd64")
+	if err != ErrNotFound {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+
+	// Try to get non-existent package
+	_, err = c.GetByNameVersionArch("nonexistent", "1.0", "amd64")
+	if err != ErrNotFound {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+
+	// Try to get wrong architecture
+	_, err = c.GetByNameVersionArch("curl", "7.88.1-10", "arm64")
+	if err != ErrNotFound {
+		t.Errorf("Expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestPopulateMissingMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create cache
+	c, err := New(tmpDir, 100*1024*1024, testLogger())
+	if err != nil {
+		t.Fatalf("Failed to create cache: %v", err)
+	}
+
+	// Manually insert packages with empty metadata (simulating old entries)
+	data1 := []byte("old curl package")
+	hash1 := hashData(data1)
+
+	data2 := []byte("old nginx package")
+	hash2 := hashData(data2)
+
+	// Write files to disk
+	for _, item := range []struct {
+		hash string
+		data []byte
+	}{
+		{hash1, data1},
+		{hash2, data2},
+	} {
+		path := c.packagePath(item.hash)
+		if err := os.MkdirAll(filepath.Dir(path), 0750); err != nil {
+			t.Fatalf("Failed to create dir: %v", err)
+		}
+		if err := os.WriteFile(path, item.data, 0644); err != nil {
+			t.Fatalf("Failed to write file: %v", err)
+		}
+	}
+
+	// Insert into database with empty metadata
+	db := c.GetDB()
+	_, err = db.Exec(`INSERT INTO packages (sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
+		VALUES (?, ?, ?, 0, 0, 1, 0, '', '', '')`,
+		hash1, len(data1), "curl_7.88.1-10_amd64.deb")
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	_, err = db.Exec(`INSERT INTO packages (sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
+		VALUES (?, ?, ?, 0, 0, 1, 0, '', '', '')`,
+		hash2, len(data2), "nginx_1.22.1-9_arm64.deb")
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	// Run migration
+	updated, err := c.PopulateMissingMetadata()
+	if err != nil {
+		t.Fatalf("PopulateMissingMetadata failed: %v", err)
+	}
+
+	if updated != 2 {
+		t.Errorf("Expected 2 packages migrated, got %d", updated)
+	}
+
+	// Verify metadata was populated
+	curlPkg, err := c.GetByNameVersionArch("curl", "7.88.1-10", "amd64")
+	if err != nil {
+		t.Fatalf("GetByNameVersionArch failed: %v", err)
+	}
+	if curlPkg.PackageName != "curl" {
+		t.Errorf("Expected name 'curl', got %q", curlPkg.PackageName)
+	}
+
+	nginxPkg, err := c.GetByNameVersionArch("nginx", "1.22.1-9", "arm64")
+	if err != nil {
+		t.Fatalf("GetByNameVersionArch failed: %v", err)
+	}
+	if nginxPkg.PackageName != "nginx" {
+		t.Errorf("Expected name 'nginx', got %q", nginxPkg.PackageName)
+	}
+
+	// Running migration again should update 0 packages
+	updated, err = c.PopulateMissingMetadata()
+	if err != nil {
+		t.Fatalf("PopulateMissingMetadata failed: %v", err)
+	}
+	if updated != 0 {
+		t.Errorf("Expected 0 packages migrated on second run, got %d", updated)
+	}
+
+	c.Close()
+}
+
+func TestPackageMetadataPreservedOnUpdate(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Add a package
+	data := []byte("test package")
+	hash := hashData(data)
+	filename := "curl_7.88.1-10_amd64.deb"
+
+	if err := c.Put(bytes.NewReader(data), hash, filename); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Verify metadata was set
+	pkg, err := c.GetByNameVersionArch("curl", "7.88.1-10", "amd64")
+	if err != nil {
+		t.Fatalf("GetByNameVersionArch failed: %v", err)
+	}
+	if pkg.PackageName != "curl" {
+		t.Errorf("Expected name 'curl', got %q", pkg.PackageName)
+	}
+
+	// Put again with a different filename that fails to parse
+	// (simulating a non-.deb filename passed to Put)
+	if err := c.Put(bytes.NewReader(data), hash, "some-other-name.bin"); err != nil {
+		t.Fatalf("Put failed: %v", err)
+	}
+
+	// Metadata should be preserved from first put
+	pkg, err = c.GetByNameVersionArch("curl", "7.88.1-10", "amd64")
+	if err != nil {
+		t.Fatalf("GetByNameVersionArch failed after second put: %v", err)
+	}
+	if pkg.PackageName != "curl" {
+		t.Errorf("Metadata should be preserved, but name is %q", pkg.PackageName)
+	}
+}

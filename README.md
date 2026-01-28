@@ -13,6 +13,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Hash Verification** - All packages verified against signed repository metadata
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
+- **Package Rollback** - List and fetch old package versions from cache or P2P peers
 
 ### Performance
 - **Parallel Chunked Downloads** - Large packages split into 4MB chunks downloaded simultaneously from multiple peers
@@ -92,7 +93,7 @@ sudo apt install vim
 internal/
 ├── audit/          # Structured event logging for compliance
 ├── benchmark/      # Performance testing with simulated peers
-├── cache/          # Content-addressed SQLite-backed cache
+├── cache/          # Content-addressed SQLite-backed cache with version metadata
 ├── config/         # TOML configuration management
 ├── connectivity/   # Network connectivity monitoring
 ├── dashboard/      # Real-time web dashboard
@@ -181,6 +182,13 @@ debswarm cache list         # List cached packages
 debswarm cache stats        # Show cache statistics
 debswarm cache verify       # Verify integrity of cached packages
 debswarm cache clear        # Clear all cached packages
+
+# Package rollback
+debswarm rollback list curl                    # List cached versions of a package
+debswarm rollback list curl --all              # Include all architectures
+debswarm rollback fetch curl 7.88.1-10         # Fetch specific version from cache
+debswarm rollback fetch curl 7.88.1-10 -o /tmp/curl.deb  # Custom output path
+debswarm rollback migrate                      # Populate metadata for existing cache
 
 # Seeding packages
 debswarm seed import *.deb              # Import .deb files to cache and announce
@@ -352,6 +360,35 @@ debswarm seed import --recursive --sync --dry-run /var/www/mirror/pool/
 - **Mirror operators** - Run dedicated seeders alongside mirrors
 
 See [docs/bootstrap-node.md](docs/bootstrap-node.md) for running a dedicated seeder.
+
+## Package Rollback
+
+debswarm tracks package metadata (name, version, architecture) for all cached packages, enabling you to list and retrieve old versions:
+
+```bash
+# List all cached versions of a package
+debswarm rollback list curl
+# VERSION               ARCH        SIZE  LAST ACCESSED         HASH
+# 7.88.1-10+deb12u5     amd64     500 KB  2024-01-15 10:30      a1b2c3d4e5f6...
+# 7.88.1-10             amd64     498 KB  2024-01-10 14:22      f6e5d4c3b2a1...
+
+# Fetch a specific version
+debswarm rollback fetch curl 7.88.1-10
+# Successfully fetched curl_7.88.1-10_amd64.deb (498 KB)
+
+# Fetch to specific location
+debswarm rollback fetch curl 7.88.1-10 --output /tmp/curl-old.deb
+
+# Fetch for different architecture
+debswarm rollback fetch curl 7.88.1-10 --arch arm64
+```
+
+**Use cases:**
+- **Downgrade after problematic update** - Quickly restore a known-good version
+- **Testing compatibility** - Install old versions to reproduce issues
+- **Offline environments** - Access previously downloaded versions without network
+
+**Note:** After upgrading debswarm, run `debswarm rollback migrate` to populate metadata for existing cached packages.
 
 ## Private Swarms
 
