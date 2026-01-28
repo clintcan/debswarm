@@ -235,12 +235,12 @@ func (v *Verifier) recordAudit(r *Result, filename string) {
 	}
 
 	v.audit.Log(audit.Event{
-		EventType:   eventType,
-		PackageName: filename,
-		PackageHash: r.Hash,
-		Timestamp:   time.Now(),
-		DurationMs:  r.Duration.Milliseconds(),
-		ChunksTotal: r.ProviderCount, // Reuse ChunksTotal for provider count
+		EventType:     eventType,
+		PackageName:   filename,
+		PackageHash:   r.Hash,
+		Timestamp:     time.Now(),
+		DurationMs:    r.Duration.Milliseconds(),
+		ProviderCount: r.ProviderCount,
 	})
 }
 

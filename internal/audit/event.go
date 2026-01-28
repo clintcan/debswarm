@@ -70,6 +70,9 @@ type Event struct {
 
 	// Reason provides additional context (e.g., blacklist reason)
 	Reason string `json:"reason,omitempty"`
+
+	// ProviderCount is the number of other providers found (for multi-source verification)
+	ProviderCount int `json:"provider_count,omitempty"`
 }
 
 // NewDownloadCompleteEvent creates an event for successful downloads
