@@ -60,9 +60,9 @@ type Metrics struct {
 	FleetInFlight     *Gauge      // Number of in-flight fleet-coordinated downloads
 
 	// Multi-source verification metrics
-	VerificationResults  *CounterVec // Verification outcomes (labels: status - verified, partial, unverified, error)
-	VerificationProviders *Histogram // Distribution of provider counts found
-	VerificationDuration  *Histogram // Time taken for verification queries
+	VerificationResults   *CounterVec // Verification outcomes (labels: status - verified, partial, unverified, error)
+	VerificationProviders *Histogram  // Distribution of provider counts found
+	VerificationDuration  *Histogram  // Time taken for verification queries
 
 	// Histograms
 	DownloadDuration  *HistogramVec
