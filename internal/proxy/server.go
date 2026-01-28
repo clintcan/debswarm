@@ -463,10 +463,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 
-	// Close verifier (waits for pending verifications)
-	if s.verifier != nil {
-		_ = s.verifier.Close()
-	}
+	// Note: verifier.Close() is called by daemon.go's defer, not here
+	// to avoid double-close and maintain consistent cleanup ordering
 
 	return s.server.Shutdown(ctx)
 }
