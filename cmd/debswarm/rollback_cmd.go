@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,13 +9,11 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/index"
-	"github.com/debswarm/debswarm/internal/p2p"
 )
 
 func rollbackCmd() *cobra.Command {
@@ -212,7 +209,7 @@ Examples:
 			fmt.Printf("Found package in index: %s (hash: %s...)\n", pkgInfo.Filename, pkgInfo.SHA256[:16])
 
 			// Initialize P2P node to search for providers
-			return fetchFromP2P(cmd.Context(), cfg, logger, c, pkgInfo, outputPath)
+			return fetchFromP2P(pkgInfo)
 		},
 	}
 
@@ -306,7 +303,7 @@ func copyFromCache(c *cache.Cache, pkg *cache.Package, outputPath string) error 
 }
 
 // fetchFromP2P attempts to download a package from P2P peers
-func fetchFromP2P(ctx context.Context, cfg interface{}, logger interface{}, c *cache.Cache, pkgInfo *index.PackageInfo, outputPath string) error {
+func fetchFromP2P(pkgInfo *index.PackageInfo) error {
 	// For a full implementation, we would need to initialize the P2P node
 	// and search for providers. This is a simplified version that shows
 	// what would be needed.
@@ -344,53 +341,4 @@ func truncateString(s string, maxLen int) string {
 		return s[:maxLen]
 	}
 	return s[:maxLen-3] + "..."
-}
-
-// fetchFromP2PFull is a more complete implementation that would be used
-// when the full P2P stack is available. This is kept as a reference.
-func fetchFromP2PFull(ctx context.Context, logger interface{}, c *cache.Cache, node *p2p.Node, pkgInfo *index.PackageInfo, outputPath string) error {
-	// This would be the full implementation:
-	// 1. Search DHT for providers of pkgInfo.SHA256
-	// 2. Download from best peer
-	// 3. Verify hash
-	// 4. Save to outputPath
-
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
-
-	fmt.Printf("Searching DHT for %s...\n", pkgInfo.SHA256[:16])
-
-	providers, err := node.FindProviders(ctx, pkgInfo.SHA256, 10)
-	if err != nil {
-		return fmt.Errorf("DHT lookup failed: %w", err)
-	}
-
-	if len(providers) == 0 {
-		return fmt.Errorf("no P2P providers found for %s", pkgInfo.SHA256[:16])
-	}
-
-	fmt.Printf("Found %d provider(s), downloading...\n", len(providers))
-
-	// Try each provider
-	for _, provider := range providers {
-		data, err := node.Download(ctx, provider, pkgInfo.SHA256)
-		if err != nil {
-			continue
-		}
-
-		// Determine output path
-		if outputPath == "" {
-			outputPath = fmt.Sprintf("%s_%s_%s.deb", pkgInfo.Package, pkgInfo.Version, pkgInfo.Architecture)
-		}
-
-		// Write to file
-		if err := os.WriteFile(outputPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write file: %w", err)
-		}
-
-		fmt.Printf("Successfully downloaded %s (%s)\n", outputPath, formatBytes(int64(len(data))))
-		return nil
-	}
-
-	return fmt.Errorf("all providers failed")
 }
