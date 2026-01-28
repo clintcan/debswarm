@@ -7,9 +7,10 @@ This guide covers debswarm's security model and provides recommendations for har
 debswarm's security is built on several layers:
 
 1. **Cryptographic Verification**: All packages verified against SHA256 hashes from GPG-signed repository metadata
-2. **Network Isolation**: HTTP endpoints bind to localhost by default
-3. **Input Validation**: SSRF protection, multiaddr filtering, path sanitization
-4. **P2P Security**: Optional PSK encryption, peer allowlists, eclipse attack mitigation
+2. **Multi-Source Verification**: DHT queries confirm multiple independent peers have the same package hash
+3. **Network Isolation**: HTTP endpoints bind to localhost by default
+4. **Input Validation**: SSRF protection, multiaddr filtering, path sanitization
+5. **P2P Security**: Optional PSK encryption, peer allowlists, eclipse attack mitigation
 
 ### Trust Model
 
@@ -32,6 +33,26 @@ Debian/Ubuntu Mirror ──GPG signs──> Release file
 
 Peers cannot serve malicious packages that pass verification. The signed Release file from official mirrors is the root of trust.
 
+### Multi-Source Verification
+
+After downloading a package, debswarm queries the DHT to find other peers that have the same content hash. This provides defense-in-depth against sophisticated supply chain attacks:
+
+| Attack Scenario | Hash Verification | Multi-Source Verification |
+|-----------------|-------------------|---------------------------|
+| Random peer serves bad package | Caught (hash mismatch) | Caught |
+| Compromised mirror (pkg only) | Caught (hash mismatch) | Caught |
+| Compromised mirror (pkg + index) | **Not caught** | **Detected** (no other providers) |
+| Targeted attack on specific user | **Not caught** | **Detected** (hash differs from swarm) |
+
+**How it works:**
+1. Package downloaded and verified against expected SHA256
+2. Background query to DHT: "Who else has this hash?"
+3. If 2+ independent providers found → package is "verified"
+4. If only self found → logged as "unverified" (new/rare package)
+5. Results recorded in audit log and metrics
+
+**Configuration:** Multi-source verification is enabled by default with minimal overhead (queries only, no re-download).
+
 ---
 
 ## Default Security Posture
@@ -53,6 +74,7 @@ The HTTP endpoints are localhost-only by default. Only the P2P port (4001) accep
 | SSRF Mitigation | Blocks localhost, private IPs, cloud metadata endpoints | v0.4.0 |
 | Eclipse Attack Defense | Filters private/reserved IPs from DHT provider results | v1.6.0 |
 | Hash Verification | All P2P downloads verified against expected SHA256 | v0.2.5 |
+| Multi-Source Verification | Queries DHT to confirm other providers have same hash | v1.14.0 |
 | Streaming Downloads | Large files stream to disk, prevents OOM attacks | v1.7.0 |
 | Security Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection | v0.5.5 |
 | MaxHeaderBytes | 1MB limit on HTTP headers (DoS protection) | v1.0.0 |
@@ -139,10 +161,16 @@ Audit logs use JSON Lines format, compatible with ELK, Splunk, and jq:
 
 ```bash
 # View recent downloads
-tail -100 /var/log/debswarm/audit.log | jq 'select(.event == "download_complete")'
+tail -100 /var/log/debswarm/audit.log | jq 'select(.event_type == "download_complete")'
 
-# Find verification failures (potential attacks)
+# Find hash verification failures (potential attacks)
 grep verification_failed /var/log/debswarm/audit.log | jq .
+
+# Find packages without multi-source verification (new/rare packages)
+grep multi_source_unverified /var/log/debswarm/audit.log | jq .
+
+# Find packages verified by multiple sources
+grep multi_source_verified /var/log/debswarm/audit.log | jq .
 ```
 
 ### 5. Network Segmentation
@@ -280,6 +308,7 @@ connectivity_mode = "lan_only"  # No external DHT
 2. **Unusual bandwidth usage**: Possible abuse of your node
 3. **Unknown peers in metrics**: Check peer list for anomalies
 4. **Hash mismatch alerts**: Potential supply chain attack
+5. **Persistent "unverified" for common packages**: If popular packages consistently show as `multi_source_unverified`, investigate - this may indicate network isolation or targeted attack
 
 ### Response Steps
 
