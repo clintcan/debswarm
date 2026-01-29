@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-01-29
+
+### Added
+- **Request tracing with correlation IDs**: End-to-end request tracking for debugging multi-hop P2P downloads
+  - New `requestid` package for ID generation and context utilities
+  - Generate time-sortable 24-char hex IDs (8 bytes timestamp + 4 bytes random)
+  - Propagate request ID through context to all handlers
+  - Include `requestID` field in all log messages for a request
+  - Add `RequestID` field to audit events with `WithRequestID()` chaining method
+  - Return `X-Request-ID` header in HTTP responses
+  - Preserve valid incoming `X-Request-ID` headers from clients
+
 ## [1.15.0] - 2026-01-29
 
 ### Added

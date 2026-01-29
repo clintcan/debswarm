@@ -1,3 +1,16 @@
+debswarm (1.16.0-1) stable; urgency=low
+
+  * Request tracing with correlation IDs for end-to-end debugging
+    - New requestid package for ID generation and context utilities
+    - Time-sortable 24-char hex IDs (timestamp + random suffix)
+    - Propagate request ID through context to all handlers
+    - Include requestID field in all log messages
+    - Add RequestID field to audit events with WithRequestID() method
+    - Return X-Request-ID header in HTTP responses
+    - Preserve valid incoming X-Request-ID headers
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Wed, 29 Jan 2026 00:00:00 +0000
+
 debswarm (1.15.0-1) stable; urgency=low
 
   * Package rollback commands: List and fetch old package versions
