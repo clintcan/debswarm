@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-01-29
+
+### Added
+- **Fuzz testing for parsing functions**: Native Go fuzz tests for robustness
+  - `FuzzParseDebFilename` in `internal/cache/parser_fuzz_test.go`
+  - `FuzzParsePackagesFile`, `FuzzExtractRepoFromURL`, `FuzzExtractPathFromURL` in `internal/index/index_fuzz_test.go`
+  - `FuzzIsValid`, `FuzzGenerate` in `internal/requestid/requestid_fuzz_test.go`
+- **Load testing CLI commands**: Performance testing utilities
+  - `debswarm benchmark stress` - Concurrent download stress testing
+  - `debswarm benchmark concurrency` - Find optimal worker count
+  - `debswarm benchmark proxy` - HTTP proxy load testing with latency percentiles (P50/P95/P99)
+  - New `internal/benchmark/proxy_loadtest.go` for proxy load testing
+
+### Documentation
+- New `docs/testing.md` guide covering fuzz testing, benchmarking, and load testing
+
 ## [1.16.0] - 2026-01-29
 
 ### Added

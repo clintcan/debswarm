@@ -33,6 +33,8 @@ This document tracked the gaps and improvements completed for the production-rea
 | Issue | Description | Status |
 |-------|-------------|--------|
 | Request tracing | Add request IDs for correlating multi-hop downloads across logs | **Done** (v1.16.0) |
+| Fuzz testing | Native Go fuzz tests for parsing functions (filename, Packages, URLs, request IDs) | **Done** (v1.17.0) |
+| Load testing CLI | Stress testing, concurrency tuning, and proxy load testing commands | **Done** (v1.17.0) |
 | Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | **Done** (v1.5.0) |
 | Adaptive rate limiting | Adjust rates based on network conditions | **Done** (v1.5.0) |
 | Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | **Done** (v1.4.0) |
@@ -185,6 +187,7 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Version History
 
+- **v1.17.0** (2026-01-29): Fuzz testing and load testing CLI commands
 - **v1.16.0** (2026-01-29): Request tracing with correlation IDs for end-to-end debugging
 - **v1.15.0** (2026-01-29): Package rollback commands (list/fetch old versions from cache)
 - **v1.14.0** (2026-01-28): Multi-source verification (DHT query for other providers, supply chain defense)

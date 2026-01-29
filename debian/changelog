@@ -1,3 +1,18 @@
+debswarm (1.17.0-1) stable; urgency=low
+
+  * Fuzz testing for parsing functions
+    - FuzzParseDebFilename for Debian filename parser
+    - FuzzParsePackagesFile for Packages file parser
+    - FuzzExtractRepoFromURL, FuzzExtractPathFromURL for URL parsing
+    - FuzzIsValid, FuzzGenerate for request ID validation
+  * Load testing CLI commands
+    - debswarm benchmark stress: Concurrent download stress testing
+    - debswarm benchmark concurrency: Find optimal worker count
+    - debswarm benchmark proxy: HTTP proxy load testing with P50/P95/P99 latencies
+  * New docs/testing.md guide for fuzz testing and benchmarking
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Wed, 29 Jan 2026 00:00:00 +0000
+
 debswarm (1.16.0-1) stable; urgency=low
 
   * Request tracing with correlation IDs for end-to-end debugging
