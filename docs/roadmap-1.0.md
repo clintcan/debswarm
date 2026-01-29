@@ -32,7 +32,7 @@ This document tracked the gaps and improvements completed for the production-rea
 
 | Issue | Description | Status |
 |-------|-------------|--------|
-| Request tracing | Add request IDs for correlating multi-hop downloads across logs | Not started |
+| Request tracing | Add request IDs for correlating multi-hop downloads across logs | **Done** (v1.16.0) |
 | Per-peer rate limiting | Rate limit individual peers, not just global bandwidth | **Done** (v1.5.0) |
 | Adaptive rate limiting | Adjust rates based on network conditions | **Done** (v1.5.0) |
 | Automatic resume retry | Retry failed resume automatically instead of requiring daemon restart | **Done** (v1.4.0) |
@@ -185,6 +185,8 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Version History
 
+- **v1.16.0** (2026-01-29): Request tracing with correlation IDs for end-to-end debugging
+- **v1.15.0** (2026-01-29): Package rollback commands (list/fetch old versions from cache)
 - **v1.14.0** (2026-01-28): Multi-source verification (DHT query for other providers, supply chain defense)
 - **v1.13.0** (2026-01-28): Configurable NAT traversal (circuit relay and hole punching)
 - **v1.12.1** (2026-01-28): Fleet coordinator message response completion and race fixes
@@ -207,5 +209,7 @@ Implemented in `internal/p2p/node_test.go`:
 **v1.0.0 Released** - All Critical, High Priority, and Medium Priority roadmap items are complete.
 
 Remaining post-1.0 work:
-- Request tracing (low priority)
+- Request tracing - **Done** (v1.16.0)
 - Fleet coordinator completion - **Done** (v1.12.1)
+
+All post-1.0 roadmap items complete. See v2.0 roadmap for future plans.
