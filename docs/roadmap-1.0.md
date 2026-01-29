@@ -209,10 +209,6 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Status
 
-**v1.0.0 Released** - All Critical, High Priority, and Medium Priority roadmap items are complete.
+**Roadmap Complete** - All items from Critical through Post-1.0 are implemented.
 
-Remaining post-1.0 work:
-- Request tracing - **Done** (v1.16.0)
-- Fleet coordinator completion - **Done** (v1.12.1)
-
-All post-1.0 roadmap items complete. See v2.0 roadmap for future plans.
+This roadmap is now closed. See [roadmap-2.0.md](roadmap-2.0.md) for future plans.
