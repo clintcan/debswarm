@@ -29,7 +29,7 @@ func FuzzIsValid(f *testing.F) {
 			}
 			// All chars should be lowercase hex
 			for _, c := range input {
-				if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 					t.Errorf("IsValid returned true but contains invalid char: %c", c)
 				}
 			}
