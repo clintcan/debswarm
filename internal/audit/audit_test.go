@@ -366,3 +366,69 @@ func TestEventJSONSerialization(t *testing.T) {
 		t.Error("JSON should omit empty peer_id field")
 	}
 }
+
+func TestEvent_WithRequestID(t *testing.T) {
+	t.Run("adds request ID to event", func(t *testing.T) {
+		event := NewCacheHitEvent("abcdef1234567890", "test.deb", 1024)
+		reqID := "0123456789abcdef01234567"
+
+		eventWithID := event.WithRequestID(reqID)
+
+		if eventWithID.RequestID != reqID {
+			t.Errorf("WithRequestID() = %q, want %q", eventWithID.RequestID, reqID)
+		}
+
+		// Original event should be unchanged
+		if event.RequestID != "" {
+			t.Error("original event should not be modified")
+		}
+	})
+
+	t.Run("chains with event constructors", func(t *testing.T) {
+		reqID := "0123456789abcdef01234567"
+		event := NewDownloadCompleteEvent(
+			"hash",
+			"pkg.deb",
+			1024,
+			"peer",
+			100,
+			1024,
+			0,
+		).WithRequestID(reqID)
+
+		if event.RequestID != reqID {
+			t.Errorf("chained WithRequestID() = %q, want %q", event.RequestID, reqID)
+		}
+		if event.EventType != EventDownloadComplete {
+			t.Errorf("EventType = %q, want %q", event.EventType, EventDownloadComplete)
+		}
+	})
+
+	t.Run("serializes to JSON with request_id", func(t *testing.T) {
+		reqID := "0123456789abcdef01234567"
+		event := NewCacheHitEvent("hash", "test.deb", 1024).WithRequestID(reqID)
+
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		expected := `"request_id":"0123456789abcdef01234567"`
+		if !strings.Contains(string(data), expected) {
+			t.Errorf("JSON missing request_id field: %s", string(data))
+		}
+	})
+
+	t.Run("empty request ID is omitted in JSON", func(t *testing.T) {
+		event := NewCacheHitEvent("hash", "test.deb", 1024)
+
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("failed to marshal: %v", err)
+		}
+
+		if strings.Contains(string(data), "request_id") {
+			t.Errorf("JSON should omit empty request_id: %s", string(data))
+		}
+	})
+}

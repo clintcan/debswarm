@@ -31,6 +31,7 @@ import (
 	"github.com/debswarm/debswarm/internal/mirror"
 	"github.com/debswarm/debswarm/internal/p2p"
 	"github.com/debswarm/debswarm/internal/peers"
+	"github.com/debswarm/debswarm/internal/requestid"
 	"github.com/debswarm/debswarm/internal/sanitize"
 	"github.com/debswarm/debswarm/internal/scheduler"
 	"github.com/debswarm/debswarm/internal/security"
@@ -619,13 +620,34 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	defer atomic.AddInt64(&s.activeConns, -1)
 	atomic.AddInt64(&s.requestsTotal, 1)
 
+	// Initialize request context with tracing
+	ctx := r.Context()
+
+	// Check for incoming X-Request-ID header (preserve if valid)
+	incomingID := r.Header.Get("X-Request-ID")
+	if incomingID != "" && requestid.IsValid(incomingID) {
+		ctx = requestid.NewContextWithID(ctx, incomingID, s.logger)
+	} else {
+		ctx = requestid.NewContext(ctx, s.logger)
+	}
+
+	// Get request-scoped logger and request ID
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
+
+	// Set X-Request-ID response header
+	w.Header().Set("X-Request-ID", reqID)
+
+	// Update request with new context
+	r = r.WithContext(ctx)
+
 	targetURL := s.extractTargetURL(r)
 	if targetURL == "" {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
 
-	s.logger.Debug("Proxy request",
+	log.Debug("Proxy request",
 		zap.String("method", r.Method),
 		zap.String("url", sanitize.URL(targetURL)))
 
@@ -711,6 +733,8 @@ func isAllowedMirrorURL(url string) bool {
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
 
 	// Extract path for caching
 	path := index.ExtractPathFromURL(url)
@@ -727,25 +751,25 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 				expectedHash = pkg.SHA256
 				expectedSize = pkg.Size
 				path = pkg.Filename // Use filename from index if available
-				s.logger.Debug("Found package in index",
+				log.Debug("Found package in index",
 					zap.String("repo", pkg.Repo),
 					zap.String("path", sanitize.Path(path)),
 					zap.String("hash", expectedHash[:16]+"..."),
 					zap.Int64("size", expectedSize))
 			} else {
-				s.logger.Warn("Invalid hash format in index", zap.String("url", sanitize.URL(url)))
+				log.Warn("Invalid hash format in index", zap.String("url", sanitize.URL(url)))
 			}
 		}
 	}
 
 	// Check local cache first
 	if expectedHash != "" && s.cache.Has(expectedHash) {
-		s.logger.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
+		log.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
 		atomic.AddInt64(&s.cacheHits, 1)
 		s.metrics.CacheHits.Inc()
 
 		// Audit log cache hit
-		s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize))
+		s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize).WithRequestID(reqID))
 
 		s.serveFromCache(w, expectedHash)
 		return
@@ -765,13 +789,13 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	})
 
 	if shared {
-		s.logger.Debug("Request coalesced with another download",
+		log.Debug("Request coalesced with another download",
 			zap.String("url", sanitize.URL(url)),
 			zap.String("key", coalescingKey[:min(16, len(coalescingKey))]+"..."))
 	}
 
 	if err != nil {
-		s.logger.Error("Download failed", zap.Error(err))
+		log.Error("Download failed", zap.Error(err))
 		http.Error(w, "Failed to fetch package", http.StatusBadGateway)
 		return
 	}
@@ -793,10 +817,13 @@ type packageDownloadResult struct {
 
 // downloadPackage performs the actual download (called via singleflight)
 func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string) (*packageDownloadResult, error) {
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
+
 	// Check if this is a security update (for scheduler rate bypassing)
 	isSecurityUpdate := scheduler.IsSecurityUpdate(url)
 	if isSecurityUpdate && s.scheduler != nil {
-		s.logger.Debug("Security update detected, using full speed",
+		log.Debug("Security update detected, using full speed",
 			zap.String("url", sanitize.URL(url)))
 		s.metrics.SchedulerUrgentDownloads.Inc()
 	}
@@ -812,7 +839,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		dhtCancel()
 
 		if err == nil && len(providers) > 0 {
-			s.logger.Debug("Found P2P providers",
+			log.Debug("Found P2P providers",
 				zap.String("hash", expectedHash[:16]+"..."),
 				zap.Int("count", len(providers)))
 
@@ -839,9 +866,9 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	if expectedHash != "" && expectedSize > 0 && len(peerSources) > 0 {
 		result, err := s.downloader.Download(ctx, expectedHash, expectedSize, peerSources, mirrorSource)
 		if err == nil {
-			return s.processDownloadSuccess(result, expectedHash, path), nil
+			return s.processDownloadSuccess(ctx, result, expectedHash, path), nil
 		}
-		s.logger.Debug("Parallel download failed, falling back to mirror", zap.Error(err))
+		log.Debug("Parallel download failed, falling back to mirror", zap.Error(err))
 	}
 
 	// Fallback: try simple P2P then mirror
@@ -860,7 +887,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 			actualHashHex := hex.EncodeToString(actualHash[:])
 
 			if actualHashHex == expectedHash {
-				s.logger.Debug("Downloaded from P2P",
+				log.Debug("Downloaded from P2P",
 					zap.String("hash", expectedHash[:16]+"..."),
 					zap.Int("size", len(data)))
 
@@ -881,7 +908,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 					0, // duration not tracked for simple downloads
 					int64(len(data)),
 					0,
-				))
+				).WithRequestID(reqID))
 
 				return &packageDownloadResult{
 					data:        data,
@@ -891,25 +918,25 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				}, nil
 			}
 
-			s.logger.Warn("P2P hash mismatch, blacklisting peer")
+			log.Warn("P2P hash mismatch, blacklisting peer")
 			s.metrics.VerificationFailures.Inc()
 			if ps, ok := src.(*downloader.PeerSource); ok {
 				s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
 				// Audit log verification failure
-				s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()))
+				s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()).WithRequestID(reqID))
 			}
 		}
 	}
 
 	// Final fallback: mirror
-	s.logger.Debug("Falling back to mirror", zap.String("url", sanitize.URL(url)))
+	log.Debug("Falling back to mirror", zap.String("url", sanitize.URL(url)))
 	atomic.AddInt64(&s.requestsMirror, 1)
 
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
-		s.logger.Error("Mirror fetch failed", zap.Error(err))
+		log.Error("Mirror fetch failed", zap.Error(err))
 		// Audit log download failure
-		s.audit.Log(audit.NewDownloadFailedEvent(expectedHash, path, err.Error()))
+		s.audit.Log(audit.NewDownloadFailedEvent(expectedHash, path, err.Error()).WithRequestID(reqID))
 		return nil, fmt.Errorf("mirror fetch failed: %w", err)
 	}
 
@@ -924,7 +951,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		if actualHashHex == expectedHash {
 			s.cacheAndAnnounce(data, expectedHash, path)
 		} else {
-			s.logger.Warn("Mirror hash mismatch",
+			log.Warn("Mirror hash mismatch",
 				zap.String("expected", expectedHash),
 				zap.String("actual", actualHashHex))
 		}
@@ -939,7 +966,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		0, // duration not tracked for mirror fallback
 		0,
 		int64(len(data)),
-	))
+	).WithRequestID(reqID))
 
 	return &packageDownloadResult{
 		data:        data,
@@ -950,7 +977,10 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 }
 
 // processDownloadSuccess processes a successful parallel download result
-func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expectedHash, path string) *packageDownloadResult {
+func (s *Server) processDownloadSuccess(ctx context.Context, result *downloader.DownloadResult, expectedHash, path string) *packageDownloadResult {
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
+
 	// Update stats
 	atomic.AddInt64(&s.bytesFromP2P, result.PeerBytes)
 	atomic.AddInt64(&s.bytesFromMirror, result.MirrorBytes)
@@ -961,7 +991,7 @@ func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expec
 		atomic.AddInt64(&s.requestsMirror, 1)
 	}
 
-	s.logger.Info("Download complete",
+	log.Info("Download complete",
 		zap.String("hash", expectedHash[:16]+"..."),
 		zap.Int64("size", result.Size),
 		zap.String("source", result.Source),
@@ -980,13 +1010,13 @@ func (s *Server) processDownloadSuccess(result *downloader.DownloadResult, expec
 		result.Duration.Milliseconds(),
 		result.PeerBytes,
 		result.MirrorBytes,
-	))
+	).WithRequestID(reqID))
 
 	// Handle file-based result (chunked download - streaming)
 	if result.FilePath != "" {
 		// Move verified file directly to cache (no memory copy)
 		if err := s.cache.PutFile(result.FilePath, expectedHash, path, result.Size); err != nil {
-			s.logger.Warn("Failed to cache file", zap.Error(err))
+			log.Warn("Failed to cache file", zap.Error(err))
 		}
 		s.announceAsync(expectedHash)
 
@@ -1224,12 +1254,13 @@ func (s *Server) retryDownload(expectedHash, url string, expectedSize int64, pat
 
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
 
-	s.logger.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
+	log.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
 
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
-		s.logger.Error("Failed to fetch index", zap.Error(err))
+		log.Error("Failed to fetch index", zap.Error(err))
 		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
 		return
 	}
@@ -1264,10 +1295,11 @@ func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, ur
 
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
 
 	data, err := s.fetcher.Fetch(ctx, url)
 	if err != nil {
-		s.logger.Error("Passthrough fetch failed", zap.Error(err))
+		log.Error("Passthrough fetch failed", zap.Error(err))
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)
 		return
 	}

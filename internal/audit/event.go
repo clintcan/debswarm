@@ -35,6 +35,9 @@ type Event struct {
 	// EventType identifies what happened
 	EventType EventType `json:"event_type"`
 
+	// RequestID is the correlation ID for end-to-end request tracing
+	RequestID string `json:"request_id,omitempty"`
+
 	// PackageHash is the SHA256 hash of the package (truncated in logs)
 	PackageHash string `json:"package_hash,omitempty"`
 
@@ -161,4 +164,11 @@ func truncatePeerID(peerID string) string {
 		return peerID[:16]
 	}
 	return peerID
+}
+
+// WithRequestID returns a copy of the event with the request ID set.
+// This allows chaining with event constructors for request tracing.
+func (e Event) WithRequestID(id string) Event {
+	e.RequestID = id
+	return e
 }
