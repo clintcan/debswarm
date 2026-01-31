@@ -68,7 +68,7 @@ Examples:
 					}
 					return fmt.Errorf("scenario not found")
 				}
-			} else if fileSize != "" || peerCount > 0 {
+			} else if fileSize != "" {
 				// Custom scenario from flags
 				size, err := config.ParseSize(fileSize)
 				if err != nil {

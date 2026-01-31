@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-01-31
+
+### Fixed
+- **Cache not filling**: Fixed race condition where index parsing was asynchronous, causing package hash lookups to fail when APT requests arrived before parsing completed
+- **Benchmark 0-byte file size**: Fixed benchmark command running with 0-byte files when `--file-size` flag was not provided
+- **Benchmark hash mismatch**: Fixed hash verification for chunked downloads by reading from `FilePath` when `Data` is nil
+
 ## [1.17.0] - 2026-01-29
 
 ### Added

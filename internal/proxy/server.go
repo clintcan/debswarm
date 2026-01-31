@@ -1266,21 +1266,16 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 	}
 
 	// Auto-parse Packages files to populate the index for multi-repo support
+	// This must be synchronous to ensure index is populated before package requests arrive
 	lowerURL := strings.ToLower(url)
 	if strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation") {
-		go func() {
-			sanitizedURL := sanitize.URL(url) // Capture for goroutine
-			if err := s.index.LoadFromData(data, url); err != nil {
-				s.logger.Debug("Failed to parse index file",
-					zap.String("url", sanitizedURL),
-					zap.Error(err))
-			} else {
-				s.logger.Debug("Parsed index file",
-					zap.String("url", sanitizedURL),
-					zap.Int("totalPackages", s.index.Count()),
-					zap.Int("repos", s.index.RepoCount()))
-			}
-		}()
+		if err := s.index.LoadFromData(data, url); err != nil {
+			log.Debug("Failed to parse index file", zap.Error(err))
+		} else {
+			log.Debug("Parsed index file",
+				zap.Int("totalPackages", s.index.Count()),
+				zap.Int("repos", s.index.RepoCount()))
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")

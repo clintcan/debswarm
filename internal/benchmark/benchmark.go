@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -130,8 +131,28 @@ func (r *Runner) Run(ctx context.Context, scenario Scenario) (*Result, error) {
 		}
 
 		// Verify hash
-		actualHash := sha256.Sum256(result.Data)
-		if hex.EncodeToString(actualHash[:]) != expectedHash {
+		var actualHashHex string
+		if result.Data != nil {
+			actualHash := sha256.Sum256(result.Data)
+			actualHashHex = hex.EncodeToString(actualHash[:])
+		} else if result.FilePath != "" {
+			// Chunked downloads return FilePath instead of Data
+			fileData, err := os.ReadFile(result.FilePath)
+			if err != nil {
+				errors++
+				r.log("  Iteration %d: ERROR reading result file - %v\n", i+1, err)
+				continue
+			}
+			actualHash := sha256.Sum256(fileData)
+			actualHashHex = hex.EncodeToString(actualHash[:])
+			// Clean up temp file
+			os.Remove(result.FilePath)
+		} else {
+			errors++
+			r.log("  Iteration %d: ERROR - no data or file path in result\n", i+1)
+			continue
+		}
+		if actualHashHex != expectedHash {
 			errors++
 			r.log("  Iteration %d: HASH MISMATCH\n", i+1)
 			continue
