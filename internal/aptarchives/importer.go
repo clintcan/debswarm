@@ -35,11 +35,11 @@ type Config struct {
 
 // ImportResult contains statistics from an import operation
 type ImportResult struct {
-	Scanned   int // Total .deb files found
-	Imported  int // Successfully imported to cache
-	Skipped   int // Already in cache
+	Scanned    int // Total .deb files found
+	Imported   int // Successfully imported to cache
+	Skipped    int // Already in cache
 	Unverified int // Not in index (hash unknown)
-	Errors    int // Failed to import
+	Errors     int // Failed to import
 }
 
 // New creates a new APT archives importer
