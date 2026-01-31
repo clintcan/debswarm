@@ -95,6 +95,29 @@ func TestLoadFromDataGzip(t *testing.T) {
 	}
 }
 
+func TestLoadFromDataGzip_ByHashURL(t *testing.T) {
+	// Test by-hash URLs where URL has no extension but data is gzip compressed
+	// This is the format APT uses: /by-hash/SHA256/<hash>
+	var buf bytes.Buffer
+	gzWriter := gzip.NewWriter(&buf)
+	_, err := gzWriter.Write([]byte(samplePackagesContent))
+	if err != nil {
+		t.Fatalf("Failed to write gzip: %v", err)
+	}
+	gzWriter.Close()
+
+	idx := New("/tmp/test", testLogger())
+	// URL has no .gz extension - compression must be detected from magic bytes
+	err = idx.LoadFromData(buf.Bytes(), "http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/by-hash/SHA256/37cb57f1554cbfa71c5a29ee9ffee18a9a8c1782bb0568e0874b7ff4ce8f9c11")
+	if err != nil {
+		t.Fatalf("LoadFromData with by-hash URL failed: %v", err)
+	}
+
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages, got %d", idx.Count())
+	}
+}
+
 func TestGetBySHA256(t *testing.T) {
 	idx := New("/tmp/test", testLogger())
 	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
@@ -588,8 +611,10 @@ func TestExtractRepoFromURL_EdgeCases(t *testing.T) {
 func TestLoadFromData_InvalidXZ(t *testing.T) {
 	idx := New(t.TempDir(), testLogger())
 
-	// Try to load invalid XZ data
-	err := idx.LoadFromData([]byte("not xz content"), "http://deb.debian.org/debian/dists/test/Packages.xz")
+	// Try to load data that has XZ magic bytes but is otherwise invalid
+	// XZ magic: 0xfd '7' 'z' 'X' 'Z' 0x00
+	invalidXZ := []byte{0xfd, '7', 'z', 'X', 'Z', 0x00, 0x00, 0x00}
+	err := idx.LoadFromData(invalidXZ, "http://deb.debian.org/debian/dists/test/Packages")
 	if err == nil {
 		t.Error("Expected error for invalid xz data")
 	}

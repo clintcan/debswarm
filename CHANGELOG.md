@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.3] - 2026-01-31
+
+### Fixed
+- **APT Acquire-By-Hash compression detection**: Fixed package index parsing for by-hash URLs by detecting compression from magic bytes instead of URL suffix. Gzip-compressed Packages files fetched via `/by-hash/SHA256/xxx` URLs were not decompressed, resulting in 0 packages parsed.
+
 ## [1.17.2] - 2026-01-31
 
 ### Fixed
@@ -762,7 +767,10 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.11.5...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.17.3...HEAD
+[1.17.3]: https://github.com/clintcan/debswarm/compare/v1.17.2...v1.17.3
+[1.17.2]: https://github.com/clintcan/debswarm/compare/v1.17.1...v1.17.2
+[1.17.1]: https://github.com/clintcan/debswarm/compare/v1.17.0...v1.17.1
 [1.11.5]: https://github.com/clintcan/debswarm/compare/v1.11.4...v1.11.5
 [1.11.4]: https://github.com/clintcan/debswarm/compare/v1.11.3...v1.11.4
 [1.11.3]: https://github.com/clintcan/debswarm/compare/v1.11.2...v1.11.3

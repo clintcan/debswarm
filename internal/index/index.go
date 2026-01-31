@@ -144,21 +144,24 @@ func (idx *Index) LoadFromURL(url string) error {
 func (idx *Index) LoadFromData(data []byte, url string) error {
 	var reader io.Reader = bytes.NewReader(data)
 
-	// Handle compression based on URL
-	if strings.HasSuffix(url, ".gz") {
+	// Detect compression from magic bytes (for by-hash URLs that lack file extensions)
+	// gzip magic: 0x1f 0x8b
+	// xz magic: 0xfd '7' 'z' 'X' 'Z' 0x00
+	if len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b {
 		gzReader, err := gzip.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer func() { _ = gzReader.Close() }()
 		reader = gzReader
-	} else if strings.HasSuffix(url, ".xz") {
+	} else if len(data) >= 6 && data[0] == 0xfd && data[1] == '7' && data[2] == 'z' && data[3] == 'X' && data[4] == 'Z' && data[5] == 0x00 {
 		xzReader, err := xz.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
 		reader = xzReader
 	}
+	// Otherwise assume uncompressed
 
 	repo := ExtractRepoFromURL(url)
 	return idx.parseForRepo(reader, repo)

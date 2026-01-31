@@ -1,3 +1,30 @@
+debswarm (1.17.3-1) stable; urgency=low
+
+  * Fix: APT Acquire-By-Hash compression detection
+    - Detect compression from magic bytes instead of URL suffix
+    - Gzip-compressed Packages files fetched via /by-hash/SHA256/xxx URLs
+      were not decompressed, resulting in 0 packages parsed
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Fri, 31 Jan 2026 00:00:00 +0000
+
+debswarm (1.17.2-1) stable; urgency=low
+
+  * Fix: APT Acquire-By-Hash URL support for package index parsing
+    - URLs like /binary-amd64/by-hash/SHA256/xxx were not recognized
+      as Packages files, causing the hash index to remain empty
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Fri, 31 Jan 2026 00:00:00 +0000
+
+debswarm (1.17.1-1) stable; urgency=low
+
+  * Fix: Cache not filling due to race condition
+    - Index parsing was asynchronous, causing package hash lookups to
+      fail when APT requests arrived before parsing completed
+  * Fix: Benchmark 0-byte file size when --file-size flag not provided
+  * Fix: Benchmark hash mismatch for chunked downloads
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Fri, 31 Jan 2026 00:00:00 +0000
+
 debswarm (1.17.0-1) stable; urgency=low
 
   * Fuzz testing for parsing functions
