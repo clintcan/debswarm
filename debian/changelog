@@ -1,3 +1,15 @@
+debswarm (1.19.0-1) stable; urgency=low
+
+  * APT archives import: Import packages from APT's local cache on startup
+    - Scans /var/cache/apt/archives for .deb files
+    - Skips partial/ directory (incomplete downloads)
+    - Verifies packages against hash index before importing
+    - Pre-populates debswarm cache with existing packages
+    - Makes new users immediate P2P contributors
+  * New config options: apt_archives_path and import_apt_archives
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 01 Feb 2026 00:00:00 +0000
+
 debswarm (1.18.0-1) stable; urgency=low
 
   * APT lists auto-indexing: Parse local APT package lists on startup

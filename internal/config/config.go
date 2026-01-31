@@ -105,6 +105,10 @@ type IndexConfig struct {
 	APTListsPath string `toml:"apt_lists_path"`
 	// WatchAPTLists enables watching APT lists for changes (default: true)
 	WatchAPTLists *bool `toml:"watch_apt_lists"`
+	// APTArchivesPath is the path to APT's package cache (default: /var/cache/apt/archives)
+	APTArchivesPath string `toml:"apt_archives_path"`
+	// ImportAPTArchives enables importing packages from APT's cache on startup (default: true)
+	ImportAPTArchives *bool `toml:"import_apt_archives"`
 }
 
 // GetWatchAPTLists returns whether APT lists watching is enabled (default: true)
@@ -113,6 +117,14 @@ func (c *IndexConfig) GetWatchAPTLists() bool {
 		return true
 	}
 	return *c.WatchAPTLists
+}
+
+// GetImportAPTArchives returns whether APT archives import is enabled (default: true)
+func (c *IndexConfig) GetImportAPTArchives() bool {
+	if c.ImportAPTArchives == nil {
+		return true
+	}
+	return *c.ImportAPTArchives
 }
 
 // TransferConfig holds transfer-related settings

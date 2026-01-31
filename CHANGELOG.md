@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-02-01
+
+### Added
+- **APT archives import**: Automatically import packages from APT's local cache (`/var/cache/apt/archives`) on startup. This pre-populates debswarm's cache with packages you already have, making you an immediate contributor to the P2P network.
+  - New `internal/aptarchives` package with import logic
+  - Scans APT archives directory for `.deb` files
+  - Skips `partial/` directory (incomplete downloads)
+  - Verifies packages against the hash index before importing
+  - Copies verified packages to debswarm's cache
+  - Runs in background to avoid blocking daemon startup
+
+### Configuration
+New options in `config.toml` under the `[index]` section:
+```toml
+[index]
+# Path to APT's package cache (default: /var/cache/apt/archives)
+apt_archives_path = "/var/cache/apt/archives"
+# Whether to import packages from APT's cache on startup (default: true)
+import_apt_archives = true
+```
+
 ## [1.18.0] - 2026-01-31
 
 ### Added
@@ -787,7 +808,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.18.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.19.0...HEAD
+[1.19.0]: https://github.com/clintcan/debswarm/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/clintcan/debswarm/compare/v1.17.3...v1.18.0
 [1.17.3]: https://github.com/clintcan/debswarm/compare/v1.17.2...v1.17.3
 [1.17.2]: https://github.com/clintcan/debswarm/compare/v1.17.1...v1.17.2

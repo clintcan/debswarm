@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/aptarchives"
 	"github.com/debswarm/debswarm/internal/aptlists"
 	"github.com/debswarm/debswarm/internal/audit"
 	"github.com/debswarm/debswarm/internal/cache"
@@ -207,6 +208,25 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		if err := aptListsWatcher.Start(ctx); err != nil {
 			logger.Warn("Failed to start APT lists watcher", zap.Error(err))
 		}
+	}
+
+	// Import packages from APT's local cache into debswarm's cache
+	// This runs after the index is populated so we can verify packages
+	if cfg.Index.GetImportAPTArchives() {
+		importer := aptarchives.New(pkgCache, idx, logger, &aptarchives.Config{
+			ArchivesPath: cfg.Index.APTArchivesPath,
+		})
+		// Run import in background to avoid blocking startup
+		go func() {
+			result, err := importer.Import(ctx)
+			if err != nil {
+				logger.Warn("Failed to import APT archives", zap.Error(err))
+			} else if result.Imported > 0 {
+				logger.Info("Imported packages from APT archives",
+					zap.Int("imported", result.Imported),
+					zap.Int("skipped", result.Skipped))
+			}
+		}()
 	}
 
 	// Initialize mirror fetcher

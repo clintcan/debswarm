@@ -308,3 +308,13 @@ apt_lists_path = "/var/lib/apt/lists"
 # When enabled, debswarm detects when apt update runs and re-parses
 # the updated Packages files automatically
 watch_apt_lists = true
+
+# Path to APT's package cache (downloaded .deb files)
+# debswarm imports existing packages from this directory on startup,
+# allowing you to share packages you've already downloaded (v1.19+)
+apt_archives_path = "/var/cache/apt/archives"
+
+# Import packages from APT's cache on startup
+# When enabled, debswarm scans APT's archives directory and imports
+# verified packages into its own cache for P2P sharing
+import_apt_archives = true

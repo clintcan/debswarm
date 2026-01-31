@@ -481,6 +481,60 @@ refresh_interval = "1s"
 
 ---
 
+### [index]
+
+Settings for package index management and APT integration (v1.18+).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `apt_lists_path` | string | `"/var/lib/apt/lists"` | Path to APT's package lists directory. Parsed on startup to populate the package index. |
+| `watch_apt_lists` | boolean | `true` | Watch APT lists for changes and re-parse when `apt update` runs. |
+| `apt_archives_path` | string | `"/var/cache/apt/archives"` | Path to APT's package cache (downloaded .deb files). (v1.19+) |
+| `import_apt_archives` | boolean | `true` | Import packages from APT's cache into debswarm's cache on startup. (v1.19+) |
+
+**Example:**
+```toml
+[index]
+# APT package lists (Packages files with hash index)
+apt_lists_path = "/var/lib/apt/lists"
+watch_apt_lists = true
+
+# APT package cache (downloaded .deb files) - v1.19+
+apt_archives_path = "/var/cache/apt/archives"
+import_apt_archives = true
+```
+
+**APT Lists Auto-Indexing (v1.18+):**
+
+debswarm parses APT's local package lists (`/var/lib/apt/lists/*_Packages`) to build a hash index:
+- Enables P2P downloads even when `apt update` doesn't go through the proxy
+- Automatically re-parses when APT updates the lists (via fsnotify)
+- Debounces rapid changes during `apt update` (2 second delay)
+- Extracts repository identifiers from APT list filenames
+
+This is essential for the proxy to look up package hashes when APT requests a `.deb` file.
+
+**APT Archives Import (v1.19+):**
+
+debswarm can import existing packages from APT's local cache:
+- Scans `/var/cache/apt/archives/` for `.deb` files on startup
+- Skips the `partial/` subdirectory (incomplete downloads)
+- Verifies each package's SHA256 hash against the index
+- Only imports packages that can be verified (security)
+- Copies verified packages to debswarm's cache
+- Runs in background to avoid blocking daemon startup
+
+This makes new debswarm users immediate contributors to the P2P network by sharing packages they already have.
+
+**Notes:**
+- APT lists watching requires the daemon to have read access to `/var/lib/apt/lists`
+- Archives import requires read access to `/var/cache/apt/archives`
+- When running as systemd service, these directories are typically accessible
+- Unverified packages (not in index) are skipped for security
+- Already-cached packages are skipped (idempotent)
+
+---
+
 ## Complete Example Configuration
 
 ```toml
