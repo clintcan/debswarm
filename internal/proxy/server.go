@@ -686,6 +686,14 @@ func (s *Server) classifyRequest(url string) requestType {
 		return requestTypeIndex
 	}
 
+	// Detect by-hash URLs for Packages files (binary-*/by-hash/ or source/by-hash/)
+	// Exclude i18n/by-hash/ (translations) and cnf/by-hash/ (commands)
+	if strings.Contains(lower, "/by-hash/") {
+		if strings.Contains(lower, "/binary-") || strings.Contains(lower, "/source/") {
+			return requestTypeIndex
+		}
+	}
+
 	if strings.Contains(lower, "/release") ||
 		strings.Contains(lower, "/inrelease") {
 		return requestTypeRelease
@@ -1267,8 +1275,14 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 
 	// Auto-parse Packages files to populate the index for multi-repo support
 	// This must be synchronous to ensure index is populated before package requests arrive
+	// Note: Only parse Packages files (binary-*), not Sources files (source/) since we only cache binary .deb packages
 	lowerURL := strings.ToLower(url)
-	if strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation") {
+	isPackagesFile := strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation")
+	// Also detect by-hash URLs for Packages files: /binary-*/by-hash/
+	if !isPackagesFile && strings.Contains(lowerURL, "/by-hash/") && strings.Contains(lowerURL, "/binary-") {
+		isPackagesFile = true
+	}
+	if isPackagesFile {
 		if err := s.index.LoadFromData(data, url); err != nil {
 			log.Debug("Failed to parse index file", zap.Error(err))
 		} else {

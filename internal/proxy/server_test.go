@@ -183,6 +183,12 @@ func TestClassifyRequest(t *testing.T) {
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/InRelease", requestTypeRelease},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/Release.gpg", requestTypeRelease},
 		{"http://example.com/some/other/file.txt", requestTypeUnknown},
+		// by-hash URLs (APT Acquire-By-Hash feature)
+		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/by-hash/SHA256/abc123", requestTypeIndex},
+		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/source/by-hash/SHA256/def456", requestTypeIndex},
+		// by-hash URLs that should NOT be classified as index (translations, commands)
+		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/i18n/by-hash/SHA256/abc123", requestTypeUnknown},
+		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/cnf/by-hash/SHA256/def456", requestTypeUnknown},
 	}
 
 	for _, tc := range tests {

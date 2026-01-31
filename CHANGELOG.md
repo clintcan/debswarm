@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.2] - 2026-01-31
+
+### Fixed
+- **APT Acquire-By-Hash support**: Fixed cache not filling when APT uses by-hash URLs (default since Debian 9/Ubuntu 16.04). URLs like `/binary-amd64/by-hash/SHA256/xxx` were not recognized as Packages files, causing the hash index to remain empty and preventing package caching.
+
 ## [1.17.1] - 2026-01-31
 
 ### Fixed
