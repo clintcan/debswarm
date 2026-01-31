@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
+	"github.com/debswarm/debswarm/internal/aptlists"
 	"github.com/debswarm/debswarm/internal/audit"
 	"github.com/debswarm/debswarm/internal/cache"
 	"github.com/debswarm/debswarm/internal/config"
@@ -195,6 +196,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Initialize index
 	idx := index.New(cfg.Cache.Path, logger)
+
+	// Initialize APT lists watcher to populate index from local APT cache
+	var aptListsWatcher *aptlists.Watcher
+	if cfg.Index.GetWatchAPTLists() {
+		aptListsWatcher = aptlists.New(idx, logger, &aptlists.Config{
+			ListsPath:    cfg.Index.APTListsPath,
+			WatchEnabled: true,
+		})
+		if err := aptListsWatcher.Start(ctx); err != nil {
+			logger.Warn("Failed to start APT lists watcher", zap.Error(err))
+		}
+	}
 
 	// Initialize mirror fetcher
 	fetcher := mirror.NewFetcher(nil, logger)
@@ -442,6 +455,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Graceful shutdown
 	logger.Info("Shutting down...")
+
+	// Stop APT lists watcher
+	if aptListsWatcher != nil {
+		aptListsWatcher.Stop()
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()

@@ -90,6 +90,36 @@ func (idx *Index) LoadFromFile(path string) error {
 	return idx.parseForRepo(reader, path)
 }
 
+// LoadFromFileWithRepo loads and parses a Packages file with an explicit repo identifier.
+// This is useful for APT list files where the repo should be extracted from the filename.
+func (idx *Index) LoadFromFileWithRepo(path, repo string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var reader io.Reader = f
+
+	// Handle compression based on extension
+	if strings.HasSuffix(path, ".gz") {
+		gzReader, err := gzip.NewReader(f)
+		if err != nil {
+			return fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		defer func() { _ = gzReader.Close() }()
+		reader = gzReader
+	} else if strings.HasSuffix(path, ".xz") {
+		xzReader, err := xz.NewReader(f)
+		if err != nil {
+			return fmt.Errorf("failed to create xz reader: %w", err)
+		}
+		reader = xzReader
+	}
+
+	return idx.parseForRepo(reader, repo)
+}
+
 // LoadFromURL downloads and parses a Packages file from a URL
 func (idx *Index) LoadFromURL(url string) error {
 	// SECURITY: Validate URL to prevent SSRF attacks

@@ -24,6 +24,7 @@ type Config struct {
 	Logging   LoggingConfig   `toml:"logging"`
 	Scheduler SchedulerConfig `toml:"scheduler"`
 	Fleet     FleetConfig     `toml:"fleet"`
+	Index     IndexConfig     `toml:"index"`
 }
 
 // NetworkConfig holds network-related settings
@@ -96,6 +97,22 @@ type CacheConfig struct {
 	MaxSize      string `toml:"max_size"`
 	Path         string `toml:"path"`
 	MinFreeSpace string `toml:"min_free_space"`
+}
+
+// IndexConfig holds package index settings
+type IndexConfig struct {
+	// APTListsPath is the path to APT's package lists directory (default: /var/lib/apt/lists)
+	APTListsPath string `toml:"apt_lists_path"`
+	// WatchAPTLists enables watching APT lists for changes (default: true)
+	WatchAPTLists *bool `toml:"watch_apt_lists"`
+}
+
+// GetWatchAPTLists returns whether APT lists watching is enabled (default: true)
+func (c *IndexConfig) GetWatchAPTLists() bool {
+	if c.WatchAPTLists == nil {
+		return true
+	}
+	return *c.WatchAPTLists
 }
 
 // TransferConfig holds transfer-related settings

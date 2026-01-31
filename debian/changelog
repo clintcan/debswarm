@@ -1,3 +1,14 @@
+debswarm (1.18.0-1) stable; urgency=low
+
+  * APT lists auto-indexing: Parse local APT package lists on startup
+    - Parse /var/lib/apt/lists/*_Packages* files on daemon start
+    - Watch for changes with fsnotify and re-parse updated files
+    - Enables P2P downloads even when apt update bypasses proxy
+    - Debounces rapid changes during apt update
+  * New [index] config section with apt_lists_path and watch_apt_lists options
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Fri, 31 Jan 2026 00:00:00 +0000
+
 debswarm (1.17.3-1) stable; urgency=low
 
   * Fix: APT Acquire-By-Hash compression detection

@@ -294,3 +294,17 @@ allow_concurrent = 1
 
 # How often to broadcast download progress to peers
 refresh_interval = "1s"
+
+#─────────────────────────────────────────────────────────────────────────────
+# [index] - Package index settings (v1.18+)
+#─────────────────────────────────────────────────────────────────────────────
+[index]
+# Path to APT's package lists directory
+# debswarm parses these files on startup to populate the package index,
+# enabling P2P downloads even when apt update doesn't go through the proxy
+apt_lists_path = "/var/lib/apt/lists"
+
+# Watch APT lists for changes
+# When enabled, debswarm detects when apt update runs and re-parses
+# the updated Packages files automatically
+watch_apt_lists = true

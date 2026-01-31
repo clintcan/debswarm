@@ -79,3 +79,9 @@ file = ""
 # enabled = true
 # claim_timeout = "5s"
 # max_wait_time = "5m"
+
+# Package index settings (v1.18+)
+[index]
+# Parse APT's local package lists to enable P2P even when apt update bypasses proxy
+apt_lists_path = "/var/lib/apt/lists"
+watch_apt_lists = true

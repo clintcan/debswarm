@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-01-31
+
+### Added
+- **APT lists auto-indexing**: Automatically parse APT's local package lists (`/var/lib/apt/lists`) on startup and watch for changes. This enables P2P downloads even when `apt update` doesn't go through the proxy (e.g., when APT has cached Packages files locally).
+  - New `internal/aptlists` package with file watcher
+  - Parses all `*_Packages*` files on daemon startup
+  - Uses fsnotify to detect changes and re-parse updated files
+  - Debounces rapid changes during `apt update`
+  - Extracts repository identifiers from APT list filenames
+
+### Configuration
+New options in `config.toml`:
+```toml
+[index]
+# Path to APT's package lists directory (default: /var/lib/apt/lists)
+apt_lists_path = "/var/lib/apt/lists"
+# Whether to watch APT lists for changes (default: true)
+watch_apt_lists = true
+```
+
 ## [1.17.3] - 2026-01-31
 
 ### Fixed
@@ -767,7 +787,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.17.3...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.18.0...HEAD
+[1.18.0]: https://github.com/clintcan/debswarm/compare/v1.17.3...v1.18.0
 [1.17.3]: https://github.com/clintcan/debswarm/compare/v1.17.2...v1.17.3
 [1.17.2]: https://github.com/clintcan/debswarm/compare/v1.17.1...v1.17.2
 [1.17.1]: https://github.com/clintcan/debswarm/compare/v1.17.0...v1.17.1
