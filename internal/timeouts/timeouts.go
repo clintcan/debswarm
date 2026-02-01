@@ -113,8 +113,8 @@ func NewManager(cfg *Config) *Manager {
 	m.initTimeout(OpPeerTransfer, cfg.PeerStall)
 	m.initTimeout(OpMirrorFetch, 30*time.Second)
 	m.initTimeout(OpChunkDownload, 30*time.Second)
-	m.initTimeout(OpTunnelConnect, 10*time.Second)  // CONNECT tunnel dial timeout
-	m.initTimeout(OpTunnelIdle, 120*time.Second)    // CONNECT tunnel idle timeout
+	m.initTimeout(OpTunnelConnect, 10*time.Second) // CONNECT tunnel dial timeout
+	m.initTimeout(OpTunnelIdle, 120*time.Second)   // CONNECT tunnel idle timeout
 
 	return m
 }

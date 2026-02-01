@@ -1480,9 +1480,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Establish connection to target
+	// Establish connection to target using context-aware dialer
 	dialTimeout := s.timeouts.Get(timeouts.OpTunnelConnect)
-	targetConn, err := net.DialTimeout("tcp", targetHost, dialTimeout)
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	dialCtx, dialCancel := context.WithTimeout(ctx, dialTimeout)
+	defer dialCancel()
+	targetConn, err := dialer.DialContext(dialCtx, "tcp", targetHost)
 	if err != nil {
 		log.Error("Failed to connect to target",
 			zap.String("target", targetHost),
@@ -1498,7 +1501,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		log.Error("ResponseWriter does not support hijacking")
-		targetConn.Close()
+		_ = targetConn.Close()
 		atomic.AddInt64(&s.connectFailed, 1)
 		s.metrics.ConnectRequestsFailed.Inc()
 		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
@@ -1508,7 +1511,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		log.Error("Failed to hijack connection", zap.Error(err))
-		targetConn.Close()
+		_ = targetConn.Close()
 		atomic.AddInt64(&s.connectFailed, 1)
 		s.metrics.ConnectRequestsFailed.Inc()
 		http.Error(w, "Failed to hijack connection", http.StatusInternalServerError)
@@ -1519,8 +1522,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
 	if err != nil {
 		log.Error("Failed to send 200 response", zap.Error(err))
-		clientConn.Close()
-		targetConn.Close()
+		_ = clientConn.Close()
+		_ = targetConn.Close()
 		atomic.AddInt64(&s.connectFailed, 1)
 		s.metrics.ConnectRequestsFailed.Inc()
 		return
@@ -1559,9 +1562,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 
 // tunnel copies data bidirectionally between client and target connections.
 // Returns bytes transferred in each direction.
-func (s *Server) tunnel(client, target net.Conn) (bytesIn, bytesOut int64) {
+func (s *Server) tunnel(client, target net.Conn) (int64, int64) {
 	idleTimeout := s.timeouts.Get(timeouts.OpTunnelIdle)
 
+	var bytesIn, bytesOut int64
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -1572,9 +1576,9 @@ func (s *Server) tunnel(client, target net.Conn) (bytesIn, bytesOut int64) {
 		atomic.AddInt64(&bytesOut, n)
 		// Signal other goroutine to stop by closing write side
 		if tcpConn, ok := target.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+			_ = tcpConn.CloseWrite()
 		} else {
-			target.SetDeadline(time.Now())
+			_ = target.SetDeadline(time.Now())
 		}
 	}()
 
@@ -1585,19 +1589,19 @@ func (s *Server) tunnel(client, target net.Conn) (bytesIn, bytesOut int64) {
 		atomic.AddInt64(&bytesIn, n)
 		// Signal other goroutine to stop by closing write side
 		if tcpConn, ok := client.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
+			_ = tcpConn.CloseWrite()
 		} else {
-			client.SetDeadline(time.Now())
+			_ = client.SetDeadline(time.Now())
 		}
 	}()
 
 	wg.Wait()
 
 	// Close connections
-	client.Close()
-	target.Close()
+	_ = client.Close()
+	_ = target.Close()
 
-	return
+	return bytesIn, bytesOut
 }
 
 // copyWithIdleTimeout copies data from src to dst, resetting deadline on each read.
@@ -1608,7 +1612,7 @@ func (s *Server) copyWithIdleTimeout(dst, src net.Conn, idleTimeout time.Duratio
 
 	for {
 		// Reset deadline on each read
-		src.SetReadDeadline(time.Now().Add(idleTimeout))
+		_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
 
 		nr, readErr := src.Read(buf)
 		if nr > 0 {

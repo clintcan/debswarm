@@ -71,12 +71,12 @@ type Metrics struct {
 	DHTLookupDuration *Histogram
 
 	// CONNECT tunnel metrics
-	ConnectRequestsTotal  *Counter    // Total CONNECT requests received
-	ConnectRequestsFailed *Counter    // Failed CONNECT requests
-	ActiveTunnels         *Gauge      // Currently active tunnels
-	TunnelBytesIn         *Counter    // Bytes transferred client -> target
-	TunnelBytesOut        *Counter    // Bytes transferred target -> client
-	TunnelDuration        *Histogram  // Tunnel connection duration
+	ConnectRequestsTotal  *Counter   // Total CONNECT requests received
+	ConnectRequestsFailed *Counter   // Failed CONNECT requests
+	ActiveTunnels         *Gauge     // Currently active tunnels
+	TunnelBytesIn         *Counter   // Bytes transferred client -> target
+	TunnelBytesOut        *Counter   // Bytes transferred target -> client
+	TunnelDuration        *Histogram // Tunnel connection duration
 }
 
 // Counter is a simple counter metric
