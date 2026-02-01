@@ -541,3 +541,655 @@ func TestTransferConfig_MaxDownloadRateBytes(t *testing.T) {
 		})
 	}
 }
+
+// NetworkConfig getter tests
+
+func TestNetworkConfig_GetConnectivityMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		expected string
+	}{
+		{"empty defaults to auto", "", "auto"},
+		{"auto", "auto", "auto"},
+		{"lan_only", "lan_only", "lan_only"},
+		{"online_only", "online_only", "online_only"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &NetworkConfig{ConnectivityMode: tt.mode}
+			got := cfg.GetConnectivityMode()
+			if got != tt.expected {
+				t.Errorf("GetConnectivityMode() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_GetConnectivityCheckInterval(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		expected time.Duration
+	}{
+		{"empty defaults to 30s", "", 30 * time.Second},
+		{"1m", "1m", 1 * time.Minute},
+		{"5s", "5s", 5 * time.Second},
+		{"invalid defaults to 30s", "invalid", 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &NetworkConfig{ConnectivityCheckInterval: tt.interval}
+			got := cfg.GetConnectivityCheckInterval()
+			if got != tt.expected {
+				t.Errorf("GetConnectivityCheckInterval() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_GetConnectivityCheckURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected string
+	}{
+		{"empty defaults to debian", "", "https://deb.debian.org"},
+		{"custom url", "https://example.com", "https://example.com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &NetworkConfig{ConnectivityCheckURL: tt.url}
+			got := cfg.GetConnectivityCheckURL()
+			if got != tt.expected {
+				t.Errorf("GetConnectivityCheckURL() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_IsRelayEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		enabled  *bool
+		expected bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &NetworkConfig{EnableRelay: tt.enabled}
+			got := cfg.IsRelayEnabled()
+			if got != tt.expected {
+				t.Errorf("IsRelayEnabled() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_IsHolePunchingEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		enabled  *bool
+		expected bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &NetworkConfig{EnableHolePunching: tt.enabled}
+			got := cfg.IsHolePunchingEnabled()
+			if got != tt.expected {
+				t.Errorf("IsHolePunchingEnabled() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// IndexConfig getter tests
+
+func TestIndexConfig_GetWatchAPTLists(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		watch    *bool
+		expected bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &IndexConfig{WatchAPTLists: tt.watch}
+			got := cfg.GetWatchAPTLists()
+			if got != tt.expected {
+				t.Errorf("GetWatchAPTLists() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIndexConfig_GetImportAPTArchives(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		importV  *bool
+		expected bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &IndexConfig{ImportAPTArchives: tt.importV}
+			got := cfg.GetImportAPTArchives()
+			if got != tt.expected {
+				t.Errorf("GetImportAPTArchives() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// AuditConfig getter tests
+
+func TestAuditConfig_GetMaxSizeMB(t *testing.T) {
+	tests := []struct {
+		name     string
+		size     int
+		expected int
+	}{
+		{"zero defaults to 100", 0, 100},
+		{"negative defaults to 100", -1, 100},
+		{"positive value", 50, 50},
+		{"large value", 500, 500},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &AuditConfig{MaxSizeMB: tt.size}
+			got := cfg.GetMaxSizeMB()
+			if got != tt.expected {
+				t.Errorf("GetMaxSizeMB() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestAuditConfig_GetMaxBackups(t *testing.T) {
+	tests := []struct {
+		name     string
+		backups  int
+		expected int
+	}{
+		{"zero defaults to 5", 0, 5},
+		{"negative defaults to 5", -1, 5},
+		{"positive value", 10, 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &AuditConfig{MaxBackups: tt.backups}
+			got := cfg.GetMaxBackups()
+			if got != tt.expected {
+				t.Errorf("GetMaxBackups() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+// TransferConfig getter tests
+
+func TestTransferConfig_RetryIntervalDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		expected time.Duration
+	}{
+		{"empty defaults to 5m", "", 5 * time.Minute},
+		{"1m", "1m", 1 * time.Minute},
+		{"10s", "10s", 10 * time.Second},
+		{"invalid defaults to 5m", "invalid", 5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{RetryInterval: tt.interval}
+			got := cfg.RetryIntervalDuration()
+			if got != tt.expected {
+				t.Errorf("RetryIntervalDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_RetryMaxAgeDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		maxAge   string
+		expected time.Duration
+	}{
+		{"empty defaults to 1h", "", 1 * time.Hour},
+		{"30m", "30m", 30 * time.Minute},
+		{"2h", "2h", 2 * time.Hour},
+		{"invalid defaults to 1h", "invalid", 1 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{RetryMaxAge: tt.maxAge}
+			got := cfg.RetryMaxAgeDuration()
+			if got != tt.expected {
+				t.Errorf("RetryMaxAgeDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_PerPeerRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"empty is auto (0)", "", 0},
+		{"auto is 0", "auto", 0},
+		{"5MB/s", "5MB/s", 5 * 1024 * 1024},
+		{"invalid is 0", "invalid", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run("upload_"+tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{PerPeerUploadRate: tt.rate}
+			got := cfg.PerPeerUploadRateBytes()
+			if got != tt.expected {
+				t.Errorf("PerPeerUploadRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+		t.Run("download_"+tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{PerPeerDownloadRate: tt.rate}
+			got := cfg.PerPeerDownloadRateBytes()
+			if got != tt.expected {
+				t.Errorf("PerPeerDownloadRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_IsPerPeerEnabled(t *testing.T) {
+	tests := []struct {
+		name       string
+		uploadRate string
+		downRate   string
+		expected   bool
+	}{
+		{"default is enabled", "", "", true},
+		{"auto is enabled", "auto", "auto", true},
+		{"both 0 is disabled", "0", "0", false},
+		{"only upload 0 is enabled", "0", "auto", true},
+		{"only download 0 is enabled", "auto", "0", true},
+		{"explicit rate is enabled", "5MB/s", "5MB/s", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{
+				PerPeerUploadRate:   tt.uploadRate,
+				PerPeerDownloadRate: tt.downRate,
+			}
+			got := cfg.IsPerPeerEnabled()
+			if got != tt.expected {
+				t.Errorf("IsPerPeerEnabled() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_IsAdaptiveEnabled(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		adaptive *bool
+		perPeer  bool
+		expected bool
+	}{
+		{"nil with per-peer enabled", nil, true, true},
+		{"nil with per-peer disabled", nil, false, false},
+		{"explicit true", &trueVal, false, true},
+		{"explicit false", &falseVal, true, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{
+				AdaptiveRateLimiting: tt.adaptive,
+			}
+			if !tt.perPeer {
+				cfg.PerPeerUploadRate = "0"
+				cfg.PerPeerDownloadRate = "0"
+			}
+			got := cfg.IsAdaptiveEnabled()
+			if got != tt.expected {
+				t.Errorf("IsAdaptiveEnabled() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_AdaptiveMinRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"empty defaults to 100KB", "", 100 * 1024},
+		{"50KB/s", "50KB/s", 50 * 1024},
+		{"200KB/s", "200KB/s", 200 * 1024},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{AdaptiveMinRate: tt.rate}
+			got := cfg.AdaptiveMinRateBytes()
+			if got != tt.expected {
+				t.Errorf("AdaptiveMinRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_AdaptiveMaxBoostFactor(t *testing.T) {
+	tests := []struct {
+		name     string
+		boost    float64
+		expected float64
+	}{
+		{"zero defaults to 1.5", 0, 1.5},
+		{"negative defaults to 1.5", -1, 1.5},
+		{"normal value", 2.0, 2.0},
+		{"capped at 10", 15, 10},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{AdaptiveMaxBoost: tt.boost}
+			got := cfg.AdaptiveMaxBoostFactor()
+			if got != tt.expected {
+				t.Errorf("AdaptiveMaxBoostFactor() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestTransferConfig_GetExpectedPeers(t *testing.T) {
+	tests := []struct {
+		name     string
+		peers    int
+		expected int
+	}{
+		{"zero defaults to 10", 0, 10},
+		{"negative defaults to 10", -1, 10},
+		{"positive value", 20, 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &TransferConfig{ExpectedPeers: tt.peers}
+			got := cfg.GetExpectedPeers()
+			if got != tt.expected {
+				t.Errorf("GetExpectedPeers() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+// DHTConfig getter tests
+
+func TestDHTConfig_AnnounceIntervalDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		expected time.Duration
+	}{
+		{"empty defaults to 12h", "", 12 * time.Hour},
+		{"6h", "6h", 6 * time.Hour},
+		{"invalid defaults to 12h", "invalid", 12 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &DHTConfig{AnnounceInterval: tt.interval}
+			got := cfg.AnnounceIntervalDuration()
+			if got != tt.expected {
+				t.Errorf("AnnounceIntervalDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// SchedulerConfig getter tests
+
+func TestSchedulerConfig_OutsideWindowRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"empty defaults to 100KB", "", 100 * 1024},
+		{"50KB/s", "50KB/s", 50 * 1024},
+		{"200KB/s", "200KB/s", 200 * 1024},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &SchedulerConfig{OutsideWindowRate: tt.rate}
+			got := cfg.OutsideWindowRateBytes()
+			if got != tt.expected {
+				t.Errorf("OutsideWindowRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSchedulerConfig_InsideWindowRateBytes(t *testing.T) {
+	tests := []struct {
+		name     string
+		rate     string
+		expected int64
+	}{
+		{"empty is unlimited (0)", "", 0},
+		{"unlimited is 0", "unlimited", 0},
+		{"10MB/s", "10MB/s", 10 * 1024 * 1024},
+		{"invalid is unlimited (0)", "invalid", 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &SchedulerConfig{InsideWindowRate: tt.rate}
+			got := cfg.InsideWindowRateBytes()
+			if got != tt.expected {
+				t.Errorf("InsideWindowRateBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSchedulerConfig_IsUrgentFullSpeed(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		urgent   *bool
+		expected bool
+	}{
+		{"nil defaults to true", nil, true},
+		{"explicit true", &trueVal, true},
+		{"explicit false", &falseVal, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &SchedulerConfig{UrgentFullSpeed: tt.urgent}
+			got := cfg.IsUrgentFullSpeed()
+			if got != tt.expected {
+				t.Errorf("IsUrgentFullSpeed() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+// FleetConfig getter tests
+
+func TestFleetConfig_ClaimTimeoutDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		timeout  string
+		expected time.Duration
+	}{
+		{"empty defaults to 5s", "", 5 * time.Second},
+		{"10s", "10s", 10 * time.Second},
+		{"invalid defaults to 5s", "invalid", 5 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &FleetConfig{ClaimTimeout: tt.timeout}
+			got := cfg.ClaimTimeoutDuration()
+			if got != tt.expected {
+				t.Errorf("ClaimTimeoutDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFleetConfig_MaxWaitTimeDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		waitTime string
+		expected time.Duration
+	}{
+		{"empty defaults to 5m", "", 5 * time.Minute},
+		{"10m", "10m", 10 * time.Minute},
+		{"invalid defaults to 5m", "invalid", 5 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &FleetConfig{MaxWaitTime: tt.waitTime}
+			got := cfg.MaxWaitTimeDuration()
+			if got != tt.expected {
+				t.Errorf("MaxWaitTimeDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFleetConfig_RefreshIntervalDuration(t *testing.T) {
+	tests := []struct {
+		name     string
+		interval string
+		expected time.Duration
+	}{
+		{"empty defaults to 1s", "", 1 * time.Second},
+		{"500ms", "500ms", 500 * time.Millisecond},
+		{"invalid defaults to 1s", "invalid", 1 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &FleetConfig{RefreshInterval: tt.interval}
+			got := cfg.RefreshIntervalDuration()
+			if got != tt.expected {
+				t.Errorf("RefreshIntervalDuration() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFleetConfig_GetAllowConcurrent(t *testing.T) {
+	tests := []struct {
+		name       string
+		concurrent int
+		expected   int
+	}{
+		{"zero defaults to 1", 0, 1},
+		{"negative defaults to 1", -1, 1},
+		{"positive value", 5, 5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &FleetConfig{AllowConcurrent: tt.concurrent}
+			got := cfg.GetAllowConcurrent()
+			if got != tt.expected {
+				t.Errorf("GetAllowConcurrent() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+// ValidationError tests
+
+func TestValidationError_Error(t *testing.T) {
+	err := &ValidationError{
+		Field:   "network.port",
+		Message: "must be positive",
+	}
+	got := err.Error()
+	expected := "config validation failed: network.port: must be positive"
+	if got != expected {
+		t.Errorf("Error() = %q, want %q", got, expected)
+	}
+}
+
+func TestValidationErrors_Error(t *testing.T) {
+	// Empty errors
+	var empty ValidationErrors
+	if empty.Error() != "" {
+		t.Errorf("Empty ValidationErrors.Error() should be empty, got %q", empty.Error())
+	}
+
+	// Single error
+	single := ValidationErrors{{Field: "foo", Message: "bar"}}
+	if !contains(single.Error(), "foo") || !contains(single.Error(), "bar") {
+		t.Errorf("Single error should contain field and message, got %q", single.Error())
+	}
+
+	// Multiple errors
+	multi := ValidationErrors{
+		{Field: "field1", Message: "msg1"},
+		{Field: "field2", Message: "msg2"},
+	}
+	errStr := multi.Error()
+	if !contains(errStr, "2 errors") {
+		t.Errorf("Multi error should mention count, got %q", errStr)
+	}
+	if !contains(errStr, "field1") || !contains(errStr, "field2") {
+		t.Errorf("Multi error should contain all fields, got %q", errStr)
+	}
+}
