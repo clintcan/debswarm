@@ -96,3 +96,80 @@ func TestIsAllowedMirrorURL(t *testing.T) {
 		})
 	}
 }
+
+func TestIsAllowedConnectTarget(t *testing.T) {
+	tests := []struct {
+		name     string
+		hostPort string
+		allowed  bool
+	}{
+		// Valid Debian/Ubuntu mirrors on standard ports
+		{"deb.debian.org:443", "deb.debian.org:443", true},
+		{"archive.ubuntu.com:443", "archive.ubuntu.com:443", true},
+		{"security.debian.org:443", "security.debian.org:443", true},
+		{"security.ubuntu.com:443", "security.ubuntu.com:443", true},
+		{"deb.debian.org:80", "deb.debian.org:80", true},
+		{"mirrors.kernel.org:443", "mirrors.kernel.org:443", true},
+		{"mirror.example.com:443", "mirror.example.com:443", true},
+		{"ftp.debian.org:443", "ftp.debian.org:443", true},
+
+		// Blocked - non-standard ports
+		{"debian on port 8080", "deb.debian.org:8080", false},
+		{"debian on port 22", "deb.debian.org:22", false},
+		{"debian on port 3128", "deb.debian.org:3128", false},
+
+		// Blocked - private/internal hosts
+		{"localhost:443", "localhost:443", false},
+		{"127.0.0.1:443", "127.0.0.1:443", false},
+		{"192.168.1.1:443", "192.168.1.1:443", false},
+		{"10.0.0.1:443", "10.0.0.1:443", false},
+		{"172.16.0.1:443", "172.16.0.1:443", false},
+		{"169.254.169.254:443", "169.254.169.254:443", false},
+
+		// Blocked - unknown hosts
+		{"random.com:443", "random.com:443", false},
+		{"evil.com:443", "evil.com:443", false},
+		{"example.com:443", "example.com:443", false},
+
+		// Host without port (defaults to 443)
+		{"deb.debian.org no port", "deb.debian.org", true},
+		{"localhost no port", "localhost", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsAllowedConnectTarget(tt.hostPort)
+			if got != tt.allowed {
+				t.Errorf("IsAllowedConnectTarget(%q) = %v, want %v", tt.hostPort, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestIsKnownDebianMirror(t *testing.T) {
+	tests := []struct {
+		host    string
+		isKnown bool
+	}{
+		{"deb.debian.org", true},
+		{"archive.debian.org", true},
+		{"security.debian.org", true},
+		{"archive.ubuntu.com", true},
+		{"security.ubuntu.com", true},
+		{"mirrors.example.com", true},
+		{"mirror.example.org", true},
+		{"ftp.us.debian.org", true},
+		{"random.example.com", false},
+		{"evil.com", false},
+		{"google.com", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.host, func(t *testing.T) {
+			got := isKnownDebianMirror(tt.host)
+			if got != tt.isKnown {
+				t.Errorf("isKnownDebianMirror(%q) = %v, want %v", tt.host, got, tt.isKnown)
+			}
+		})
+	}
+}

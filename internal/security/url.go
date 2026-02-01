@@ -1,7 +1,10 @@
 // Package security provides security utilities for debswarm
 package security
 
-import "strings"
+import (
+	"net"
+	"strings"
+)
 
 // blockedHostPatterns contains patterns that should never be accessed
 // to prevent SSRF attacks against internal services
@@ -51,4 +54,64 @@ func IsAllowedMirrorURL(url string) bool {
 		return false
 	}
 	return IsDebianRepoURL(url)
+}
+
+// knownMirrorPatterns contains hostname patterns for known Debian/Ubuntu mirrors
+var knownMirrorPatterns = []string{
+	"deb.debian.org",
+	"debian.org",
+	"archive.ubuntu.com",
+	"ubuntu.com",
+	"security.debian.org",
+	"security.ubuntu.com",
+	"mirrors.",
+	"mirror.",
+	"ftp.",
+}
+
+// IsAllowedConnectTarget validates that a CONNECT target is a legitimate Debian/Ubuntu mirror
+// Returns true only for known Debian/Ubuntu repository hosts on ports 443 or 80
+func IsAllowedConnectTarget(hostPort string) bool {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		// If no port specified, assume it's just a host (unusual for CONNECT)
+		host = hostPort
+		port = "443"
+	}
+
+	// Only allow standard HTTPS/HTTP ports
+	if port != "443" && port != "80" {
+		return false
+	}
+
+	// Block private/internal hosts
+	if isBlockedConnectHost(host) {
+		return false
+	}
+
+	// Allow known Debian/Ubuntu mirrors
+	return isKnownDebianMirror(host)
+}
+
+// isBlockedConnectHost checks if a host is a private/internal address
+func isBlockedConnectHost(host string) bool {
+	lower := strings.ToLower(host)
+	for _, blocked := range blockedHostPatterns {
+		if strings.Contains(lower, blocked) {
+			return true
+		}
+	}
+	return false
+}
+
+// isKnownDebianMirror checks if a host matches known Debian/Ubuntu mirror patterns
+func isKnownDebianMirror(host string) bool {
+	lower := strings.ToLower(host)
+
+	for _, pattern := range knownMirrorPatterns {
+		if strings.Contains(lower, pattern) || strings.HasSuffix(lower, pattern) {
+			return true
+		}
+	}
+	return false
 }

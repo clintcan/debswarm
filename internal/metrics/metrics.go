@@ -69,6 +69,14 @@ type Metrics struct {
 	PeerLatency       *HistogramVec
 	ChunkDownloadTime *Histogram
 	DHTLookupDuration *Histogram
+
+	// CONNECT tunnel metrics
+	ConnectRequestsTotal  *Counter    // Total CONNECT requests received
+	ConnectRequestsFailed *Counter    // Failed CONNECT requests
+	ActiveTunnels         *Gauge      // Currently active tunnels
+	TunnelBytesIn         *Counter    // Bytes transferred client -> target
+	TunnelBytesOut        *Counter    // Bytes transferred target -> client
+	TunnelDuration        *Histogram  // Tunnel connection duration
 }
 
 // Counter is a simple counter metric
@@ -353,6 +361,14 @@ func New() *Metrics {
 		PeerLatency:       NewHistogramVec(LatencyBuckets),
 		ChunkDownloadTime: NewHistogram(DurationBuckets),
 		DHTLookupDuration: NewHistogram(DurationBuckets),
+
+		// CONNECT tunnel metrics
+		ConnectRequestsTotal:  &Counter{},
+		ConnectRequestsFailed: &Counter{},
+		ActiveTunnels:         &Gauge{},
+		TunnelBytesIn:         &Counter{},
+		TunnelBytesOut:        &Counter{},
+		TunnelDuration:        NewHistogram(DurationBuckets),
 	}
 }
 
@@ -426,6 +442,14 @@ func (m *Metrics) Handler() http.Handler {
 		// Histograms
 		writeHistogram(w, "debswarm_chunk_download_seconds", m.ChunkDownloadTime)
 		writeHistogram(w, "debswarm_dht_lookup_seconds", m.DHTLookupDuration)
+
+		// CONNECT tunnel metrics
+		writeCounter(w, "debswarm_connect_requests_total", m.ConnectRequestsTotal.Value())
+		writeCounter(w, "debswarm_connect_requests_failed_total", m.ConnectRequestsFailed.Value())
+		writeGauge(w, "debswarm_active_tunnels", m.ActiveTunnels.Value())
+		writeCounter(w, "debswarm_tunnel_bytes_in_total", m.TunnelBytesIn.Value())
+		writeCounter(w, "debswarm_tunnel_bytes_out_total", m.TunnelBytesOut.Value())
+		writeHistogram(w, "debswarm_tunnel_duration_seconds", m.TunnelDuration)
 	})
 }
 

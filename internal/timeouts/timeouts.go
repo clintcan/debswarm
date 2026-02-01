@@ -42,6 +42,8 @@ const (
 	OpPeerTransfer  Operation = "peer_transfer"
 	OpMirrorFetch   Operation = "mirror_fetch"
 	OpChunkDownload Operation = "chunk_download"
+	OpTunnelConnect Operation = "tunnel_connect" // TCP dial to target for CONNECT tunnels
+	OpTunnelIdle    Operation = "tunnel_idle"    // Idle tunnel timeout
 )
 
 // Manager handles adaptive timeouts for various operations
@@ -111,6 +113,8 @@ func NewManager(cfg *Config) *Manager {
 	m.initTimeout(OpPeerTransfer, cfg.PeerStall)
 	m.initTimeout(OpMirrorFetch, 30*time.Second)
 	m.initTimeout(OpChunkDownload, 30*time.Second)
+	m.initTimeout(OpTunnelConnect, 10*time.Second)  // CONNECT tunnel dial timeout
+	m.initTimeout(OpTunnelIdle, 120*time.Second)    // CONNECT tunnel idle timeout
 
 	return m
 }

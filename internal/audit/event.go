@@ -25,6 +25,12 @@ const (
 	EventMultiSourceVerified EventType = "multi_source_verified"
 	// EventMultiSourceUnverified is logged when no other providers found for a package
 	EventMultiSourceUnverified EventType = "multi_source_unverified"
+	// EventConnectTunnelStart is logged when an HTTPS CONNECT tunnel is established
+	EventConnectTunnelStart EventType = "connect_tunnel_start"
+	// EventConnectTunnelEnd is logged when an HTTPS CONNECT tunnel closes
+	EventConnectTunnelEnd EventType = "connect_tunnel_end"
+	// EventConnectTunnelBlocked is logged when a CONNECT request is blocked
+	EventConnectTunnelBlocked EventType = "connect_tunnel_blocked"
 )
 
 // Event represents a single audit log entry
@@ -76,6 +82,14 @@ type Event struct {
 
 	// ProviderCount is the number of other providers found (for multi-source verification)
 	ProviderCount int `json:"provider_count,omitempty"`
+
+	// CONNECT tunnel fields
+	// TargetHost is the hostname for CONNECT tunnel requests
+	TargetHost string `json:"target_host,omitempty"`
+	// TargetPort is the port for CONNECT tunnel requests
+	TargetPort string `json:"target_port,omitempty"`
+	// TunnelBytes is total bytes transferred through the tunnel
+	TunnelBytes int64 `json:"tunnel_bytes,omitempty"`
 }
 
 // NewDownloadCompleteEvent creates an event for successful downloads
@@ -171,4 +185,37 @@ func truncatePeerID(peerID string) string {
 func (e Event) WithRequestID(id string) Event {
 	e.RequestID = id
 	return e
+}
+
+// NewConnectTunnelStartEvent creates an event for CONNECT tunnel establishment
+func NewConnectTunnelStartEvent(host, port string) Event {
+	return Event{
+		Timestamp:  time.Now(),
+		EventType:  EventConnectTunnelStart,
+		TargetHost: host,
+		TargetPort: port,
+	}
+}
+
+// NewConnectTunnelEndEvent creates an event for CONNECT tunnel completion
+func NewConnectTunnelEndEvent(host, port string, tunnelBytes, durationMs int64) Event {
+	return Event{
+		Timestamp:   time.Now(),
+		EventType:   EventConnectTunnelEnd,
+		TargetHost:  host,
+		TargetPort:  port,
+		TunnelBytes: tunnelBytes,
+		DurationMs:  durationMs,
+	}
+}
+
+// NewConnectTunnelBlockedEvent creates an event for blocked CONNECT requests
+func NewConnectTunnelBlockedEvent(host, port, reason string) Event {
+	return Event{
+		Timestamp:  time.Now(),
+		EventType:  EventConnectTunnelBlocked,
+		TargetHost: host,
+		TargetPort: port,
+		Reason:     reason,
+	}
 }

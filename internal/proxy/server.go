@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/pprof"
 	"strings"
@@ -66,6 +67,13 @@ type Server struct {
 	bytesFromMirror int64
 	cacheHits       int64
 	activeConns     int64
+
+	// CONNECT tunnel statistics (atomic)
+	connectTotal   int64
+	connectFailed  int64
+	activeTunnels  int64
+	tunnelBytesIn  int64
+	tunnelBytesOut int64
 
 	// Configuration
 	p2pTimeout     time.Duration
@@ -640,6 +648,12 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Update request with new context
 	r = r.WithContext(ctx)
+
+	// Handle CONNECT method for HTTPS tunneling
+	if r.Method == http.MethodConnect {
+		s.handleConnect(w, r)
+		return
+	}
 
 	targetURL := s.extractTargetURL(r)
 	if targetURL == "" {
@@ -1423,5 +1437,194 @@ func (s *Server) UpdateMetrics() {
 		status := s.fleet.Status()
 		s.metrics.FleetPeers.Set(float64(status.PeerCount))
 		s.metrics.FleetInFlight.Set(float64(status.InFlightCount))
+	}
+}
+
+// handleConnect handles HTTP CONNECT requests for HTTPS tunneling.
+// This allows APT to use HTTPS repositories through the proxy.
+func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
+
+	atomic.AddInt64(&s.connectTotal, 1)
+	s.metrics.ConnectRequestsTotal.Inc()
+
+	// Parse target host:port from request
+	targetHost := r.Host
+	if targetHost == "" {
+		targetHost = r.URL.Host
+	}
+
+	host, port, err := net.SplitHostPort(targetHost)
+	if err != nil {
+		// If no port, assume 443 for CONNECT
+		host = targetHost
+		port = "443"
+		targetHost = net.JoinHostPort(host, port)
+	}
+
+	log.Debug("CONNECT request",
+		zap.String("target", targetHost),
+		zap.String("remoteAddr", r.RemoteAddr))
+
+	// Security: Validate target against allowed patterns
+	if !security.IsAllowedConnectTarget(targetHost) {
+		log.Warn("Blocked CONNECT to non-allowed target",
+			zap.String("target", targetHost),
+			zap.String("remoteAddr", r.RemoteAddr))
+		atomic.AddInt64(&s.connectFailed, 1)
+		s.metrics.ConnectRequestsFailed.Inc()
+		s.audit.Log(audit.NewConnectTunnelBlockedEvent(host, port, "not_allowed").WithRequestID(reqID))
+		http.Error(w, "CONNECT target not allowed", http.StatusForbidden)
+		return
+	}
+
+	// Establish connection to target
+	dialTimeout := s.timeouts.Get(timeouts.OpTunnelConnect)
+	targetConn, err := net.DialTimeout("tcp", targetHost, dialTimeout)
+	if err != nil {
+		log.Error("Failed to connect to target",
+			zap.String("target", targetHost),
+			zap.Error(err))
+		atomic.AddInt64(&s.connectFailed, 1)
+		s.metrics.ConnectRequestsFailed.Inc()
+		s.audit.Log(audit.NewConnectTunnelBlockedEvent(host, port, err.Error()).WithRequestID(reqID))
+		http.Error(w, "Failed to connect to target", http.StatusBadGateway)
+		return
+	}
+
+	// Hijack the client connection
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		log.Error("ResponseWriter does not support hijacking")
+		targetConn.Close()
+		atomic.AddInt64(&s.connectFailed, 1)
+		s.metrics.ConnectRequestsFailed.Inc()
+		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		log.Error("Failed to hijack connection", zap.Error(err))
+		targetConn.Close()
+		atomic.AddInt64(&s.connectFailed, 1)
+		s.metrics.ConnectRequestsFailed.Inc()
+		http.Error(w, "Failed to hijack connection", http.StatusInternalServerError)
+		return
+	}
+
+	// Send 200 Connection Established
+	_, err = clientConn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	if err != nil {
+		log.Error("Failed to send 200 response", zap.Error(err))
+		clientConn.Close()
+		targetConn.Close()
+		atomic.AddInt64(&s.connectFailed, 1)
+		s.metrics.ConnectRequestsFailed.Inc()
+		return
+	}
+
+	// Audit log tunnel start
+	s.audit.Log(audit.NewConnectTunnelStartEvent(host, port).WithRequestID(reqID))
+
+	// Track active tunnels
+	atomic.AddInt64(&s.activeTunnels, 1)
+	s.metrics.ActiveTunnels.Inc()
+
+	// Start tunnel - bidirectional copy
+	startTime := time.Now()
+	bytesIn, bytesOut := s.tunnel(clientConn, targetConn)
+	duration := time.Since(startTime)
+
+	// Update stats
+	atomic.AddInt64(&s.activeTunnels, -1)
+	s.metrics.ActiveTunnels.Dec()
+	atomic.AddInt64(&s.tunnelBytesIn, bytesIn)
+	atomic.AddInt64(&s.tunnelBytesOut, bytesOut)
+	s.metrics.TunnelBytesIn.Add(bytesIn)
+	s.metrics.TunnelBytesOut.Add(bytesOut)
+	s.metrics.TunnelDuration.Observe(duration.Seconds())
+
+	// Audit log tunnel end
+	s.audit.Log(audit.NewConnectTunnelEndEvent(host, port, bytesIn+bytesOut, duration.Milliseconds()).WithRequestID(reqID))
+
+	log.Debug("CONNECT tunnel closed",
+		zap.String("target", targetHost),
+		zap.Int64("bytesIn", bytesIn),
+		zap.Int64("bytesOut", bytesOut),
+		zap.Duration("duration", duration))
+}
+
+// tunnel copies data bidirectionally between client and target connections.
+// Returns bytes transferred in each direction.
+func (s *Server) tunnel(client, target net.Conn) (bytesIn, bytesOut int64) {
+	idleTimeout := s.timeouts.Get(timeouts.OpTunnelIdle)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Client -> Target
+	go func() {
+		defer wg.Done()
+		n := s.copyWithIdleTimeout(target, client, idleTimeout)
+		atomic.AddInt64(&bytesOut, n)
+		// Signal other goroutine to stop by closing write side
+		if tcpConn, ok := target.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		} else {
+			target.SetDeadline(time.Now())
+		}
+	}()
+
+	// Target -> Client
+	go func() {
+		defer wg.Done()
+		n := s.copyWithIdleTimeout(client, target, idleTimeout)
+		atomic.AddInt64(&bytesIn, n)
+		// Signal other goroutine to stop by closing write side
+		if tcpConn, ok := client.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		} else {
+			client.SetDeadline(time.Now())
+		}
+	}()
+
+	wg.Wait()
+
+	// Close connections
+	client.Close()
+	target.Close()
+
+	return
+}
+
+// copyWithIdleTimeout copies data from src to dst, resetting deadline on each read.
+// This keeps the connection alive during active transfer but times out idle connections.
+func (s *Server) copyWithIdleTimeout(dst, src net.Conn, idleTimeout time.Duration) int64 {
+	buf := make([]byte, 32*1024) // 32KB buffer
+	var total int64
+
+	for {
+		// Reset deadline on each read
+		src.SetReadDeadline(time.Now().Add(idleTimeout))
+
+		nr, readErr := src.Read(buf)
+		if nr > 0 {
+			nw, writeErr := dst.Write(buf[:nr])
+			if nw > 0 {
+				total += int64(nw)
+			}
+			if writeErr != nil {
+				return total
+			}
+			if nr != nw {
+				return total
+			}
+		}
+		if readErr != nil {
+			return total
+		}
 	}
 }
