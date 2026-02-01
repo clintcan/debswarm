@@ -3,32 +3,33 @@
 package cache
 
 import (
-	"syscall"
-	"unsafe"
+	"math"
+
+	"golang.org/x/sys/windows"
 )
 
 // getDiskFreeSpace returns the available disk space in bytes for the cache path
 func (c *Cache) getDiskFreeSpace() (int64, error) {
-	kernel32 := syscall.NewLazyDLL("kernel32.dll")
-	getDiskFreeSpaceEx := kernel32.NewProc("GetDiskFreeSpaceExW")
+	var freeBytesAvailable, totalBytes, totalFreeBytes uint64
 
-	var freeBytesAvailable, totalBytes, totalFreeBytes int64
-
-	pathPtr, err := syscall.UTF16PtrFromString(c.basePath)
+	pathPtr, err := windows.UTF16PtrFromString(c.basePath)
 	if err != nil {
 		return 0, err
 	}
 
-	ret, _, err := getDiskFreeSpaceEx.Call(
-		uintptr(unsafe.Pointer(pathPtr)),
-		uintptr(unsafe.Pointer(&freeBytesAvailable)),
-		uintptr(unsafe.Pointer(&totalBytes)),
-		uintptr(unsafe.Pointer(&totalFreeBytes)),
+	err = windows.GetDiskFreeSpaceEx(
+		pathPtr,
+		&freeBytesAvailable,
+		&totalBytes,
+		&totalFreeBytes,
 	)
-
-	if ret == 0 {
+	if err != nil {
 		return 0, err
 	}
 
-	return freeBytesAvailable, nil
+	// Cap at max int64 to prevent overflow (>9 exabytes is unrealistic)
+	if freeBytesAvailable > math.MaxInt64 {
+		return math.MaxInt64, nil
+	}
+	return int64(freeBytesAvailable), nil
 }
