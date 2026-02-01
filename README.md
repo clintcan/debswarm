@@ -1,5 +1,8 @@
 # Debswarm
 
+[![CI](https://github.com/clintcan/debswarm/actions/workflows/ci.yml/badge.svg)](https://github.com/clintcan/debswarm/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/clintcan/debswarm/branch/main/graph/badge.svg)](https://codecov.io/gh/clintcan/debswarm)
+
 **Peer-to-peer package distribution for Debian/Ubuntu**
 
 debswarm accelerates APT package downloads by fetching packages from nearby peers while maintaining security through cryptographic verification. It operates as a transparent HTTP proxy, requiring no changes to your normal `apt` workflow.
