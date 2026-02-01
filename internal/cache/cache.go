@@ -352,6 +352,7 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	// Use a single critical section for file open and reader tracking
 	// to prevent TOCTOU race conditions
 	c.activeReadersMu.Lock()
+	// #nosec G304 -- path is constructed from basePath + validated SHA256 hash, not user input
 	f, err := os.Open(path)
 	if err != nil {
 		c.activeReadersMu.Unlock()
@@ -399,6 +400,7 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 
 	// Write to temporary file while computing hash
 	pendingPath := filepath.Join(c.basePath, "packages", "pending", expectedHash)
+	// #nosec G304 -- pendingPath is constructed from basePath + expected hash, not user input
 	f, err := os.Create(pendingPath)
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
