@@ -1,3 +1,15 @@
+debswarm (1.20.0-1) stable; urgency=low
+
+  * HTTPS CONNECT tunnel support: APT can use HTTPS repos through proxy
+    - Implements HTTP CONNECT method for transparent TCP tunneling
+    - Encrypted traffic passes through without caching (end-to-end TLS)
+    - Security: Only known Debian/Ubuntu mirrors allowed on ports 443/80
+    - Private/internal hosts blocked to prevent SSRF
+    - New metrics: connect_requests_total, active_tunnels, tunnel_bytes
+    - New audit events: connect_tunnel_start/end/blocked
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 01 Feb 2026 00:00:00 +0000
+
 debswarm (1.19.0-1) stable; urgency=low
 
   * APT archives import: Import packages from APT's local cache on startup

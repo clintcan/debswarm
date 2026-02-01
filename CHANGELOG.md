@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-02-01
+
+### Added
+- **HTTPS CONNECT tunnel support**: APT can now use HTTPS repositories through the debswarm proxy
+  - Implements HTTP CONNECT method for transparent TCP tunneling
+  - Encrypted traffic passes through without caching (end-to-end TLS)
+  - Security validation restricts tunnels to known Debian/Ubuntu mirrors only
+  - Only ports 443 and 80 allowed; private/internal hosts blocked
+  - New timeout operations: `tunnel_connect` (10s) and `tunnel_idle` (120s)
+  - New Prometheus metrics: `debswarm_connect_requests_total`, `debswarm_active_tunnels`, `debswarm_tunnel_bytes_in/out_total`, `debswarm_tunnel_duration_seconds`
+  - New audit events: `connect_tunnel_start`, `connect_tunnel_end`, `connect_tunnel_blocked`
+
+### Configuration
+The existing APT proxy config (`/etc/apt/apt.conf.d/90debswarm`) already supports HTTPS:
+```
+Acquire::http::Proxy "http://127.0.0.1:9977";
+Acquire::https::Proxy "http://127.0.0.1:9977";
+```
+
 ## [1.19.0] - 2026-02-01
 
 ### Added
@@ -808,7 +827,8 @@ Re-release of v1.2.5 (CI asset conflict).
 - No trust placed in peers
 - Sandboxed systemd service
 
-[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.19.0...HEAD
+[Unreleased]: https://github.com/clintcan/debswarm/compare/v1.20.0...HEAD
+[1.20.0]: https://github.com/clintcan/debswarm/compare/v1.19.0...v1.20.0
 [1.19.0]: https://github.com/clintcan/debswarm/compare/v1.18.0...v1.19.0
 [1.18.0]: https://github.com/clintcan/debswarm/compare/v1.17.3...v1.18.0
 [1.17.3]: https://github.com/clintcan/debswarm/compare/v1.17.2...v1.17.3
