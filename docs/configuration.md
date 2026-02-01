@@ -104,8 +104,71 @@ When APT requests an HTTPS URL, the proxy creates a TCP tunnel to the target ser
 
 **Tunnel Security:**
 - Only ports 443 and 80 are allowed
-- Only known Debian/Ubuntu mirrors are permitted (deb.debian.org, archive.ubuntu.com, security.*, mirrors.*, etc.)
+- Only known Debian/Ubuntu/Mint mirrors are permitted by default
+- Additional hosts can be configured via `[proxy] allowed_hosts`
 - Private/internal addresses are blocked (SSRF protection)
+
+**Configuring Additional Repository Hosts:**
+
+Third-party Debian-style repositories (Docker, PPAs, PostgreSQL, etc.) can be allowed via configuration:
+
+```toml
+[proxy]
+# Additional Debian-style repository hosts to allow through the proxy
+# These must still use /dists/ or /pool/ URL patterns
+allowed_hosts = [
+  "download.docker.com",
+  "ppa.launchpad.net",
+  "apt.postgresql.org",
+  "deb.nodesource.com",
+]
+```
+
+Alternatively, you can bypass the proxy entirely for these hosts in APT:
+
+```
+// Add to /etc/apt/apt.conf.d/90debswarm
+Acquire::http::Proxy::download.docker.com "DIRECT";
+Acquire::https::Proxy::download.docker.com "DIRECT";
+```
+
+See [Troubleshooting: Third-party repositories](troubleshooting.md#third-party-repositories-failing) for more details.
+
+---
+
+### [proxy]
+
+Settings for the HTTP proxy behavior.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy. These hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`). |
+
+**Example:**
+```toml
+[proxy]
+# Allow third-party Debian-style repositories through the proxy
+allowed_hosts = [
+  "download.docker.com",
+  "ppa.launchpad.net",
+  "apt.postgresql.org",
+  "deb.nodesource.com",
+  "packages.microsoft.com",
+]
+```
+
+**Built-in Allowed Hosts:**
+
+The following hosts are always allowed (no configuration needed):
+- `deb.debian.org`, `*.debian.org`
+- `archive.ubuntu.com`, `*.ubuntu.com`
+- `packages.linuxmint.com`, `*.linuxmint.com`
+- `mirrors.*`, `mirror.*`, `ftp.*`
+
+**Security Notes:**
+- Configured hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`, etc.)
+- Private/internal hosts (localhost, 10.x.x.x, 192.168.x.x, etc.) are always blocked
+- Only ports 443 and 80 are allowed for HTTPS CONNECT tunnels
 
 ---
 

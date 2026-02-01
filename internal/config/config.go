@@ -16,6 +16,7 @@ import (
 // Config holds all configuration for apt-p2p
 type Config struct {
 	Network   NetworkConfig   `toml:"network"`
+	Proxy     ProxyConfig     `toml:"proxy"`
 	Cache     CacheConfig     `toml:"cache"`
 	Transfer  TransferConfig  `toml:"transfer"`
 	DHT       DHTConfig       `toml:"dht"`
@@ -25,6 +26,14 @@ type Config struct {
 	Scheduler SchedulerConfig `toml:"scheduler"`
 	Fleet     FleetConfig     `toml:"fleet"`
 	Index     IndexConfig     `toml:"index"`
+}
+
+// ProxyConfig holds proxy-related settings
+type ProxyConfig struct {
+	// AllowedHosts is a list of additional repository hostnames to allow through the proxy.
+	// These hosts must still use Debian-style URL patterns (/dists/, /pool/).
+	// Built-in allowed hosts (Debian, Ubuntu, Mint, mirrors.*, etc.) are always permitted.
+	AllowedHosts []string `toml:"allowed_hosts"`
 }
 
 // NetworkConfig holds network-related settings

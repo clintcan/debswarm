@@ -101,6 +101,9 @@ type Server struct {
 	retryCtx         context.Context
 	retryCancel      context.CancelFunc
 	retryDone        chan struct{}
+
+	// Security configuration
+	allowedHosts []string // Additional allowed repository hosts
 }
 
 // Config holds proxy server configuration
@@ -124,6 +127,9 @@ type Config struct {
 	RetryMaxAttempts int           // Max retry attempts per download (0 = disabled)
 	RetryInterval    time.Duration // How often to check for failed downloads
 	RetryMaxAge      time.Duration // Don't retry downloads older than this
+
+	// Security settings
+	AllowedHosts []string // Additional allowed repository hosts (beyond built-in Debian/Ubuntu/Mint)
 }
 
 // DefaultConfig returns default configuration
@@ -202,6 +208,7 @@ func NewServer(
 		retryInterval:    cfg.RetryInterval,
 		retryMaxAge:      cfg.RetryMaxAge,
 		retryDone:        make(chan struct{}),
+		allowedHosts:     cfg.AllowedHosts,
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -737,7 +744,7 @@ func (s *Server) extractTargetURL(r *http.Request) string {
 
 	// SECURITY: Validate URL to prevent SSRF attacks
 	// Only allow requests to legitimate Debian/Ubuntu package mirrors
-	if !isAllowedMirrorURL(targetURL) {
+	if !s.isAllowedMirrorURL(targetURL) {
 		s.logger.Warn("Blocked request to non-allowed URL",
 			zap.String("url", sanitize.URL(targetURL)),
 			zap.String("remoteAddr", r.RemoteAddr))
@@ -749,8 +756,8 @@ func (s *Server) extractTargetURL(r *http.Request) string {
 
 // isAllowedMirrorURL validates that a URL is a legitimate Debian/Ubuntu mirror
 // This prevents SSRF attacks by blocking requests to internal services
-func isAllowedMirrorURL(url string) bool {
-	return security.IsAllowedMirrorURL(url)
+func (s *Server) isAllowedMirrorURL(url string) bool {
+	return security.IsAllowedMirrorURLWithHosts(url, s.allowedHosts)
 }
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
@@ -1469,7 +1476,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		zap.String("remoteAddr", r.RemoteAddr))
 
 	// Security: Validate target against allowed patterns
-	if !security.IsAllowedConnectTarget(targetHost) {
+	if !security.IsAllowedConnectTargetWithHosts(targetHost, s.allowedHosts) {
 		log.Warn("Blocked CONNECT to non-allowed target",
 			zap.String("target", targetHost),
 			zap.String("remoteAddr", r.RemoteAddr))

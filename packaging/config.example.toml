@@ -45,6 +45,22 @@ bootstrap_peers = [
 ]
 
 #─────────────────────────────────────────────────────────────────────────────
+# [proxy] - HTTP proxy settings
+#─────────────────────────────────────────────────────────────────────────────
+[proxy]
+# Additional Debian-style repository hosts to allow through the proxy
+# By default, only Debian, Ubuntu, and Linux Mint repositories are allowed.
+# Add third-party Debian-style repositories here (must use /dists/ or /pool/ paths).
+# Private/internal hosts are always blocked for security.
+allowed_hosts = [
+  # "download.docker.com",
+  # "ppa.launchpad.net",
+  # "apt.postgresql.org",
+  # "deb.nodesource.com",
+  # "packages.microsoft.com",
+]
+
+#─────────────────────────────────────────────────────────────────────────────
 # [cache] - Package cache settings
 #─────────────────────────────────────────────────────────────────────────────
 [cache]

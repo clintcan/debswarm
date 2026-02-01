@@ -49,6 +49,11 @@ func TestIsDebianRepoURL(t *testing.T) {
 		{"https://mirror.example.com/debian/dists/stable/Release", true},
 		{"http://example.com/ubuntu/pool/universe/", true},
 
+		// Linux Mint URLs
+		{"http://packages.linuxmint.com/dists/zara/InRelease", true},
+		{"http://packages.linuxmint.com/pool/main/m/mint-meta/mint-meta_1.0.deb", true},
+		{"http://example.com/linuxmint/pool/main/", true},
+
 		// Invalid URLs (not repo-like)
 		{"http://example.com/api/internal", false},
 		{"http://example.com/admin/", false},
@@ -75,6 +80,10 @@ func TestIsAllowedMirrorURL(t *testing.T) {
 		{"debian dists", "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz", true},
 		{"ubuntu pool", "http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_9.0.deb", true},
 		{"https mirror", "https://mirror.example.com/debian/dists/stable/Release", true},
+
+		// Valid - Linux Mint
+		{"mint dists", "http://packages.linuxmint.com/dists/zara/InRelease", true},
+		{"mint pool", "http://packages.linuxmint.com/pool/main/m/mint-meta/mint-meta_1.0.deb", true},
 
 		// Blocked - internal hosts with repo paths
 		{"localhost with dists", "http://localhost/debian/dists/test", false},
@@ -112,6 +121,10 @@ func TestIsAllowedConnectTarget(t *testing.T) {
 		{"mirrors.kernel.org:443", "mirrors.kernel.org:443", true},
 		{"mirror.example.com:443", "mirror.example.com:443", true},
 		{"ftp.debian.org:443", "ftp.debian.org:443", true},
+
+		// Valid Linux Mint mirrors
+		{"packages.linuxmint.com:443", "packages.linuxmint.com:443", true},
+		{"packages.linuxmint.com:80", "packages.linuxmint.com:80", true},
 
 		// Blocked - non-standard ports
 		{"debian on port 8080", "deb.debian.org:8080", false},
@@ -156,6 +169,7 @@ func TestIsKnownDebianMirror(t *testing.T) {
 		{"security.debian.org", true},
 		{"archive.ubuntu.com", true},
 		{"security.ubuntu.com", true},
+		{"packages.linuxmint.com", true},
 		{"mirrors.example.com", true},
 		{"mirror.example.org", true},
 		{"ftp.us.debian.org", true},
@@ -171,5 +185,110 @@ func TestIsKnownDebianMirror(t *testing.T) {
 				t.Errorf("isKnownDebianMirror(%q) = %v, want %v", tt.host, got, tt.isKnown)
 			}
 		})
+	}
+}
+
+func TestIsAllowedMirrorURLWithHosts(t *testing.T) {
+	allowedHosts := []string{
+		"download.docker.com",
+		"ppa.launchpad.net",
+		"apt.postgresql.org",
+	}
+
+	tests := []struct {
+		name    string
+		url     string
+		allowed bool
+	}{
+		// Built-in hosts still work
+		{"debian dists", "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz", true},
+		{"ubuntu pool", "http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_9.0.deb", true},
+		{"mint dists", "http://packages.linuxmint.com/dists/zara/InRelease", true},
+
+		// Configured hosts work with Debian-style paths
+		{"docker dists", "https://download.docker.com/linux/ubuntu/dists/noble/InRelease", true},
+		{"docker pool", "https://download.docker.com/linux/ubuntu/pool/stable/amd64/docker-ce.deb", true},
+		{"ppa dists", "http://ppa.launchpad.net/user/ppa/ubuntu/dists/noble/InRelease", true},
+		{"postgresql dists", "https://apt.postgresql.org/pub/repos/apt/dists/noble-pgdg/InRelease", true},
+
+		// Configured hosts without Debian-style paths are blocked
+		{"docker no path", "https://download.docker.com/linux/static/stable/x86_64/docker.tgz", false},
+
+		// Non-configured hosts are blocked
+		{"random with dists", "http://evil.com/dists/stable/InRelease", false},
+		{"not configured", "https://packages.microsoft.com/dists/noble/InRelease", false},
+
+		// Private hosts always blocked
+		{"localhost with dists", "http://localhost/dists/stable/InRelease", false},
+		{"private ip with dists", "http://192.168.1.1/dists/stable/InRelease", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsAllowedMirrorURLWithHosts(tt.url, allowedHosts)
+			if got != tt.allowed {
+				t.Errorf("IsAllowedMirrorURLWithHosts(%q, allowedHosts) = %v, want %v", tt.url, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestIsAllowedConnectTargetWithHosts(t *testing.T) {
+	allowedHosts := []string{
+		"download.docker.com",
+		"ppa.launchpad.net",
+	}
+
+	tests := []struct {
+		name     string
+		hostPort string
+		allowed  bool
+	}{
+		// Built-in hosts still work
+		{"deb.debian.org:443", "deb.debian.org:443", true},
+		{"archive.ubuntu.com:443", "archive.ubuntu.com:443", true},
+		{"packages.linuxmint.com:443", "packages.linuxmint.com:443", true},
+
+		// Configured hosts work
+		{"docker:443", "download.docker.com:443", true},
+		{"docker:80", "download.docker.com:80", true},
+		{"ppa:443", "ppa.launchpad.net:443", true},
+
+		// Non-standard ports blocked
+		{"docker:8080", "download.docker.com:8080", false},
+
+		// Non-configured hosts blocked
+		{"microsoft:443", "packages.microsoft.com:443", false},
+		{"random:443", "random.com:443", false},
+
+		// Private hosts always blocked
+		{"localhost:443", "localhost:443", false},
+		{"private:443", "192.168.1.1:443", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsAllowedConnectTargetWithHosts(tt.hostPort, allowedHosts)
+			if got != tt.allowed {
+				t.Errorf("IsAllowedConnectTargetWithHosts(%q, allowedHosts) = %v, want %v", tt.hostPort, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestIsAllowedWithNilHosts(t *testing.T) {
+	// nil allowedHosts should work (use only built-in)
+	if !IsAllowedMirrorURLWithHosts("http://deb.debian.org/debian/dists/stable/InRelease", nil) {
+		t.Error("Expected built-in host to be allowed with nil allowedHosts")
+	}
+	if IsAllowedMirrorURLWithHosts("http://download.docker.com/linux/ubuntu/dists/noble/InRelease", nil) {
+		t.Error("Expected non-built-in host to be blocked with nil allowedHosts")
+	}
+
+	if !IsAllowedConnectTargetWithHosts("deb.debian.org:443", nil) {
+		t.Error("Expected built-in host to be allowed with nil allowedHosts")
+	}
+	if IsAllowedConnectTargetWithHosts("download.docker.com:443", nil) {
+		t.Error("Expected non-built-in host to be blocked with nil allowedHosts")
 	}
 }

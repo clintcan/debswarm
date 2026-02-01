@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-02-02
+
+### Added
+- **Linux Mint repository support**: Native support for Linux Mint repositories (`packages.linuxmint.com`)
+  - Added `linuxmint.com` and `packages.linuxmint.com` to allowed mirror patterns
+  - HTTPS CONNECT tunneling works for Linux Mint mirrors
+  - No APT bypass configuration needed for Linux Mint repos
+  - Added `/linuxmint/` URL pattern to repository detection
+
+- **Configurable allowed repository hosts**: New `[proxy] allowed_hosts` configuration option
+  - Allow third-party Debian-style repositories (Docker, PPAs, PostgreSQL, etc.) through the proxy
+  - Configured hosts must still use `/dists/` or `/pool/` URL patterns (security)
+  - Private/internal hosts remain blocked (SSRF protection)
+  - Alternative to APT `DIRECT` bypass for centralized configuration
+
+### Configuration
+New `[proxy]` section in config.toml:
+```toml
+[proxy]
+allowed_hosts = [
+  "download.docker.com",
+  "ppa.launchpad.net",
+  "apt.postgresql.org",
+]
+```
+
+### Documentation
+- Added `[proxy]` section documentation to configuration guide
+- Updated troubleshooting guide with `allowed_hosts` as recommended solution
+- Updated APT proxy config example with `[proxy]` section
+
 ## [1.20.0] - 2026-02-01
 
 ### Added
