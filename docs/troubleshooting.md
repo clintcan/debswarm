@@ -239,11 +239,41 @@ sudo apt-get update -o Debug::Acquire::http=true
 
 #### HTTPS repositories not working
 
-**Symptom**: HTTPS repos fail through proxy.
+**Symptom**: HTTPS repos fail through proxy or don't use P2P.
 
-**Cause**: debswarm only proxies HTTP; HTTPS goes direct by design.
+**Cause**: HTTPS repositories require the HTTP CONNECT method for tunneling.
 
-**Solution**: This is expected behavior. HTTPS repositories bypass the proxy for security. For P2P benefits, use HTTP mirrors or configure mixed sources.
+**Solution** (v1.20+):
+
+debswarm now supports HTTP CONNECT tunneling for HTTPS repositories. Configure APT to use the proxy for HTTPS:
+
+```bash
+# Configure APT to use proxy for HTTPS (in addition to HTTP)
+echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
+  sudo tee -a /etc/apt/apt.conf.d/00debswarm
+```
+
+**How it works:**
+1. APT sends `CONNECT deb.debian.org:443` to the proxy
+2. debswarm validates the target is a known Debian/Ubuntu mirror
+3. A TCP tunnel is established for the encrypted traffic
+4. APT communicates directly with the mirror over TLS through the tunnel
+
+**Security notes:**
+- CONNECT tunnels only allow ports 443 and 80
+- Only known Debian/Ubuntu mirrors are allowed (deb.debian.org, archive.ubuntu.com, security.*, mirrors.*, etc.)
+- Private/internal hosts (localhost, RFC1918 addresses) are blocked
+- The encrypted content passes through unchanged (no caching for HTTPS)
+
+**P2P benefits for HTTPS repos:**
+While HTTPS traffic itself isn't cached, debswarm can still provide P2P benefits:
+- APT's package lists are updated through the proxy and indexed
+- When APT later requests a `.deb` file, the hash is known from the index
+- The actual package can be fetched from P2P peers if available
+- Only the index/metadata goes through HTTPS; packages can come from P2P
+
+**Pre-v1.20 behavior:**
+In older versions, HTTPS repositories bypass the proxy entirely. For P2P benefits with older versions, use HTTP mirrors or configure mixed sources.
 
 ### Systemd Service Issues
 

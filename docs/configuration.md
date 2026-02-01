@@ -88,6 +88,25 @@ Both are enabled by default. Disable if you're on a restricted network that bloc
 - Custom bootstrap peers can be added for private networks or to improve connectivity
 - Multiaddr format: `/ip4/<ip>/tcp/<port>/p2p/<peerID>` or `/dnsaddr/<domain>/p2p/<peerID>`
 
+**HTTPS Proxy Configuration (v1.20+):**
+
+debswarm supports HTTP CONNECT tunneling for HTTPS repositories. To use APT with HTTPS repos through debswarm:
+
+```bash
+# Configure APT to use proxy for both HTTP and HTTPS
+cat <<EOF | sudo tee /etc/apt/apt.conf.d/00debswarm
+Acquire::http::Proxy "http://127.0.0.1:9977";
+Acquire::https::Proxy "http://127.0.0.1:9977";
+EOF
+```
+
+When APT requests an HTTPS URL, the proxy creates a TCP tunnel to the target server, allowing encrypted traffic to pass through. This enables APT to update package lists from HTTPS sources while debswarm indexes the metadata for P2P package discovery.
+
+**Tunnel Security:**
+- Only ports 443 and 80 are allowed
+- Only known Debian/Ubuntu mirrors are permitted (deb.debian.org, archive.ubuntu.com, security.*, mirrors.*, etc.)
+- Private/internal addresses are blocked (SSRF protection)
+
 ---
 
 ### [cache]

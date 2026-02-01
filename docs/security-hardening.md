@@ -79,6 +79,7 @@ The HTTP endpoints are localhost-only by default. Only the P2P port (4001) accep
 | Security Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection | v0.5.5 |
 | MaxHeaderBytes | 1MB limit on HTTP headers (DoS protection) | v1.0.0 |
 | Response Size Limit | 500MB max from mirrors | v0.5.5 |
+| CONNECT Tunnel Validation | Restricts CONNECT targets to known mirrors on ports 80/443 | v1.20.0 |
 
 ---
 
@@ -236,6 +237,33 @@ max_connections = 100
 max_concurrent_uploads = 10
 max_concurrent_peer_downloads = 20
 ```
+
+### 8. HTTPS CONNECT Tunnel Security (v1.20+)
+
+The HTTP CONNECT tunnel feature allows APT to access HTTPS repositories through debswarm. Security controls are built-in:
+
+**Allowed Targets:**
+- Only ports 443 and 80 are permitted
+- Only known Debian/Ubuntu mirror hostnames are allowed:
+  - `deb.debian.org`, `*.debian.org`
+  - `archive.ubuntu.com`, `*.ubuntu.com`
+  - `security.debian.org`, `security.ubuntu.com`
+  - Hosts matching `mirrors.*`, `mirror.*`, `ftp.*`
+
+**Blocked Targets:**
+- `localhost`, `127.0.0.1`, `[::1]`
+- Private networks: `10.*`, `172.16-31.*`, `192.168.*`
+- Link-local: `169.254.*`, `fe80::`
+- Cloud metadata: `metadata.*`
+- IPv6 unique local: `fd00::`
+
+**Monitoring:**
+Tunnel activity is tracked via:
+- Prometheus metrics: `debswarm_connect_*` (requests, failures, active tunnels, bytes)
+- Audit events: `connect_tunnel_start`, `connect_tunnel_end`, `connect_tunnel_blocked`
+
+**If CONNECT tunneling is not needed:**
+CONNECT requests to non-allowed targets are automatically blocked. There is no configuration to disable CONNECT entirely, but the strict allowlist ensures only legitimate APT traffic is tunneled.
 
 ---
 

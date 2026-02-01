@@ -13,6 +13,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Transparent APT Integration** - Just use `apt install` as usual
 - **P2P Package Sharing** - Download from and upload to other debswarm users
 - **Multi-Repository Support** - Works with Debian, Ubuntu, and third-party repositories simultaneously
+- **HTTPS Repository Support** - HTTP CONNECT tunneling for HTTPS sources (v1.20+)
 - **Hash Verification** - All packages verified against signed repository metadata
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
@@ -65,6 +66,10 @@ sudo systemctl enable --now debswarm
 # Use APT normally
 sudo apt update
 sudo apt install vim
+
+# For HTTPS repositories (v1.20+), add HTTPS proxy config:
+echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
+  sudo tee -a /etc/apt/apt.conf.d/90debswarm
 ```
 
 ## How It Works
@@ -501,8 +506,11 @@ This triggers the release workflow which builds:
 # Check config exists
 cat /etc/apt/apt.conf.d/90debswarm.conf
 
-# Should show:
+# Should show (for HTTP):
 # Acquire::http::Proxy "http://127.0.0.1:9977";
+
+# For HTTPS repositories (v1.20+), also add:
+# Acquire::https::Proxy "http://127.0.0.1:9977";
 ```
 
 **No peers found:**
