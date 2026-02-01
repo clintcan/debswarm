@@ -104,8 +104,22 @@ When APT requests an HTTPS URL, the proxy creates a TCP tunnel to the target ser
 
 **Tunnel Security:**
 - Only ports 443 and 80 are allowed
-- Only known Debian/Ubuntu mirrors are permitted (deb.debian.org, archive.ubuntu.com, security.*, mirrors.*, etc.)
+- Only known Debian/Ubuntu/Mint mirrors are permitted (deb.debian.org, archive.ubuntu.com, packages.linuxmint.com, security.*, mirrors.*, etc.)
 - Private/internal addresses are blocked (SSRF protection)
+
+**Third-Party Repositories:**
+
+Third-party repositories (Docker, PPAs, etc.) are blocked by design. Configure APT to bypass the proxy for these hosts:
+
+```
+// Add to /etc/apt/apt.conf.d/90debswarm
+Acquire::http::Proxy::download.docker.com "DIRECT";
+Acquire::https::Proxy::download.docker.com "DIRECT";
+Acquire::http::Proxy::ppa.launchpad.net "DIRECT";
+Acquire::https::Proxy::ppa.launchpad.net "DIRECT";
+```
+
+See [Troubleshooting: Third-party repositories](troubleshooting.md#third-party-repositories-failing) for more details.
 
 ---
 

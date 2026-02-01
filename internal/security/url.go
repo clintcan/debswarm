@@ -37,14 +37,15 @@ func IsBlockedHost(url string) bool {
 	return false
 }
 
-// IsDebianRepoURL checks if a URL looks like a legitimate Debian/Ubuntu repository
-// Valid repository URLs contain /dists/, /pool/, /debian/, or /ubuntu/
+// IsDebianRepoURL checks if a URL looks like a legitimate Debian/Ubuntu/Mint repository
+// Valid repository URLs contain /dists/, /pool/, /debian/, /ubuntu/, or /linuxmint/
 func IsDebianRepoURL(url string) bool {
 	lower := strings.ToLower(url)
 	return strings.Contains(lower, "/dists/") ||
 		strings.Contains(lower, "/pool/") ||
 		strings.Contains(lower, "/debian/") ||
-		strings.Contains(lower, "/ubuntu/")
+		strings.Contains(lower, "/ubuntu/") ||
+		strings.Contains(lower, "/linuxmint/")
 }
 
 // IsAllowedMirrorURL validates that a URL is safe to fetch from
@@ -56,7 +57,7 @@ func IsAllowedMirrorURL(url string) bool {
 	return IsDebianRepoURL(url)
 }
 
-// knownMirrorPatterns contains hostname patterns for known Debian/Ubuntu mirrors
+// knownMirrorPatterns contains hostname patterns for known Debian/Ubuntu/Mint mirrors
 var knownMirrorPatterns = []string{
 	"deb.debian.org",
 	"debian.org",
@@ -64,6 +65,8 @@ var knownMirrorPatterns = []string{
 	"ubuntu.com",
 	"security.debian.org",
 	"security.ubuntu.com",
+	"packages.linuxmint.com",
+	"linuxmint.com",
 	"mirrors.",
 	"mirror.",
 	"ftp.",

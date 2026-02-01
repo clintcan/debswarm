@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-02-02
+
+### Added
+- **Linux Mint repository support**: Native support for Linux Mint repositories (`packages.linuxmint.com`)
+  - Added `linuxmint.com` and `packages.linuxmint.com` to allowed mirror patterns
+  - HTTPS CONNECT tunneling works for Linux Mint mirrors
+  - No APT bypass configuration needed for Linux Mint repos
+  - Added `/linuxmint/` URL pattern to repository detection
+
+### Documentation
+- Updated troubleshooting guide with "Natively supported repositories" section
+- Updated configuration docs to list Linux Mint as supported
+- Updated APT proxy config example to clarify Linux Mint is natively supported
+
 ## [1.20.0] - 2026-02-01
 
 ### Added

@@ -220,6 +220,66 @@ sqlite3 ~/.cache/debswarm/state.db "PRAGMA integrity_check;"
 
 ### APT Integration Issues
 
+#### Third-party repositories failing
+
+**Symptom**: Third-party repositories (Docker, PPAs, etc.) show errors like:
+- `502 Bad Gateway`
+- `403 Forbidden`
+- `Invalid response from proxy: HTTP/1.1 301 Moved Permanently`
+
+**Cause**: debswarm only proxies official Debian/Ubuntu/Mint repositories for security (SSRF protection). Third-party repositories are intentionally blocked.
+
+**Note**: Linux Mint repositories (`packages.linuxmint.com`) are supported natively as of v1.21.
+
+**Solution**: Configure APT to bypass the proxy for these repositories using `"DIRECT"`:
+
+```bash
+# Edit the debswarm APT configuration
+sudo nano /etc/apt/apt.conf.d/90debswarm
+```
+
+Add bypass rules for your third-party repositories:
+
+```
+// Bypass proxy for third-party repositories
+Acquire::http::Proxy::download.docker.com "DIRECT";
+Acquire::https::Proxy::download.docker.com "DIRECT";
+
+Acquire::http::Proxy::ppa.launchpad.net "DIRECT";
+Acquire::https::Proxy::ppa.launchpad.net "DIRECT";
+```
+
+The `"DIRECT"` keyword tells APT to connect directly without using the proxy.
+
+**Common third-party repositories requiring bypass**:
+
+| Repository | Hostname |
+|------------|----------|
+| Docker | `download.docker.com` |
+| Ubuntu PPAs | `ppa.launchpad.net` |
+| Microsoft (VS Code, Teams) | `packages.microsoft.com` |
+| Google Chrome | `dl.google.com` |
+| MongoDB | `repo.mongodb.org` |
+| PostgreSQL | `apt.postgresql.org` |
+| Node.js | `deb.nodesource.com` |
+
+**Natively supported repositories** (no bypass needed):
+- Debian (`deb.debian.org`, `security.debian.org`, etc.)
+- Ubuntu (`archive.ubuntu.com`, `security.ubuntu.com`, etc.)
+- Linux Mint (`packages.linuxmint.com`)
+- Any mirror matching `mirrors.*`, `mirror.*`, or `ftp.*`
+
+**Why this design?**
+
+debswarm restricts the proxy to known mirrors to prevent:
+- SSRF (Server-Side Request Forgery) attacks
+- Accidental exposure of internal services
+- Unverified packages entering the P2P network
+
+Third-party repositories don't benefit from debswarm's P2P features anyway (packages aren't hash-indexed), so bypassing them has no functional downside.
+
+---
+
 #### APT not using proxy
 
 **Symptom**: APT downloads directly from mirrors, bypassing debswarm.

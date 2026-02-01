@@ -49,6 +49,11 @@ func TestIsDebianRepoURL(t *testing.T) {
 		{"https://mirror.example.com/debian/dists/stable/Release", true},
 		{"http://example.com/ubuntu/pool/universe/", true},
 
+		// Linux Mint URLs
+		{"http://packages.linuxmint.com/dists/zara/InRelease", true},
+		{"http://packages.linuxmint.com/pool/main/m/mint-meta/mint-meta_1.0.deb", true},
+		{"http://example.com/linuxmint/pool/main/", true},
+
 		// Invalid URLs (not repo-like)
 		{"http://example.com/api/internal", false},
 		{"http://example.com/admin/", false},
@@ -75,6 +80,10 @@ func TestIsAllowedMirrorURL(t *testing.T) {
 		{"debian dists", "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz", true},
 		{"ubuntu pool", "http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_9.0.deb", true},
 		{"https mirror", "https://mirror.example.com/debian/dists/stable/Release", true},
+
+		// Valid - Linux Mint
+		{"mint dists", "http://packages.linuxmint.com/dists/zara/InRelease", true},
+		{"mint pool", "http://packages.linuxmint.com/pool/main/m/mint-meta/mint-meta_1.0.deb", true},
 
 		// Blocked - internal hosts with repo paths
 		{"localhost with dists", "http://localhost/debian/dists/test", false},
@@ -112,6 +121,10 @@ func TestIsAllowedConnectTarget(t *testing.T) {
 		{"mirrors.kernel.org:443", "mirrors.kernel.org:443", true},
 		{"mirror.example.com:443", "mirror.example.com:443", true},
 		{"ftp.debian.org:443", "ftp.debian.org:443", true},
+
+		// Valid Linux Mint mirrors
+		{"packages.linuxmint.com:443", "packages.linuxmint.com:443", true},
+		{"packages.linuxmint.com:80", "packages.linuxmint.com:80", true},
 
 		// Blocked - non-standard ports
 		{"debian on port 8080", "deb.debian.org:8080", false},
@@ -156,6 +169,7 @@ func TestIsKnownDebianMirror(t *testing.T) {
 		{"security.debian.org", true},
 		{"archive.ubuntu.com", true},
 		{"security.ubuntu.com", true},
+		{"packages.linuxmint.com", true},
 		{"mirrors.example.com", true},
 		{"mirror.example.org", true},
 		{"ftp.us.debian.org", true},

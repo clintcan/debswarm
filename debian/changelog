@@ -1,3 +1,14 @@
+debswarm (1.21.0-1) stable; urgency=low
+
+  * Linux Mint repository support: Native support for Linux Mint repos
+    - Added linuxmint.com and packages.linuxmint.com to allowed mirrors
+    - HTTPS CONNECT tunneling works for Linux Mint mirrors
+    - No APT bypass configuration needed for Linux Mint repos
+    - Added /linuxmint/ URL pattern to repository detection
+  * Documentation updates for supported repositories
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sun, 02 Feb 2026 00:00:00 +0000
+
 debswarm (1.20.0-1) stable; urgency=low
 
   * HTTPS CONNECT tunnel support: APT can use HTTPS repos through proxy
