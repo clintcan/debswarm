@@ -185,6 +185,7 @@ func (i *Importer) importPackage(path string) importStatus {
 	}
 
 	// Import by opening and passing to cache.Put
+	// #nosec G304 -- path is constructed from configured directory + filename from os.ReadDir, not user input
 	f, err := os.Open(path)
 	if err != nil {
 		i.logger.Debug("Failed to open file",
@@ -217,6 +218,7 @@ func (i *Importer) importPackage(path string) importStatus {
 
 // computeHash computes the SHA256 hash of a file
 func (i *Importer) computeHash(path string) (string, error) {
+	// #nosec G304 -- path is constructed from configured directory + filename from os.ReadDir, not user input
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
