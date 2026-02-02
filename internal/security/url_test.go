@@ -357,7 +357,7 @@ func TestIsAllowedConnectTarget_EdgeCases(t *testing.T) {
 		{"subdomain exact match", "repo.example.com:443", []string{"repo.example.com"}, true},
 		{"subdomain suffix match", "cdn.repo.example.com:443", []string{"repo.example.com"}, true},
 		// Note: strings.Contains used for knownMirrorPatterns matches "mirror." anywhere
-		{"mirror pattern matches", "notmirror.example.com:443", nil, true},      // matches "mirror." pattern
+		{"mirror pattern matches", "notmirror.example.com:443", nil, true}, // matches "mirror." pattern
 		{"custom host not suffix", "notrepo.example.com:443", []string{"repo.example.com"}, false},
 
 		// Blocked hosts
