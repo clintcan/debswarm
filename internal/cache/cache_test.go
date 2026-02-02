@@ -991,3 +991,247 @@ func TestPackageMetadataPreservedOnUpdate(t *testing.T) {
 		t.Errorf("Metadata should be preserved, but name is %q", pkg.PackageName)
 	}
 }
+
+func TestStats(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Stats on empty cache
+	stats, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats failed: %v", err)
+	}
+	if stats.TotalPackages != 0 {
+		t.Errorf("Expected 0 packages, got %d", stats.TotalPackages)
+	}
+	if stats.TotalSize != 0 {
+		t.Errorf("Expected 0 size, got %d", stats.TotalSize)
+	}
+	if stats.TotalAccesses != 0 {
+		t.Errorf("Expected 0 accesses, got %d", stats.TotalAccesses)
+	}
+	if stats.BandwidthSaved != 0 {
+		t.Errorf("Expected 0 bandwidth saved, got %d", stats.BandwidthSaved)
+	}
+
+	// Add some packages
+	packages := []struct {
+		content  string
+		filename string
+	}{
+		{"curl package content here", "curl_7.88.1-10_amd64.deb"},
+		{"nginx package content", "nginx_1.22.1-9_amd64.deb"},
+		{"some other file", "other.bin"},
+	}
+
+	var totalSize int64
+	for _, p := range packages {
+		data := []byte(p.content)
+		totalSize += int64(len(data))
+		hash := hashData(data)
+		if err := c.Put(bytes.NewReader(data), hash, p.filename); err != nil {
+			t.Fatalf("Put %s failed: %v", p.filename, err)
+		}
+	}
+
+	// Access one package multiple times
+	curlData := []byte("curl package content here")
+	curlHash := hashData(curlData)
+	for i := 0; i < 5; i++ {
+		reader, _, err := c.Get(curlHash)
+		if err != nil {
+			t.Fatalf("Get curl failed: %v", err)
+		}
+		reader.Close()
+	}
+
+	stats, err = c.Stats()
+	if err != nil {
+		t.Fatalf("Stats failed: %v", err)
+	}
+
+	if stats.TotalPackages != 3 {
+		t.Errorf("Expected 3 packages, got %d", stats.TotalPackages)
+	}
+	if stats.TotalSize != totalSize {
+		t.Errorf("Expected size %d, got %d", totalSize, stats.TotalSize)
+	}
+	// curl: 1 (put) + 5 (get) = 6, nginx: 1, other: 1 = 8 total
+	if stats.TotalAccesses < 7 {
+		t.Errorf("Expected at least 7 accesses, got %d", stats.TotalAccesses)
+	}
+	// 2 packages have parseable Debian names
+	if stats.UniquePackages != 2 {
+		t.Errorf("Expected 2 packages with metadata, got %d", stats.UniquePackages)
+	}
+	// BandwidthSaved should be > 0
+	if stats.BandwidthSaved <= 0 {
+		t.Errorf("Expected positive bandwidth saved, got %d", stats.BandwidthSaved)
+	}
+}
+
+func TestPopularPackages(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Add packages
+	packages := []struct {
+		content  string
+		filename string
+		accesses int
+	}{
+		{"curl content", "curl_7.88.1-10_amd64.deb", 10},
+		{"nginx content", "nginx_1.22.1-9_amd64.deb", 5},
+		{"wget content", "wget_1.21-1_amd64.deb", 2},
+	}
+
+	for _, p := range packages {
+		data := []byte(p.content)
+		hash := hashData(data)
+		if err := c.Put(bytes.NewReader(data), hash, p.filename); err != nil {
+			t.Fatalf("Put %s failed: %v", p.filename, err)
+		}
+		// Access multiple times
+		for i := 0; i < p.accesses-1; i++ {
+			reader, _, err := c.Get(hash)
+			if err != nil {
+				t.Fatalf("Get %s failed: %v", p.filename, err)
+			}
+			reader.Close()
+		}
+	}
+
+	// Get popular packages
+	popular, err := c.PopularPackages(10)
+	if err != nil {
+		t.Fatalf("PopularPackages failed: %v", err)
+	}
+
+	if len(popular) != 3 {
+		t.Fatalf("Expected 3 packages, got %d", len(popular))
+	}
+
+	// First should be curl (most accessed)
+	if popular[0].PackageName != "curl" {
+		t.Errorf("Expected curl first, got %s", popular[0].PackageName)
+	}
+	if popular[1].PackageName != "nginx" {
+		t.Errorf("Expected nginx second, got %s", popular[1].PackageName)
+	}
+	if popular[2].PackageName != "wget" {
+		t.Errorf("Expected wget third, got %s", popular[2].PackageName)
+	}
+
+	// Test with limit
+	limited, err := c.PopularPackages(2)
+	if err != nil {
+		t.Fatalf("PopularPackages with limit failed: %v", err)
+	}
+	if len(limited) != 2 {
+		t.Errorf("Expected 2 packages with limit, got %d", len(limited))
+	}
+
+	// Test with zero/negative limit (defaults to 10)
+	defaulted, err := c.PopularPackages(0)
+	if err != nil {
+		t.Fatalf("PopularPackages with 0 limit failed: %v", err)
+	}
+	if len(defaulted) != 3 {
+		t.Errorf("Expected 3 packages with default limit, got %d", len(defaulted))
+	}
+}
+
+func TestRecentPackages(t *testing.T) {
+	c, _ := testCache(t)
+
+	// Add packages in sequence
+	packages := []struct {
+		content  string
+		filename string
+	}{
+		{"first content", "first_1.0.0_amd64.deb"},
+		{"second content", "second_1.0.0_amd64.deb"},
+		{"third content", "third_1.0.0_amd64.deb"},
+	}
+
+	for _, p := range packages {
+		data := []byte(p.content)
+		hash := hashData(data)
+		if err := c.Put(bytes.NewReader(data), hash, p.filename); err != nil {
+			t.Fatalf("Put %s failed: %v", p.filename, err)
+		}
+	}
+
+	// Get recent packages - should return all 3 packages
+	recent, err := c.RecentPackages(10)
+	if err != nil {
+		t.Fatalf("RecentPackages failed: %v", err)
+	}
+
+	if len(recent) != 3 {
+		t.Fatalf("Expected 3 packages, got %d", len(recent))
+	}
+
+	// Verify all packages are present (order may vary when times are equal)
+	names := make(map[string]bool)
+	for _, pkg := range recent {
+		names[pkg.PackageName] = true
+	}
+	for _, expected := range []string{"first", "second", "third"} {
+		if !names[expected] {
+			t.Errorf("Expected package %q not found in recent list", expected)
+		}
+	}
+
+	// Test with limit
+	limited, err := c.RecentPackages(1)
+	if err != nil {
+		t.Fatalf("RecentPackages with limit failed: %v", err)
+	}
+	if len(limited) != 1 {
+		t.Errorf("Expected 1 package with limit, got %d", len(limited))
+	}
+}
+
+func TestStatsEmpty(t *testing.T) {
+	c, _ := testCache(t)
+
+	stats, err := c.Stats()
+	if err != nil {
+		t.Fatalf("Stats on empty cache failed: %v", err)
+	}
+
+	if stats.TotalPackages != 0 {
+		t.Errorf("Expected 0 packages, got %d", stats.TotalPackages)
+	}
+	if stats.TotalSize != 0 {
+		t.Errorf("Expected 0 size, got %d", stats.TotalSize)
+	}
+	if stats.MaxSize != 100*1024*1024 {
+		t.Errorf("Expected MaxSize 100MB, got %d", stats.MaxSize)
+	}
+}
+
+func TestPopularPackagesEmpty(t *testing.T) {
+	c, _ := testCache(t)
+
+	popular, err := c.PopularPackages(10)
+	if err != nil {
+		t.Fatalf("PopularPackages on empty cache failed: %v", err)
+	}
+
+	if len(popular) != 0 {
+		t.Errorf("Expected 0 packages, got %d", len(popular))
+	}
+}
+
+func TestRecentPackagesEmpty(t *testing.T) {
+	c, _ := testCache(t)
+
+	recent, err := c.RecentPackages(10)
+	if err != nil {
+		t.Fatalf("RecentPackages on empty cache failed: %v", err)
+	}
+
+	if len(recent) != 0 {
+		t.Errorf("Expected 0 packages, got %d", len(recent))
+	}
+}

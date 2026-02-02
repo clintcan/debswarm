@@ -610,7 +610,7 @@ func TestE2E_AllowedHosts(t *testing.T) {
 			"http://192.168.1.1/debian/dists/stable/InRelease",
 			"http://10.0.0.1/debian/dists/stable/InRelease",
 			"http://172.16.0.1/debian/dists/stable/InRelease",
-			"http://169.254.169.254/latest/meta-data/",       // AWS metadata
+			"http://169.254.169.254/latest/meta-data/",        // AWS metadata
 			"http://metadata.google.internal/computeMetadata", // GCP metadata
 		}
 

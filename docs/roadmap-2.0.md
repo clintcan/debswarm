@@ -15,11 +15,11 @@ Each feature is rated:
 
 ## High Priority
 
-| Issue | Description | Feasibility | Notes |
-|-------|-------------|-------------|-------|
-| Cache analytics | Popular packages, bandwidth savings, hit rate reporting | Easy | `access_count` already tracked, metrics exist |
-| Package pinning | Prevent eviction of specific packages | Easy | Add `pinned` column, modify eviction query |
-| CLI `stats --watch` | Live updating statistics in terminal | Easy | Stats API exists, just needs refresh loop |
+| Issue | Description | Feasibility | Status |
+|-------|-------------|-------------|--------|
+| Cache analytics | Popular packages, bandwidth savings, hit rate reporting | Easy | **Done v1.22.0** |
+| Package pinning | Prevent eviction of specific packages | Easy | Planned |
+| CLI `stats --watch` | Live updating statistics in terminal | Easy | Planned |
 
 ## Medium Priority
 
@@ -49,20 +49,22 @@ Each feature is rated:
 
 ## Feature Details
 
-### Cache Analytics (Easy)
+### Cache Analytics (Done - v1.22.0)
 
-The cache already tracks `access_count` per package. Implementation:
+Implemented in v1.22.0:
 
 ```go
-// Add to cache.go
-func (c *Cache) PopularPackages(limit int) ([]Package, error)
-func (c *Cache) BandwidthSavings() (p2pBytes, mirrorBytes int64)
-func (c *Cache) HitRate() float64
+// Added to cache.go
+func (c *Cache) Stats() (*CacheStats, error)           // Total accesses, bandwidth saved
+func (c *Cache) PopularPackages(limit int) ([]*Package, error)  // By access count
+func (c *Cache) RecentPackages(limit int) ([]*Package, error)   // By last access
 ```
 
-Add CLI commands:
-- `debswarm cache stats` - Show hit rate, savings
+CLI commands:
+- `debswarm cache stats` - Show hit rate, savings, access stats
+- `debswarm cache stats -p N` - Include top N popular packages
 - `debswarm cache popular` - List most accessed packages
+- `debswarm cache recent` - List most recently accessed packages
 
 ### Package Pinning (Easy)
 
@@ -128,7 +130,7 @@ Complexity: Pattern detection, storage for history, scheduled tasks.
 
 Recommended sequence based on value/effort ratio:
 
-1. **Cache analytics** - High value, easy
+1. ~~**Cache analytics** - High value, easy~~ **Done v1.22.0**
 2. **Package pinning** - Frequently requested, easy
 3. **Prometheus alerts** - Zero code, high ops value
 4. **CLI stats watch** - Quick win
@@ -137,8 +139,8 @@ Recommended sequence based on value/effort ratio:
 
 ## Version History
 
-(No releases yet)
+- **v1.22.0** - Cache analytics: `cache stats`, `cache popular`, `cache recent` commands
 
 ## Status
 
-**Planning Phase** - Prioritizing features based on feasibility assessment.
+**In Progress** - Cache analytics completed, continuing with package pinning next.

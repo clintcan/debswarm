@@ -577,6 +577,30 @@ sudo /usr/local/bin/prewarm-popular.sh
 
 # Terminal 2: Watch cache stats
 watch -n 5 'curl -s http://localhost:9978/stats | jq "{cache_size_mb: (.cache_size_bytes/1024/1024), cache_count, connected_peers}"'
+
+# Or use the CLI
+debswarm cache stats           # View cache statistics
+debswarm cache popular -n 20   # See top 20 most accessed packages
 ```
 
 Or view the dashboard at `http://localhost:9978/dashboard`.
+
+## Viewing Popular Packages
+
+After pre-warming, you can see which packages are most frequently accessed:
+
+```bash
+# Show most popular packages by access count
+debswarm cache popular
+
+# Show top 50 popular packages
+debswarm cache popular -n 50
+
+# Show detailed stats including bandwidth saved
+debswarm cache stats
+
+# Show stats with top 10 packages inline
+debswarm cache stats -p 10
+```
+
+This helps identify which packages provide the most value in your cache.

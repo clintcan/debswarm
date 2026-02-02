@@ -188,6 +188,9 @@ debswarm status
 # Cache management
 debswarm cache list         # List cached packages
 debswarm cache stats        # Show cache statistics
+debswarm cache stats -p 10  # Show stats with top 10 popular packages
+debswarm cache popular      # Show most frequently accessed packages
+debswarm cache recent       # Show most recently accessed packages
 debswarm cache verify       # Verify integrity of cached packages
 debswarm cache clear        # Clear all cached packages
 

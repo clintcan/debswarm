@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-02-03
+
+### Added
+- **Cache analytics commands**: New CLI commands to analyze cache usage and popular packages
+  - `debswarm cache stats`: Enhanced statistics with total accesses, bandwidth savings, and optional top packages (`-p N`)
+  - `debswarm cache popular`: List most frequently accessed packages sorted by access count (`-n` for limit)
+  - `debswarm cache recent`: List most recently accessed packages (`-n` for limit)
+
+- **Cache analytics API**: New methods in the cache package for programmatic access
+  - `Stats()` returns `CacheStats` with total packages, size, accesses, bandwidth saved, and metadata stats
+  - `PopularPackages(limit)` returns packages sorted by access count
+  - `RecentPackages(limit)` returns packages sorted by last access time
+
+### Example
+```bash
+# Show detailed cache statistics
+debswarm cache stats
+
+# Show stats with top 5 popular packages
+debswarm cache stats -p 5
+
+# Show top 10 most accessed packages
+debswarm cache popular
+
+# Show 20 most recently used packages
+debswarm cache recent -n 20
+```
+
 ## [1.21.1] - 2026-02-03
 
 ### Tests

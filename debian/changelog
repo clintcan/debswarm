@@ -1,3 +1,16 @@
+debswarm (1.22.0-1) stable; urgency=low
+
+  * Cache analytics: New CLI commands for cache usage analysis
+    - debswarm cache stats: Enhanced stats with accesses, bandwidth savings
+    - debswarm cache popular: List packages by access count
+    - debswarm cache recent: List packages by last access time
+  * Cache analytics API: New methods for programmatic access
+    - Stats() returns comprehensive cache statistics
+    - PopularPackages(limit) returns packages sorted by access count
+    - RecentPackages(limit) returns packages sorted by last access
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 03 Feb 2026 00:00:00 +0000
+
 debswarm (1.21.1-1) stable; urgency=low
 
   * Test coverage improvements for allowed_hosts feature

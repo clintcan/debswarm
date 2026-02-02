@@ -883,6 +883,136 @@ func (c *Cache) GetByNameVersionArch(name, version, arch string) (*Package, erro
 	return pkg, nil
 }
 
+// CacheStats holds comprehensive cache statistics
+type CacheStats struct {
+	TotalPackages  int
+	TotalSize      int64
+	MaxSize        int64
+	TotalAccesses  int64 // Sum of all access counts
+	BandwidthSaved int64 // Estimated bytes saved (size * access_count for each package)
+	OldestAccess   time.Time
+	NewestAccess   time.Time
+	UniquePackages int // Packages with metadata (name != '')
+}
+
+// Stats returns comprehensive cache statistics
+func (c *Cache) Stats() (*CacheStats, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	stats := &CacheStats{
+		MaxSize: c.maxSize,
+	}
+
+	// Get aggregate statistics in a single query
+	var oldestUnix, newestUnix int64
+	err := c.db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(size), 0),
+			COALESCE(SUM(access_count), 0),
+			COALESCE(SUM(size * access_count), 0),
+			COALESCE(MIN(last_accessed), 0),
+			COALESCE(MAX(last_accessed), 0),
+			COUNT(CASE WHEN package_name != '' THEN 1 END)
+		FROM packages`).Scan(
+		&stats.TotalPackages,
+		&stats.TotalSize,
+		&stats.TotalAccesses,
+		&stats.BandwidthSaved,
+		&oldestUnix,
+		&newestUnix,
+		&stats.UniquePackages)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cache stats: %w", err)
+	}
+
+	stats.OldestAccess = time.Unix(oldestUnix, 0)
+	stats.NewestAccess = time.Unix(newestUnix, 0)
+
+	return stats, nil
+}
+
+// PopularPackages returns the most frequently accessed packages
+func (c *Cache) PopularPackages(limit int) ([]*Package, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	rows, err := c.db.Query(`
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
+		ORDER BY access_count DESC, last_accessed DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []*Package
+	for rows.Next() {
+		pkg := &Package{}
+		var addedAt, lastAccessed, announced int64
+		err := rows.Scan(
+			&pkg.SHA256, &pkg.Size, &pkg.Filename,
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+		if err != nil {
+			return nil, err
+		}
+		pkg.AddedAt = time.Unix(addedAt, 0)
+		pkg.LastAccessed = time.Unix(lastAccessed, 0)
+		pkg.Announced = time.Unix(announced, 0)
+		packages = append(packages, pkg)
+	}
+
+	return packages, rows.Err()
+}
+
+// RecentPackages returns the most recently accessed packages
+func (c *Cache) RecentPackages(limit int) ([]*Package, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if limit <= 0 {
+		limit = 10
+	}
+
+	rows, err := c.db.Query(`
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		FROM packages
+		ORDER BY last_accessed DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []*Package
+	for rows.Next() {
+		pkg := &Package{}
+		var addedAt, lastAccessed, announced int64
+		err := rows.Scan(
+			&pkg.SHA256, &pkg.Size, &pkg.Filename,
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+		if err != nil {
+			return nil, err
+		}
+		pkg.AddedAt = time.Unix(addedAt, 0)
+		pkg.LastAccessed = time.Unix(lastAccessed, 0)
+		pkg.Announced = time.Unix(announced, 0)
+		packages = append(packages, pkg)
+	}
+
+	return packages, rows.Err()
+}
+
 // PopulateMissingMetadata scans packages with empty metadata fields and
 // attempts to populate them by parsing the filename. This is useful for
 // migrating existing cache entries after adding metadata columns.
