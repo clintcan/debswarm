@@ -521,6 +521,88 @@ func TestLoadFromFile_InvalidGzip(t *testing.T) {
 	}
 }
 
+func TestLoadFromFileWithRepo(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a temp Packages file
+	tmpFile := filepath.Join(t.TempDir(), "Packages")
+	err := os.WriteFile(tmpFile, []byte(samplePackagesContent), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	// Load with explicit repo name (like APT list files)
+	err = idx.LoadFromFileWithRepo(tmpFile, "custom-repo.example.com")
+	if err != nil {
+		t.Fatalf("LoadFromFileWithRepo failed: %v", err)
+	}
+
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages, got %d", idx.Count())
+	}
+
+	// Verify packages are associated with the custom repo
+	pkg := idx.GetByRepoAndPath("custom-repo.example.com", "pool/main/v/vim/vim_9.0.1378-2_amd64.deb")
+	if pkg == nil {
+		t.Error("Package not found with custom repo")
+	} else if pkg.Repo != "custom-repo.example.com" {
+		t.Errorf("Expected repo 'custom-repo.example.com', got %q", pkg.Repo)
+	}
+}
+
+func TestLoadFromFileWithRepo_Gzip(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a gzip-compressed temp Packages file
+	tmpFile := filepath.Join(t.TempDir(), "Packages.gz")
+	var buf bytes.Buffer
+	gw := gzip.NewWriter(&buf)
+	_, err := gw.Write([]byte(samplePackagesContent))
+	if err != nil {
+		t.Fatalf("Failed to write gzip: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("Failed to close gzip: %v", err)
+	}
+	if err := os.WriteFile(tmpFile, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	err = idx.LoadFromFileWithRepo(tmpFile, "gzip-repo.example.com")
+	if err != nil {
+		t.Fatalf("LoadFromFileWithRepo failed for gzip: %v", err)
+	}
+
+	if idx.Count() != 3 {
+		t.Errorf("Expected 3 packages, got %d", idx.Count())
+	}
+}
+
+func TestLoadFromFileWithRepo_NotFound(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	err := idx.LoadFromFileWithRepo("/nonexistent/path/Packages", "test-repo")
+	if err == nil {
+		t.Error("Expected error for nonexistent file")
+	}
+}
+
+func TestLoadFromFileWithRepo_InvalidGzip(t *testing.T) {
+	idx := New(t.TempDir(), testLogger())
+
+	// Create a file with .gz extension but invalid gzip content
+	tmpFile := filepath.Join(t.TempDir(), "Packages.gz")
+	err := os.WriteFile(tmpFile, []byte("not gzip content"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to write temp file: %v", err)
+	}
+
+	err = idx.LoadFromFileWithRepo(tmpFile, "test-repo")
+	if err == nil {
+		t.Error("Expected error for invalid gzip file")
+	}
+}
+
 func TestLoadFromURL(t *testing.T) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

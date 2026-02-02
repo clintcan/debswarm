@@ -432,3 +432,106 @@ func TestEvent_WithRequestID(t *testing.T) {
 		}
 	})
 }
+
+func TestConnectTunnelEvents(t *testing.T) {
+	t.Run("NewConnectTunnelStartEvent", func(t *testing.T) {
+		event := NewConnectTunnelStartEvent("deb.debian.org", "443")
+
+		if event.EventType != EventConnectTunnelStart {
+			t.Errorf("EventType = %q, want %q", event.EventType, EventConnectTunnelStart)
+		}
+		if event.TargetHost != "deb.debian.org" {
+			t.Errorf("TargetHost = %q, want %q", event.TargetHost, "deb.debian.org")
+		}
+		if event.TargetPort != "443" {
+			t.Errorf("TargetPort = %q, want %q", event.TargetPort, "443")
+		}
+		if event.Timestamp.IsZero() {
+			t.Error("Timestamp should not be zero")
+		}
+	})
+
+	t.Run("NewConnectTunnelEndEvent", func(t *testing.T) {
+		event := NewConnectTunnelEndEvent("archive.ubuntu.com", "443", 1024000, 5000)
+
+		if event.EventType != EventConnectTunnelEnd {
+			t.Errorf("EventType = %q, want %q", event.EventType, EventConnectTunnelEnd)
+		}
+		if event.TargetHost != "archive.ubuntu.com" {
+			t.Errorf("TargetHost = %q, want %q", event.TargetHost, "archive.ubuntu.com")
+		}
+		if event.TargetPort != "443" {
+			t.Errorf("TargetPort = %q, want %q", event.TargetPort, "443")
+		}
+		if event.TunnelBytes != 1024000 {
+			t.Errorf("TunnelBytes = %d, want %d", event.TunnelBytes, 1024000)
+		}
+		if event.DurationMs != 5000 {
+			t.Errorf("DurationMs = %d, want %d", event.DurationMs, 5000)
+		}
+		if event.Timestamp.IsZero() {
+			t.Error("Timestamp should not be zero")
+		}
+	})
+
+	t.Run("NewConnectTunnelBlockedEvent", func(t *testing.T) {
+		event := NewConnectTunnelBlockedEvent("localhost", "443", "blocked host")
+
+		if event.EventType != EventConnectTunnelBlocked {
+			t.Errorf("EventType = %q, want %q", event.EventType, EventConnectTunnelBlocked)
+		}
+		if event.TargetHost != "localhost" {
+			t.Errorf("TargetHost = %q, want %q", event.TargetHost, "localhost")
+		}
+		if event.TargetPort != "443" {
+			t.Errorf("TargetPort = %q, want %q", event.TargetPort, "443")
+		}
+		if event.Reason != "blocked host" {
+			t.Errorf("Reason = %q, want %q", event.Reason, "blocked host")
+		}
+		if event.Timestamp.IsZero() {
+			t.Error("Timestamp should not be zero")
+		}
+	})
+
+	t.Run("CONNECT events serialize to JSON", func(t *testing.T) {
+		events := []Event{
+			NewConnectTunnelStartEvent("example.com", "443"),
+			NewConnectTunnelEndEvent("example.com", "443", 500, 100),
+			NewConnectTunnelBlockedEvent("evil.com", "22", "invalid port"),
+		}
+
+		for _, event := range events {
+			data, err := json.Marshal(event)
+			if err != nil {
+				t.Errorf("failed to marshal %s: %v", event.EventType, err)
+				continue
+			}
+
+			// Verify required fields are present
+			jsonStr := string(data)
+			if !strings.Contains(jsonStr, `"event_type"`) {
+				t.Errorf("%s JSON missing event_type", event.EventType)
+			}
+			if !strings.Contains(jsonStr, `"target_host"`) {
+				t.Errorf("%s JSON missing target_host", event.EventType)
+			}
+			if !strings.Contains(jsonStr, `"target_port"`) {
+				t.Errorf("%s JSON missing target_port", event.EventType)
+			}
+		}
+	})
+
+	t.Run("CONNECT events with request ID", func(t *testing.T) {
+		reqID := "abc123def456"
+		event := NewConnectTunnelStartEvent("host.com", "443").WithRequestID(reqID)
+
+		if event.RequestID != reqID {
+			t.Errorf("RequestID = %q, want %q", event.RequestID, reqID)
+		}
+		// Other fields should be preserved
+		if event.EventType != EventConnectTunnelStart {
+			t.Errorf("EventType = %q, want %q", event.EventType, EventConnectTunnelStart)
+		}
+	})
+}
