@@ -1,3 +1,16 @@
+debswarm (1.21.1-1) stable; urgency=low
+
+  * Test coverage improvements for allowed_hosts feature
+    - Security package coverage: 90.6% -> 97.6%
+    - Audit package coverage: 78.7% -> 82.7%
+    - Index package coverage: 73.6% -> 80.3%
+  * E2E test for allowed_hosts configuration
+    - Validates third-party repos blocked/allowed behavior
+    - Validates SSRF protection cannot be bypassed
+    - Validates case-insensitive host matching
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 03 Feb 2026 00:00:00 +0000
+
 debswarm (1.21.0-1) stable; urgency=low
 
   * Linux Mint repository support: Native support for Linux Mint repos

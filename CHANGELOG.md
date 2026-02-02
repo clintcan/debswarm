@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.1] - 2026-02-03
+
+### Tests
+- **Improved test coverage for `allowed_hosts` feature**
+  - Security package: 90.6% → 97.6% coverage
+  - Audit package: 78.7% → 82.7% coverage
+  - Index package: 73.6% → 80.3% coverage
+- **E2E test for `allowed_hosts`**: Comprehensive validation of the feature
+  - Third-party repos blocked by default
+  - Third-party repos allowed when configured (with Debian URL patterns)
+  - Built-in mirrors always work (Debian, Ubuntu, Mint)
+  - SSRF protection cannot be bypassed
+  - Case-insensitive host matching
+
 ## [1.21.0] - 2026-02-02
 
 ### Added
