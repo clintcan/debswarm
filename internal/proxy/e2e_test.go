@@ -431,6 +431,230 @@ func TestE2E_TwoNodeP2PTransfer(t *testing.T) {
 	t.Log("Successfully transferred package via direct P2P connection")
 }
 
+// TestE2E_AllowedHosts tests that the allowed_hosts configuration works
+// This tests the URL validation logic that determines which hosts can be proxied.
+// Note: We test with simulated URLs rather than actual HTTP requests because
+// httptest servers use 127.0.0.1 which is blocked by SSRF protection (correct behavior).
+func TestE2E_AllowedHosts(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	tmpDir := t.TempDir()
+
+	pkgCache, err := cache.New(tmpDir, 100*1024*1024, logger)
+	if err != nil {
+		t.Fatalf("Failed to create cache: %v", err)
+	}
+	defer pkgCache.Close()
+
+	idx := index.New(tmpDir, logger)
+	fetcher := mirror.NewFetcher(nil, logger)
+
+	t.Run("ThirdPartyBlockedWithoutAllowedHosts", func(t *testing.T) {
+		// Create proxy WITHOUT allowed_hosts - third party should be blocked
+		cfg := &Config{
+			Addr:           "127.0.0.1:0",
+			P2PTimeout:     5 * time.Second,
+			DHTLookupLimit: 10,
+			MetricsPort:    0,
+			Metrics:        metrics.New(),
+			Timeouts:       timeouts.NewManager(nil),
+			Scorer:         peers.NewScorer(),
+			AllowedHosts:   nil, // No additional hosts allowed
+		}
+
+		server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+
+		// These third-party URLs should be blocked without allowed_hosts
+		blockedURLs := []string{
+			"http://download.docker.com/linux/debian/dists/stable/InRelease",
+			"http://ppa.launchpad.net/deadsnakes/ppa/ubuntu/dists/jammy/InRelease",
+			"http://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease",
+			"http://deb.nodesource.com/node_20.x/dists/bookworm/InRelease",
+		}
+
+		for _, url := range blockedURLs {
+			if server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = true without allowed_hosts, want false", url)
+			}
+		}
+	})
+
+	t.Run("ThirdPartyAllowedWithAllowedHosts", func(t *testing.T) {
+		// Create proxy WITH allowed_hosts
+		cfg := &Config{
+			Addr:           "127.0.0.1:0",
+			P2PTimeout:     5 * time.Second,
+			DHTLookupLimit: 10,
+			MetricsPort:    0,
+			Metrics:        metrics.New(),
+			Timeouts:       timeouts.NewManager(nil),
+			Scorer:         peers.NewScorer(),
+			AllowedHosts:   []string{"download.docker.com", "ppa.launchpad.net", "apt.postgresql.org"},
+		}
+
+		server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+
+		// These URLs should now be allowed (have Debian URL patterns)
+		allowedURLs := []string{
+			"http://download.docker.com/linux/debian/dists/stable/InRelease",
+			"http://download.docker.com/linux/ubuntu/pool/stable/amd64/docker-ce.deb",
+			"http://ppa.launchpad.net/deadsnakes/ppa/ubuntu/dists/jammy/InRelease",
+			"http://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease",
+		}
+
+		for _, url := range allowedURLs {
+			if !server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = false with allowed_hosts, want true", url)
+			}
+		}
+
+		// URLs without Debian patterns should still be blocked
+		nonDebianURLs := []string{
+			"http://download.docker.com/linux/static/stable/x86_64/docker.tgz",
+			"http://download.docker.com/some/other/path",
+			"http://ppa.launchpad.net/some/random/file.txt",
+		}
+
+		for _, url := range nonDebianURLs {
+			if server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = true, want false (no Debian URL patterns)", url)
+			}
+		}
+
+		// Hosts not in allowed_hosts should still be blocked
+		notAllowedURLs := []string{
+			"http://deb.nodesource.com/node_20.x/dists/bookworm/InRelease",
+			"http://packages.microsoft.com/repos/code/dists/stable/InRelease",
+		}
+
+		for _, url := range notAllowedURLs {
+			if server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = true, want false (not in allowed_hosts)", url)
+			}
+		}
+	})
+
+	t.Run("BuiltInMirrorsAlwaysAllowed", func(t *testing.T) {
+		// Verify that built-in Debian/Ubuntu/Mint mirrors work regardless of allowed_hosts
+		cfg := &Config{
+			Addr:           "127.0.0.1:0",
+			P2PTimeout:     5 * time.Second,
+			DHTLookupLimit: 10,
+			MetricsPort:    0,
+			Metrics:        metrics.New(),
+			Timeouts:       timeouts.NewManager(nil),
+			Scorer:         peers.NewScorer(),
+			AllowedHosts:   []string{}, // Empty allowed_hosts
+		}
+
+		server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+
+		// Built-in mirrors should always be allowed
+		builtInURLs := []string{
+			"http://deb.debian.org/debian/dists/stable/InRelease",
+			"http://archive.ubuntu.com/ubuntu/dists/jammy/InRelease",
+			"http://packages.linuxmint.com/dists/virginia/InRelease",
+			"http://security.debian.org/debian-security/dists/stable/InRelease",
+			"http://security.ubuntu.com/ubuntu/dists/jammy-security/InRelease",
+			"http://mirrors.kernel.org/debian/dists/stable/InRelease",
+			"http://mirror.example.com/ubuntu/dists/jammy/InRelease",
+			"http://ftp.us.debian.org/debian/dists/stable/InRelease",
+		}
+
+		for _, url := range builtInURLs {
+			if !server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = false, want true (built-in mirror)", url)
+			}
+		}
+	})
+
+	t.Run("SSRFProtectionAlwaysActive", func(t *testing.T) {
+		// Verify that private/internal hosts are blocked even if in allowed_hosts
+		// This is critical for security - SSRF protection must not be bypassed
+		cfg := &Config{
+			Addr:           "127.0.0.1:0",
+			P2PTimeout:     5 * time.Second,
+			DHTLookupLimit: 10,
+			MetricsPort:    0,
+			Metrics:        metrics.New(),
+			Timeouts:       timeouts.NewManager(nil),
+			Scorer:         peers.NewScorer(),
+			AllowedHosts:   []string{"localhost", "127.0.0.1", "192.168.1.1", "10.0.0.1"}, // Attempt to allow blocked hosts
+		}
+
+		server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+
+		// These should ALWAYS be blocked regardless of allowed_hosts (SSRF protection)
+		blockedURLs := []string{
+			"http://localhost/debian/dists/stable/InRelease",
+			"http://127.0.0.1/debian/dists/stable/InRelease",
+			"http://192.168.1.1/debian/dists/stable/InRelease",
+			"http://10.0.0.1/debian/dists/stable/InRelease",
+			"http://172.16.0.1/debian/dists/stable/InRelease",
+			"http://169.254.169.254/latest/meta-data/",       // AWS metadata
+			"http://metadata.google.internal/computeMetadata", // GCP metadata
+		}
+
+		for _, url := range blockedURLs {
+			if server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = true, want false (SSRF protection must block)", url)
+			}
+		}
+	})
+
+	t.Run("CaseInsensitiveHostMatching", func(t *testing.T) {
+		cfg := &Config{
+			Addr:           "127.0.0.1:0",
+			P2PTimeout:     5 * time.Second,
+			DHTLookupLimit: 10,
+			MetricsPort:    0,
+			Metrics:        metrics.New(),
+			Timeouts:       timeouts.NewManager(nil),
+			Scorer:         peers.NewScorer(),
+			AllowedHosts:   []string{"Download.Docker.COM"}, // Mixed case
+		}
+
+		server := NewServer(cfg, pkgCache, idx, nil, fetcher, logger)
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Shutdown(ctx)
+		}()
+
+		// Should match regardless of case
+		urls := []string{
+			"http://download.docker.com/linux/debian/dists/stable/InRelease",
+			"http://DOWNLOAD.DOCKER.COM/linux/debian/dists/stable/InRelease",
+			"http://Download.Docker.Com/linux/debian/dists/stable/InRelease",
+		}
+
+		for _, url := range urls {
+			if !server.isAllowedMirrorURL(url) {
+				t.Errorf("isAllowedMirrorURL(%q) = false with case-insensitive allowed_hosts, want true", url)
+			}
+		}
+	})
+}
+
 // TestE2E_HashVerification tests that invalid hashes are rejected
 func TestE2E_HashVerification(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
