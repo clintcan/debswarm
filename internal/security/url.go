@@ -91,7 +91,6 @@ func isAllowedHost(url string, additionalHosts []string) bool {
 	return false
 }
 
-
 // knownMirrorPatterns contains hostname patterns for known Debian/Ubuntu/Mint mirrors
 var knownMirrorPatterns = []string{
 	"deb.debian.org",
