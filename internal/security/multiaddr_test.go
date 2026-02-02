@@ -221,3 +221,43 @@ func TestIsBlockedIP(t *testing.T) {
 		})
 	}
 }
+
+func TestIsBlockedIPString(t *testing.T) {
+	// Test the string-based fallback function directly
+	tests := []struct {
+		name    string
+		ip      string
+		blocked bool
+	}{
+		// IPv4 blocked patterns
+		{"loopback 127.x", "127.0.0.1", true},
+		{"loopback 127.x other", "127.255.255.255", true},
+		{"unspecified", "0.0.0.0", true},
+		{"private 10.x", "10.0.0.1", true},
+		{"private 172.16.x", "172.16.0.1", true},
+		{"private 172.31.x", "172.31.255.255", true},
+		{"private 192.168.x", "192.168.1.1", true},
+		{"link-local", "169.254.1.1", true},
+
+		// IPv6 blocked patterns
+		{"ipv6 loopback", "::1", true},
+		{"ipv6 unique local fd", "fd00::1", true},
+		{"ipv6 link-local", "fe80::1", true},
+
+		// Allowed
+		{"public ipv4", "8.8.8.8", false},
+		{"public ipv4 2", "1.1.1.1", false},
+		{"172.15 allowed", "172.15.0.1", false},
+		{"172.32 allowed", "172.32.0.1", false},
+		{"public ipv6", "2001:db8::1", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isBlockedIPString(tc.ip)
+			if result != tc.blocked {
+				t.Errorf("isBlockedIPString(%q) = %v, want %v", tc.ip, result, tc.blocked)
+			}
+		})
+	}
+}

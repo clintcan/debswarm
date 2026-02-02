@@ -292,3 +292,121 @@ func TestIsAllowedWithNilHosts(t *testing.T) {
 		t.Error("Expected non-built-in host to be blocked with nil allowedHosts")
 	}
 }
+
+func TestIsAllowedHost_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		url            string
+		additionalHost []string
+		allowed        bool
+	}{
+		// Empty additional hosts
+		{"empty hosts debian", "http://deb.debian.org/debian/dists/stable/InRelease", []string{}, true},
+		{"empty hosts docker", "http://download.docker.com/linux/debian/dists/stable/InRelease", []string{}, false},
+
+		// Case insensitivity
+		{"case insensitive url", "http://DEB.DEBIAN.ORG/debian/dists/stable/InRelease", nil, true},
+		{"case insensitive host", "http://download.docker.com/linux/debian/dists/stable/InRelease", []string{"DOWNLOAD.DOCKER.COM"}, true},
+
+		// Subdomain matching
+		{"subdomain of allowed", "http://cdn.download.docker.com/linux/debian/dists/stable/InRelease", []string{"download.docker.com"}, true},
+
+		// URL patterns required
+		{"allowed host no pattern", "http://download.docker.com/some/other/path", []string{"download.docker.com"}, false},
+		{"allowed host with dists", "http://download.docker.com/linux/debian/dists/stable/InRelease", []string{"download.docker.com"}, true},
+		{"allowed host with pool", "http://download.docker.com/linux/debian/pool/main/d/docker/docker.deb", []string{"download.docker.com"}, true},
+
+		// Linux Mint (built-in)
+		{"linuxmint dists", "http://packages.linuxmint.com/dists/virginia/main/binary-amd64/Packages", nil, true},
+		{"linuxmint pool", "http://packages.linuxmint.com/pool/main/m/mint-artwork/mint-artwork.deb", nil, true},
+
+		// Blocked hosts always blocked
+		{"localhost blocked", "http://localhost/debian/dists/stable/InRelease", []string{"localhost"}, false},
+		{"private ip blocked", "http://192.168.1.1/debian/dists/stable/InRelease", []string{"192.168.1.1"}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsAllowedMirrorURLWithHosts(tc.url, tc.additionalHost)
+			if result != tc.allowed {
+				t.Errorf("IsAllowedMirrorURLWithHosts(%q, %v) = %v, want %v", tc.url, tc.additionalHost, result, tc.allowed)
+			}
+		})
+	}
+}
+
+func TestIsAllowedConnectTarget_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name           string
+		hostPort       string
+		additionalHost []string
+		allowed        bool
+	}{
+		// Port handling
+		{"no port defaults 443", "deb.debian.org", nil, true},
+		{"explicit port 443", "deb.debian.org:443", nil, true},
+		{"explicit port 80", "deb.debian.org:80", nil, true},
+		{"invalid port blocked", "deb.debian.org:8080", nil, false},
+		{"invalid port 22 blocked", "deb.debian.org:22", nil, false},
+
+		// Case insensitivity
+		{"case insensitive host", "DEB.DEBIAN.ORG:443", nil, true},
+		{"case insensitive allowed", "DOWNLOAD.DOCKER.COM:443", []string{"download.docker.com"}, true},
+
+		// Subdomain matching for CONNECT
+		{"subdomain exact match", "repo.example.com:443", []string{"repo.example.com"}, true},
+		{"subdomain suffix match", "cdn.repo.example.com:443", []string{"repo.example.com"}, true},
+		// Note: strings.Contains used for knownMirrorPatterns matches "mirror." anywhere
+		{"mirror pattern matches", "notmirror.example.com:443", nil, true},      // matches "mirror." pattern
+		{"custom host not suffix", "notrepo.example.com:443", []string{"repo.example.com"}, false},
+
+		// Blocked hosts
+		{"localhost blocked", "localhost:443", []string{"localhost"}, false},
+		{"127.0.0.1 blocked", "127.0.0.1:443", nil, false},
+		{"private ip blocked", "10.0.0.1:443", []string{"10.0.0.1"}, false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := IsAllowedConnectTargetWithHosts(tc.hostPort, tc.additionalHost)
+			if result != tc.allowed {
+				t.Errorf("IsAllowedConnectTargetWithHosts(%q, %v) = %v, want %v", tc.hostPort, tc.additionalHost, result, tc.allowed)
+			}
+		})
+	}
+}
+
+func TestIsBlockedConnectHost(t *testing.T) {
+	tests := []struct {
+		host    string
+		blocked bool
+	}{
+		// Blocked
+		{"localhost", true},
+		{"127.0.0.1", true},
+		{"[::1]", true},
+		{"0.0.0.0", true},
+		{"169.254.1.1", true},
+		{"metadata.google.internal", true},
+		{"10.0.0.1", true},
+		{"172.16.0.1", true},
+		{"192.168.1.1", true},
+		{"fd00::1", true},
+		{"fe80::1", true},
+
+		// Allowed
+		{"deb.debian.org", false},
+		{"archive.ubuntu.com", false},
+		{"8.8.8.8", false},
+		{"2001:db8::1", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.host, func(t *testing.T) {
+			result := isBlockedConnectHost(tc.host)
+			if result != tc.blocked {
+				t.Errorf("isBlockedConnectHost(%q) = %v, want %v", tc.host, result, tc.blocked)
+			}
+		})
+	}
+}

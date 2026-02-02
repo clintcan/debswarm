@@ -1193,3 +1193,75 @@ func TestValidationErrors_Error(t *testing.T) {
 		t.Errorf("Multi error should contain all fields, got %q", errStr)
 	}
 }
+
+func TestProxyConfig_AllowedHosts(t *testing.T) {
+	// Test loading config with allowed_hosts
+	configContent := `
+[proxy]
+allowed_hosts = ["download.docker.com", "ppa.launchpad.net", "apt.postgresql.org"]
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(configContent), 0600); err != nil {
+		t.Fatalf("Failed to write config file: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Verify allowed_hosts loaded correctly
+	if len(cfg.Proxy.AllowedHosts) != 3 {
+		t.Errorf("Expected 3 allowed hosts, got %d", len(cfg.Proxy.AllowedHosts))
+	}
+
+	expected := []string{"download.docker.com", "ppa.launchpad.net", "apt.postgresql.org"}
+	for i, host := range expected {
+		if cfg.Proxy.AllowedHosts[i] != host {
+			t.Errorf("Expected allowed_hosts[%d] = %q, got %q", i, host, cfg.Proxy.AllowedHosts[i])
+		}
+	}
+}
+
+func TestProxyConfig_EmptyAllowedHosts(t *testing.T) {
+	// Test default config has nil or empty allowed_hosts
+	cfg := DefaultConfig()
+
+	// Default can be nil or empty slice - both are valid
+	if len(cfg.Proxy.AllowedHosts) != 0 {
+		t.Errorf("Default Proxy.AllowedHosts should be empty, got %v", cfg.Proxy.AllowedHosts)
+	}
+}
+
+func TestProxyConfig_SaveAndLoad(t *testing.T) {
+	// Test that allowed_hosts survives save/load cycle
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.toml")
+
+	// Create config with allowed_hosts
+	cfg := DefaultConfig()
+	cfg.Proxy.AllowedHosts = []string{"example.com", "test.org"}
+
+	// Save
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("Failed to save config: %v", err)
+	}
+
+	// Load
+	loaded, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Verify
+	if len(loaded.Proxy.AllowedHosts) != 2 {
+		t.Errorf("Expected 2 allowed hosts after load, got %d", len(loaded.Proxy.AllowedHosts))
+	}
+	if loaded.Proxy.AllowedHosts[0] != "example.com" {
+		t.Errorf("Expected first host 'example.com', got %q", loaded.Proxy.AllowedHosts[0])
+	}
+	if loaded.Proxy.AllowedHosts[1] != "test.org" {
+		t.Errorf("Expected second host 'test.org', got %q", loaded.Proxy.AllowedHosts[1])
+	}
+}
