@@ -37,6 +37,7 @@ type Package struct {
 	PackageName    string
 	PackageVersion string
 	Architecture   string
+	Pinned         bool
 }
 
 // Cache manages local package storage
@@ -238,7 +239,8 @@ func createTables(db *sql.DB) error {
 			announced INTEGER DEFAULT 0,
 			package_name TEXT DEFAULT '',
 			package_version TEXT DEFAULT '',
-			architecture TEXT DEFAULT ''
+			architecture TEXT DEFAULT '',
+			pinned INTEGER DEFAULT 0
 		);
 
 		CREATE TABLE IF NOT EXISTS indices (
@@ -298,7 +300,9 @@ func createTables(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_name TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_version TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN architecture TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN pinned INTEGER DEFAULT 0`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_name ON packages(package_name)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_pinned ON packages(pinned)`)
 
 	return nil
 }
@@ -592,7 +596,8 @@ func (c *Cache) List() ([]*Package, error) {
 
 	rows, err := c.db.Query(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		ORDER BY last_accessed DESC`)
 	if err != nil {
@@ -604,16 +609,19 @@ func (c *Cache) List() ([]*Package, error) {
 	for rows.Next() {
 		pkg := &Package{}
 		var addedAt, lastAccessed, announced int64
+		var pinned int
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
 			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
 		if err != nil {
 			return nil, err
 		}
 		pkg.AddedAt = time.Unix(addedAt, 0)
 		pkg.LastAccessed = time.Unix(lastAccessed, 0)
 		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
 		packages = append(packages, pkg)
 	}
 
@@ -628,7 +636,8 @@ func (c *Cache) GetUnannounced() ([]*Package, error) {
 	threshold := time.Now().Add(-12 * time.Hour).Unix()
 	rows, err := c.db.Query(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		WHERE announced < ?`, threshold)
 	if err != nil {
@@ -640,16 +649,19 @@ func (c *Cache) GetUnannounced() ([]*Package, error) {
 	for rows.Next() {
 		pkg := &Package{}
 		var addedAt, lastAccessed, announced int64
+		var pinned int
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
 			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
 		if err != nil {
 			return nil, err
 		}
 		pkg.AddedAt = time.Unix(addedAt, 0)
 		pkg.LastAccessed = time.Unix(lastAccessed, 0)
 		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
 		packages = append(packages, pkg)
 	}
 
@@ -697,14 +709,17 @@ func (c *Cache) packagePath(sha256Hash string) string {
 func (c *Cache) getPackageInfo(sha256Hash string) (*Package, error) {
 	pkg := &Package{}
 	var addedAt, lastAccessed, announced int64
+	var pinned int
 
 	err := c.db.QueryRow(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages WHERE sha256 = ?`, sha256Hash).Scan(
 		&pkg.SHA256, &pkg.Size, &pkg.Filename,
 		&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+		&pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -712,6 +727,7 @@ func (c *Cache) getPackageInfo(sha256Hash string) (*Package, error) {
 	pkg.AddedAt = time.Unix(addedAt, 0)
 	pkg.LastAccessed = time.Unix(lastAccessed, 0)
 	pkg.Announced = time.Unix(announced, 0)
+	pkg.Pinned = pinned != 0
 	return pkg, nil
 }
 
@@ -749,10 +765,11 @@ func (c *Cache) ensureSpace(needed int64) error {
 	// Get packages sorted by eviction score (oldest, least accessed first)
 	// Uses last_accessed adjusted by access_count - more accesses = higher score = evicted later
 	// SQLite doesn't support LOG, so we use a simpler linear formula
+	// Pinned packages are never evicted
 	rows, err := c.db.Query(`
 		SELECT sha256, size
 		FROM packages
-		WHERE last_accessed < ?
+		WHERE last_accessed < ? AND pinned = 0
 		ORDER BY (last_accessed + access_count * 3600) ASC`,
 		time.Now().Add(-7*24*time.Hour).Unix()) // Don't evict recently accessed
 	if err != nil {
@@ -824,7 +841,8 @@ func (c *Cache) ListByPackageName(name string) ([]*Package, error) {
 
 	rows, err := c.db.Query(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		WHERE package_name = ?
 		ORDER BY last_accessed DESC`, name)
@@ -837,16 +855,19 @@ func (c *Cache) ListByPackageName(name string) ([]*Package, error) {
 	for rows.Next() {
 		pkg := &Package{}
 		var addedAt, lastAccessed, announced int64
+		var pinned int
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
 			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
 		if err != nil {
 			return nil, err
 		}
 		pkg.AddedAt = time.Unix(addedAt, 0)
 		pkg.LastAccessed = time.Unix(lastAccessed, 0)
 		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
 		packages = append(packages, pkg)
 	}
 
@@ -861,15 +882,18 @@ func (c *Cache) GetByNameVersionArch(name, version, arch string) (*Package, erro
 
 	pkg := &Package{}
 	var addedAt, lastAccessed, announced int64
+	var pinned int
 
 	err := c.db.QueryRow(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		WHERE package_name = ? AND package_version = ? AND architecture = ?`, name, version, arch).Scan(
 		&pkg.SHA256, &pkg.Size, &pkg.Filename,
 		&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+		&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+		&pinned)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
@@ -880,6 +904,7 @@ func (c *Cache) GetByNameVersionArch(name, version, arch string) (*Package, erro
 	pkg.AddedAt = time.Unix(addedAt, 0)
 	pkg.LastAccessed = time.Unix(lastAccessed, 0)
 	pkg.Announced = time.Unix(announced, 0)
+	pkg.Pinned = pinned != 0
 	return pkg, nil
 }
 
@@ -944,7 +969,8 @@ func (c *Cache) PopularPackages(limit int) ([]*Package, error) {
 
 	rows, err := c.db.Query(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		ORDER BY access_count DESC, last_accessed DESC
 		LIMIT ?`, limit)
@@ -957,16 +983,19 @@ func (c *Cache) PopularPackages(limit int) ([]*Package, error) {
 	for rows.Next() {
 		pkg := &Package{}
 		var addedAt, lastAccessed, announced int64
+		var pinned int
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
 			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
 		if err != nil {
 			return nil, err
 		}
 		pkg.AddedAt = time.Unix(addedAt, 0)
 		pkg.LastAccessed = time.Unix(lastAccessed, 0)
 		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
 		packages = append(packages, pkg)
 	}
 
@@ -984,7 +1013,8 @@ func (c *Cache) RecentPackages(limit int) ([]*Package, error) {
 
 	rows, err := c.db.Query(`
 		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
-		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, '')
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
 		FROM packages
 		ORDER BY last_accessed DESC
 		LIMIT ?`, limit)
@@ -997,16 +1027,19 @@ func (c *Cache) RecentPackages(limit int) ([]*Package, error) {
 	for rows.Next() {
 		pkg := &Package{}
 		var addedAt, lastAccessed, announced int64
+		var pinned int
 		err := rows.Scan(
 			&pkg.SHA256, &pkg.Size, &pkg.Filename,
 			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
-			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture)
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
 		if err != nil {
 			return nil, err
 		}
 		pkg.AddedAt = time.Unix(addedAt, 0)
 		pkg.LastAccessed = time.Unix(lastAccessed, 0)
 		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
 		packages = append(packages, pkg)
 	}
 
@@ -1068,4 +1101,111 @@ func (c *Cache) PopulateMissingMetadata() (int, error) {
 	}
 
 	return updated, nil
+}
+
+// Pin marks a package as pinned, preventing it from being evicted.
+func (c *Cache) Pin(sha256Hash string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	result, err := c.db.Exec("UPDATE packages SET pinned = 1 WHERE sha256 = ?", sha256Hash)
+	if err != nil {
+		return fmt.Errorf("failed to pin package: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check pin result: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+
+	c.logger.Info("Pinned package", zap.String("hash", sha256Hash[:16]+"..."))
+	return nil
+}
+
+// Unpin removes the pinned status from a package, allowing it to be evicted.
+func (c *Cache) Unpin(sha256Hash string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	result, err := c.db.Exec("UPDATE packages SET pinned = 0 WHERE sha256 = ?", sha256Hash)
+	if err != nil {
+		return fmt.Errorf("failed to unpin package: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check unpin result: %w", err)
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+
+	c.logger.Info("Unpinned package", zap.String("hash", sha256Hash[:16]+"..."))
+	return nil
+}
+
+// IsPinned checks if a package is pinned.
+func (c *Cache) IsPinned(sha256Hash string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var pinned int
+	err := c.db.QueryRow("SELECT COALESCE(pinned, 0) FROM packages WHERE sha256 = ?", sha256Hash).Scan(&pinned)
+	if err != nil {
+		return false
+	}
+	return pinned != 0
+}
+
+// ListPinned returns all pinned packages.
+func (c *Cache) ListPinned() ([]*Package, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	rows, err := c.db.Query(`
+		SELECT sha256, size, filename, added_at, last_accessed, access_count, announced,
+		       COALESCE(package_name, ''), COALESCE(package_version, ''), COALESCE(architecture, ''),
+		       COALESCE(pinned, 0)
+		FROM packages
+		WHERE pinned = 1
+		ORDER BY last_accessed DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var packages []*Package
+	for rows.Next() {
+		pkg := &Package{}
+		var addedAt, lastAccessed, announced int64
+		var pinned int
+		err := rows.Scan(
+			&pkg.SHA256, &pkg.Size, &pkg.Filename,
+			&addedAt, &lastAccessed, &pkg.AccessCount, &announced,
+			&pkg.PackageName, &pkg.PackageVersion, &pkg.Architecture,
+			&pinned)
+		if err != nil {
+			return nil, err
+		}
+		pkg.AddedAt = time.Unix(addedAt, 0)
+		pkg.LastAccessed = time.Unix(lastAccessed, 0)
+		pkg.Announced = time.Unix(announced, 0)
+		pkg.Pinned = pinned != 0
+		packages = append(packages, pkg)
+	}
+
+	return packages, rows.Err()
+}
+
+// PinnedCount returns the number of pinned packages.
+func (c *Cache) PinnedCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var count int
+	_ = c.db.QueryRow("SELECT COUNT(*) FROM packages WHERE pinned = 1").Scan(&count)
+	return count
 }

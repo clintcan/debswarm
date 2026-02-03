@@ -1,3 +1,14 @@
+debswarm (1.23.0-1) stable; urgency=low
+
+  * Package pinning: Prevent eviction of important packages
+    - debswarm cache pin <hash>: Pin a package
+    - debswarm cache unpin <hash>: Unpin a package
+    - debswarm cache unpin --all: Unpin all packages
+    - debswarm cache list --pinned: Show pinned packages only
+    - Pinned packages are protected from automatic eviction
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 03 Feb 2026 00:00:00 +0000
+
 debswarm (1.22.0-1) stable; urgency=low
 
   * Cache analytics: New CLI commands for cache usage analysis

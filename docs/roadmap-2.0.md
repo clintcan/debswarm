@@ -18,7 +18,7 @@ Each feature is rated:
 | Issue | Description | Feasibility | Status |
 |-------|-------------|-------------|--------|
 | Cache analytics | Popular packages, bandwidth savings, hit rate reporting | Easy | **Done v1.22.0** |
-| Package pinning | Prevent eviction of specific packages | Easy | Planned |
+| Package pinning | Prevent eviction of specific packages | Easy | **Done v1.23.0** |
 | CLI `stats --watch` | Live updating statistics in terminal | Easy | Planned |
 
 ## Medium Priority
@@ -66,22 +66,24 @@ CLI commands:
 - `debswarm cache popular` - List most accessed packages
 - `debswarm cache recent` - List most recently accessed packages
 
-### Package Pinning (Easy)
+### Package Pinning (Done - v1.23.0)
 
-Schema change:
-```sql
-ALTER TABLE packages ADD COLUMN pinned INTEGER DEFAULT 0;
-```
+Implemented in v1.23.0:
 
-Modify eviction to skip pinned:
-```sql
-WHERE pinned = 0 ORDER BY (last_accessed + access_count * 3600) ASC
+```go
+// Added to cache.go
+func (c *Cache) Pin(sha256Hash string) error
+func (c *Cache) Unpin(sha256Hash string) error
+func (c *Cache) IsPinned(sha256Hash string) bool
+func (c *Cache) ListPinned() ([]*Package, error)
+func (c *Cache) PinnedCount() int
 ```
 
 CLI commands:
-- `debswarm cache pin <package-or-hash>`
-- `debswarm cache unpin <package-or-hash>`
-- `debswarm cache list --pinned`
+- `debswarm cache pin <hash>` - Pin a package
+- `debswarm cache unpin <hash>` - Unpin a package
+- `debswarm cache unpin --all` - Unpin all packages
+- `debswarm cache list --pinned` - Show only pinned packages
 
 ### CLI Stats Watch (Easy)
 
@@ -131,7 +133,7 @@ Complexity: Pattern detection, storage for history, scheduled tasks.
 Recommended sequence based on value/effort ratio:
 
 1. ~~**Cache analytics** - High value, easy~~ **Done v1.22.0**
-2. **Package pinning** - Frequently requested, easy
+2. ~~**Package pinning** - Frequently requested, easy~~ **Done v1.23.0**
 3. **Prometheus alerts** - Zero code, high ops value
 4. **CLI stats watch** - Quick win
 5. **Web API expansion** - Enables external tools
@@ -139,8 +141,9 @@ Recommended sequence based on value/effort ratio:
 
 ## Version History
 
+- **v1.23.0** - Package pinning: `cache pin`, `cache unpin`, `cache list --pinned`
 - **v1.22.0** - Cache analytics: `cache stats`, `cache popular`, `cache recent` commands
 
 ## Status
 
-**In Progress** - Cache analytics completed, continuing with package pinning next.
+**In Progress** - Cache analytics and package pinning completed, continuing with CLI stats watch next.

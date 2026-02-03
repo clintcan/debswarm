@@ -25,12 +25,16 @@ func cacheCmd() *cobra.Command {
 	cmd.AddCommand(cacheVerifyCmd())
 	cmd.AddCommand(cachePopularCmd())
 	cmd.AddCommand(cacheRecentCmd())
+	cmd.AddCommand(cachePinCmd())
+	cmd.AddCommand(cacheUnpinCmd())
 
 	return cmd
 }
 
 func cacheListCmd() *cobra.Command {
-	return &cobra.Command{
+	var pinnedOnly bool
+
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List cached packages",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,25 +51,46 @@ func cacheListCmd() *cobra.Command {
 			}
 			defer func() { _ = c.Close() }()
 
-			packages, err := c.List()
-			if err != nil {
-				return err
+			var packages []*cache.Package
+			if pinnedOnly {
+				packages, err = c.ListPinned()
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Pinned Packages: %d\n", len(packages))
+			} else {
+				packages, err = c.List()
+				if err != nil {
+					return err
+				}
+				fmt.Printf("Cached Packages: %d (pinned: %d)\n", len(packages), c.PinnedCount())
 			}
-
-			fmt.Printf("Cached Packages: %d\n", len(packages))
 			fmt.Printf("Total Size:      %s\n", formatBytes(c.Size()))
 			fmt.Println()
 
 			for _, pkg := range packages {
-				fmt.Printf("  %s  %10s  %s\n",
+				pinMark := " "
+				if pkg.Pinned {
+					pinMark = "*"
+				}
+				fmt.Printf(" %s %s  %10s  %s\n",
+					pinMark,
 					pkg.SHA256[:16],
 					formatBytes(pkg.Size),
 					pkg.Filename)
 			}
 
+			if !pinnedOnly && c.PinnedCount() > 0 {
+				fmt.Println()
+				fmt.Println("* = pinned (protected from eviction)")
+			}
+
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVar(&pinnedOnly, "pinned", false, "Show only pinned packages")
+	return cmd
 }
 
 func cacheClearCmd() *cobra.Command {
@@ -387,5 +412,172 @@ func cacheRecentCmd() *cobra.Command {
 	}
 
 	cmd.Flags().IntVarP(&limit, "limit", "n", 10, "Number of packages to show")
+	return cmd
+}
+
+func cachePinCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pin <hash>",
+		Short: "Pin a package to prevent eviction",
+		Long:  "Pin a cached package to prevent it from being automatically evicted when the cache is full.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger, _ := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			maxSize := cfg.Cache.MaxSizeBytes()
+			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+
+			hashPrefix := args[0]
+
+			// Find matching package(s)
+			packages, err := c.List()
+			if err != nil {
+				return fmt.Errorf("failed to list packages: %w", err)
+			}
+
+			var matches []*cache.Package
+			for _, pkg := range packages {
+				if len(hashPrefix) <= len(pkg.SHA256) && pkg.SHA256[:len(hashPrefix)] == hashPrefix {
+					matches = append(matches, pkg)
+				}
+			}
+
+			if len(matches) == 0 {
+				return fmt.Errorf("no package found matching hash prefix: %s", hashPrefix)
+			}
+			if len(matches) > 1 {
+				fmt.Printf("Multiple packages match prefix %s:\n", hashPrefix)
+				for _, pkg := range matches {
+					fmt.Printf("  %s  %s\n", pkg.SHA256[:16], pkg.Filename)
+				}
+				return fmt.Errorf("please provide a more specific hash prefix")
+			}
+
+			pkg := matches[0]
+			if pkg.Pinned {
+				fmt.Printf("Package %s is already pinned\n", pkg.SHA256[:16])
+				return nil
+			}
+
+			if err := c.Pin(pkg.SHA256); err != nil {
+				return fmt.Errorf("failed to pin package: %w", err)
+			}
+
+			name := pkg.Filename
+			if pkg.PackageName != "" {
+				name = pkg.PackageName
+				if pkg.PackageVersion != "" {
+					name += " " + pkg.PackageVersion
+				}
+			}
+			fmt.Printf("Pinned: %s (%s)\n", pkg.SHA256[:16], name)
+			return nil
+		},
+	}
+}
+
+func cacheUnpinCmd() *cobra.Command {
+	var all bool
+
+	cmd := &cobra.Command{
+		Use:   "unpin <hash>",
+		Short: "Unpin a package to allow eviction",
+		Long:  "Remove the pinned status from a package, allowing it to be evicted when the cache is full.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			logger, _ := setupLogger()
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+
+			maxSize := cfg.Cache.MaxSizeBytes()
+			c, err := cache.New(cfg.Cache.Path, maxSize, logger)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = c.Close() }()
+
+			if all {
+				// Unpin all packages
+				pinned, err := c.ListPinned()
+				if err != nil {
+					return fmt.Errorf("failed to list pinned packages: %w", err)
+				}
+				if len(pinned) == 0 {
+					fmt.Println("No pinned packages.")
+					return nil
+				}
+
+				for _, pkg := range pinned {
+					if err := c.Unpin(pkg.SHA256); err != nil {
+						fmt.Printf("Failed to unpin %s: %v\n", pkg.SHA256[:16], err)
+					}
+				}
+				fmt.Printf("Unpinned %d packages\n", len(pinned))
+				return nil
+			}
+
+			if len(args) == 0 {
+				return fmt.Errorf("please provide a hash prefix or use --all to unpin all packages")
+			}
+
+			hashPrefix := args[0]
+
+			// Find matching package(s)
+			packages, err := c.List()
+			if err != nil {
+				return fmt.Errorf("failed to list packages: %w", err)
+			}
+
+			var matches []*cache.Package
+			for _, pkg := range packages {
+				if len(hashPrefix) <= len(pkg.SHA256) && pkg.SHA256[:len(hashPrefix)] == hashPrefix {
+					matches = append(matches, pkg)
+				}
+			}
+
+			if len(matches) == 0 {
+				return fmt.Errorf("no package found matching hash prefix: %s", hashPrefix)
+			}
+			if len(matches) > 1 {
+				fmt.Printf("Multiple packages match prefix %s:\n", hashPrefix)
+				for _, pkg := range matches {
+					fmt.Printf("  %s  %s\n", pkg.SHA256[:16], pkg.Filename)
+				}
+				return fmt.Errorf("please provide a more specific hash prefix")
+			}
+
+			pkg := matches[0]
+			if !pkg.Pinned {
+				fmt.Printf("Package %s is not pinned\n", pkg.SHA256[:16])
+				return nil
+			}
+
+			if err := c.Unpin(pkg.SHA256); err != nil {
+				return fmt.Errorf("failed to unpin package: %w", err)
+			}
+
+			name := pkg.Filename
+			if pkg.PackageName != "" {
+				name = pkg.PackageName
+				if pkg.PackageVersion != "" {
+					name += " " + pkg.PackageVersion
+				}
+			}
+			fmt.Printf("Unpinned: %s (%s)\n", pkg.SHA256[:16], name)
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolVar(&all, "all", false, "Unpin all packages")
 	return cmd
 }

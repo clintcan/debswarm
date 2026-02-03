@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-02-03
+
+### Added
+- **Package pinning**: Prevent important packages from being automatically evicted
+  - `debswarm cache pin <hash>`: Pin a package to protect it from eviction
+  - `debswarm cache unpin <hash>`: Remove pin to allow eviction
+  - `debswarm cache unpin --all`: Unpin all packages
+  - `debswarm cache list --pinned`: Show only pinned packages
+  - Pinned packages marked with `*` in cache list output
+  - New cache methods: `Pin()`, `Unpin()`, `IsPinned()`, `ListPinned()`, `PinnedCount()`
+
+### Changed
+- `debswarm cache list` now shows pinned count and marks pinned packages with `*`
+
 ## [1.22.0] - 2026-02-03
 
 ### Added
