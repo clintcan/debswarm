@@ -112,10 +112,7 @@ func (w *JSONWriter) Log(event Event) {
 
 	// Check if rotation is needed
 	if w.counter.written >= w.maxBytes {
-		if err := w.rotate(); err != nil {
-			// Rotation failed — continue writing rather than silently dropping
-			// the event. The file may grow beyond maxBytes, which is acceptable.
-		}
+		_ = w.rotate() // rotation failure is non-fatal; continue writing rather than dropping the event
 	}
 
 	// Encode and write the event (byte count tracked automatically by countingWriter)

@@ -620,7 +620,7 @@ func ParseSize(s string) (int64, error) {
 	}
 
 	unit = strings.ToUpper(strings.TrimSpace(unit))
-	multiplier := int64(1)
+	var multiplier int64
 	switch unit {
 	case "", "B":
 		multiplier = 1
