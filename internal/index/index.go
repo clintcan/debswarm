@@ -24,6 +24,17 @@ import (
 	"github.com/debswarm/debswarm/internal/security"
 )
 
+const (
+	// maxDecompressedBytes limits decompressed Packages file size to prevent
+	// decompression bombs. 512MB is generous for even the largest repos
+	// (Debian main has ~60K packages, ~50MB uncompressed).
+	maxDecompressedBytes = 512 * 1024 * 1024
+
+	// maxPackagesPerRepo limits how many packages can be indexed from a single
+	// repo to prevent unbounded memory growth from malicious Packages files.
+	maxPackagesPerRepo = 500_000
+)
+
 // PackageInfo holds information about a single package
 type PackageInfo struct {
 	Package      string
@@ -70,20 +81,20 @@ func (idx *Index) LoadFromFile(path string) error {
 
 	var reader io.Reader = f
 
-	// Handle compression
+	// Handle compression (limit decompressed size to prevent decompression bombs)
 	if strings.HasSuffix(path, ".gz") {
 		gzReader, err := gzip.NewReader(f)
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer func() { _ = gzReader.Close() }()
-		reader = gzReader
+		reader = io.LimitReader(gzReader, maxDecompressedBytes)
 	} else if strings.HasSuffix(path, ".xz") {
 		xzReader, err := xz.NewReader(f)
 		if err != nil {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
-		reader = xzReader
+		reader = io.LimitReader(xzReader, maxDecompressedBytes)
 	}
 
 	// Use filename as repo identifier for local files
@@ -101,20 +112,20 @@ func (idx *Index) LoadFromFileWithRepo(path, repo string) error {
 
 	var reader io.Reader = f
 
-	// Handle compression based on extension
+	// Handle compression based on extension (limit decompressed size)
 	if strings.HasSuffix(path, ".gz") {
 		gzReader, err := gzip.NewReader(f)
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer func() { _ = gzReader.Close() }()
-		reader = gzReader
+		reader = io.LimitReader(gzReader, maxDecompressedBytes)
 	} else if strings.HasSuffix(path, ".xz") {
 		xzReader, err := xz.NewReader(f)
 		if err != nil {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
-		reader = xzReader
+		reader = io.LimitReader(xzReader, maxDecompressedBytes)
 	}
 
 	return idx.parseForRepo(reader, repo)
@@ -149,20 +160,20 @@ func (idx *Index) LoadFromURL(url string) error {
 
 	var reader io.Reader = resp.Body
 
-	// Handle compression based on URL
+	// Handle compression based on URL (limit decompressed size)
 	if strings.HasSuffix(url, ".gz") {
 		gzReader, err := gzip.NewReader(resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer func() { _ = gzReader.Close() }()
-		reader = gzReader
+		reader = io.LimitReader(gzReader, maxDecompressedBytes)
 	} else if strings.HasSuffix(url, ".xz") {
 		xzReader, err := xz.NewReader(resp.Body)
 		if err != nil {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
-		reader = xzReader
+		reader = io.LimitReader(xzReader, maxDecompressedBytes)
 	}
 
 	// Extract repo base URL
@@ -183,13 +194,13 @@ func (idx *Index) LoadFromData(data []byte, url string) error {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer func() { _ = gzReader.Close() }()
-		reader = gzReader
+		reader = io.LimitReader(gzReader, maxDecompressedBytes)
 	} else if len(data) >= 6 && data[0] == 0xfd && data[1] == '7' && data[2] == 'z' && data[3] == 'X' && data[4] == 'Z' && data[5] == 0x00 {
 		xzReader, err := xz.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
-		reader = xzReader
+		reader = io.LimitReader(xzReader, maxDecompressedBytes)
 	}
 	// Otherwise assume uncompressed
 
@@ -230,6 +241,12 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 					idx.byBasename[basename] = append(idx.byBasename[basename], pkg)
 				}
 				count++
+				if count >= maxPackagesPerRepo {
+					idx.logger.Warn("Package index limit reached, truncating",
+						zap.String("repo", repo),
+						zap.Int("limit", maxPackagesPerRepo))
+					break
+				}
 			}
 			pkg = nil
 			continue

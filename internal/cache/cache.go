@@ -317,12 +317,14 @@ func (c *Cache) Has(sha256Hash string) bool {
 	return err == nil
 }
 
-// trackedReader wraps a file and decrements reader count on close
+// trackedReader wraps a file and decrements reader count on close.
+// Uses sync.Once to prevent data races on concurrent Close calls.
 type trackedReader struct {
-	file   *os.File
-	hash   string
-	cache  *Cache
-	closed bool
+	file      *os.File
+	hash      string
+	cache     *Cache
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (tr *trackedReader) Read(p []byte) (n int, err error) {
@@ -330,20 +332,17 @@ func (tr *trackedReader) Read(p []byte) (n int, err error) {
 }
 
 func (tr *trackedReader) Close() error {
-	if tr.closed {
-		return nil
-	}
-	tr.closed = true
-	err := tr.file.Close()
+	tr.closeOnce.Do(func() {
+		tr.closeErr = tr.file.Close()
 
-	tr.cache.activeReadersMu.Lock()
-	tr.cache.activeReaders[tr.hash]--
-	if tr.cache.activeReaders[tr.hash] <= 0 {
-		delete(tr.cache.activeReaders, tr.hash)
-	}
-	tr.cache.activeReadersMu.Unlock()
-
-	return err
+		tr.cache.activeReadersMu.Lock()
+		tr.cache.activeReaders[tr.hash]--
+		if tr.cache.activeReaders[tr.hash] <= 0 {
+			delete(tr.cache.activeReaders, tr.hash)
+		}
+		tr.cache.activeReadersMu.Unlock()
+	})
+	return tr.closeErr
 }
 
 // Get retrieves a package from the cache
@@ -467,6 +466,14 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 
 	// Record in database - use ON CONFLICT to preserve access_count if re-adding
 	now := time.Now().Unix()
+	// Check if entry already exists to avoid double-counting currentSize
+	var existingSize int64
+	var isUpdate bool
+	err = c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", expectedHash).Scan(&existingSize)
+	if err == nil {
+		isUpdate = true
+	}
+
 	_, err = c.db.Exec(`
 		INSERT INTO packages
 		(sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
@@ -484,7 +491,12 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return fmt.Errorf("failed to record package: %w", err)
 	}
 
-	c.currentSize += size
+	if isUpdate {
+		// On conflict/update: adjust by the size delta (handles size changes)
+		c.currentSize += size - existingSize
+	} else {
+		c.currentSize += size
+	}
 	c.logger.Debug("Cached package",
 		zap.String("hash", expectedHash[:16]+"..."),
 		zap.Int64("size", size),
@@ -518,6 +530,13 @@ func (c *Cache) PutFile(filePath string, hash string, filename string, size int6
 	// Parse package metadata from filename
 	pkgName, pkgVersion, arch, _ := ParseDebFilename(filename)
 
+	// Check if entry already exists to avoid double-counting currentSize
+	var existingSize int64
+	var isUpdate bool
+	if err := c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", hash).Scan(&existingSize); err == nil {
+		isUpdate = true
+	}
+
 	// Record in database - use ON CONFLICT to preserve access_count if re-adding
 	now := time.Now().Unix()
 	_, err := c.db.Exec(`
@@ -537,7 +556,11 @@ func (c *Cache) PutFile(filePath string, hash string, filename string, size int6
 		return fmt.Errorf("failed to record package: %w", err)
 	}
 
-	c.currentSize += size
+	if isUpdate {
+		c.currentSize += size - existingSize
+	} else {
+		c.currentSize += size
+	}
 	c.logger.Debug("Cached package (file move)",
 		zap.String("hash", hash[:16]+"..."),
 		zap.Int64("size", size),
@@ -573,16 +596,20 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 		return err
 	}
 
-	// Delete file
-	path := c.packagePath(sha256Hash)
-	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
-		return removeErr
-	}
-
-	// Delete from database
+	// Delete from database FIRST to avoid phantom entries.
+	// If file removal fails afterward, the orphan file is harmless;
+	// a phantom DB entry (file deleted but DB row remains) would cause errors.
 	_, err = c.db.Exec("DELETE FROM packages WHERE sha256 = ?", sha256Hash)
 	if err != nil {
 		return err
+	}
+
+	// Then delete file
+	path := c.packagePath(sha256Hash)
+	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
+		c.logger.Warn("Failed to remove cache file after DB deletion",
+			zap.String("hash", sha256Hash),
+			zap.Error(removeErr))
 	}
 
 	c.currentSize -= size
@@ -702,6 +729,10 @@ func (c *Cache) Close() error {
 }
 
 func (c *Cache) packagePath(sha256Hash string) string {
+	// Guard against empty/short hash to prevent panic on slice
+	if len(sha256Hash) < 2 {
+		return filepath.Join(c.basePath, "packages", "sha256", "_invalid", sha256Hash)
+	}
 	// Use first 2 chars as subdirectory for better filesystem performance
 	return filepath.Join(c.basePath, "packages", "sha256", sha256Hash[:2], sha256Hash)
 }
@@ -762,15 +793,15 @@ func (c *Cache) ensureSpace(needed int64) error {
 		return nil
 	}
 
-	// Get packages sorted by eviction score (oldest, least accessed first)
-	// Uses last_accessed adjusted by access_count - more accesses = higher score = evicted later
-	// SQLite doesn't support LOG, so we use a simpler linear formula
-	// Pinned packages are never evicted
+	// Get packages sorted by eviction score (oldest, least accessed first).
+	// Each access adds 1 day (86400s) of eviction protection, so a package accessed
+	// 5 times gets ~5 days of protection — proportional to the 7-day eligibility window.
+	// Pinned packages are never evicted.
 	rows, err := c.db.Query(`
 		SELECT sha256, size
 		FROM packages
 		WHERE last_accessed < ? AND pinned = 0
-		ORDER BY (last_accessed + access_count * 3600) ASC`,
+		ORDER BY (last_accessed + access_count * 86400) ASC`,
 		time.Now().Add(-7*24*time.Hour).Unix()) // Don't evict recently accessed
 	if err != nil {
 		return err

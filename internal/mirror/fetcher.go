@@ -151,7 +151,9 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 	return data, nil
 }
 
-// FetchToWriter downloads content and writes to a writer
+// FetchToWriter downloads content and writes to a writer.
+// Unlike Fetch, this does NOT retry because the writer cannot be rewound.
+// Callers that need retry should handle it themselves with a seekable writer.
 func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (int64, error) {
 	start := time.Now()
 
@@ -161,42 +163,34 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
-	written, err := retry.Do(ctx, retry.Config{
-		MaxAttempts: f.maxRetries,
-		Backoff:     retry.Exponential(time.Second),
-	}, func() (int64, error) {
-		resp, err := f.client.Do(req)
-		if err != nil {
-			f.recordError(url)
-			return 0, err
-		}
+	resp, err := f.client.Do(req)
+	if err != nil {
+		f.recordError(url)
+		return 0, err
+	}
 
-		if resp.StatusCode != http.StatusOK {
-			if closeErr := resp.Body.Close(); closeErr != nil {
-				f.logger.Debug("Failed to close response body", zap.Error(closeErr))
-			}
-			httpErr := fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
-			f.recordError(url)
-			if resp.StatusCode >= 400 && resp.StatusCode < 500 {
-				return 0, retry.NonRetryable(httpErr)
-			}
-			return 0, httpErr
-		}
-
-		written, err := io.Copy(w, resp.Body)
+	if resp.StatusCode != http.StatusOK {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
 		}
-		if err != nil {
-			f.recordError(url)
-			return 0, err
-		}
+		f.recordError(url)
+		return 0, fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
+	}
 
-		return written, nil
-	})
-
+	// Limit response size to prevent disk exhaustion
+	limitedReader := io.LimitReader(resp.Body, f.maxResponseSize+1)
+	written, err := io.Copy(w, limitedReader)
+	if closeErr := resp.Body.Close(); closeErr != nil {
+		f.logger.Debug("Failed to close response body", zap.Error(closeErr))
+	}
 	if err != nil {
+		f.recordError(url)
 		return 0, err
+	}
+
+	if written > f.maxResponseSize {
+		f.recordError(url)
+		return 0, fmt.Errorf("response size exceeds maximum allowed (%d bytes)", f.maxResponseSize)
 	}
 
 	duration := time.Since(start)
@@ -377,10 +371,15 @@ func (f *Fetcher) recordSuccess(url string, bytes int64, duration time.Duration)
 	// Update running averages
 	n := float64(stats.SuccessCount)
 	latencyMs := float64(duration.Milliseconds())
-	throughputBps := float64(bytes) / duration.Seconds()
 
 	stats.AvgLatencyMs = stats.AvgLatencyMs*(n-1)/n + latencyMs/n
-	stats.AvgThroughputBps = stats.AvgThroughputBps*(n-1)/n + throughputBps/n
+
+	// Guard against zero/near-zero duration which would produce +Inf throughput
+	// and permanently poison the running average
+	if duration > 0 {
+		throughputBps := float64(bytes) / duration.Seconds()
+		stats.AvgThroughputBps = stats.AvgThroughputBps*(n-1)/n + throughputBps/n
+	}
 }
 
 func (f *Fetcher) recordError(url string) {

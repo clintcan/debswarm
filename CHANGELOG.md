@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-02-08
+
+### Security
+- **SSRF hardening**: Complete rewrite of host validation in `internal/security/url.go`
+  - Block alternate IP encodings: hex (`0x7f000001`), octal (`0177.0.0.01`), decimal integer (`2130706433`), mixed dotted (`0x7f.0.0.1`)
+  - IP blocking now uses `net.IP` methods (`IsLoopback`, `IsPrivate`, `IsLinkLocalUnicast`, etc.) instead of string matching
+  - Domain matching uses exact match or `.`-prefixed subdomain suffix — prevents `attack-ubuntu.com` from matching `ubuntu.com`
+  - URL paths no longer trigger false positives (host extracted via `url.Parse` before checking)
+  - Exported `IsBlockedIP()` for post-DNS-resolution checks
+- **DNS rebinding prevention**: CONNECT tunnel handler now checks resolved IP after `dialer.DialContext` — blocks connections that resolve to private/internal addresses
+- **pprof endpoint restriction**: Debug profiling endpoints only registered when metrics bind address is localhost
+- **Decompression bomb protection**: All gzip/xz Packages file readers wrapped in `io.LimitReader` (512MB limit)
+- **Bounded peer input**: P2P stream requests limited to 256 bytes via `io.LimitReader` — prevents memory exhaustion from malicious peers
+- **SSRF bypass on proxy-mode requests**: Added `IsAllowedMirrorURL` validation when `r.URL.Host` is set
+- **Permissive mirror prefix removal**: `mirrors.*`/`mirror.*`/`ftp.*` prefixes no longer auto-trusted; third-party mirrors must use `allowed_hosts`
+
+### Fixed
+- **P2P protocol fixes**:
+  - `writeSize()` now returns errors — prevents peers from hanging on failed size writes
+  - Client-side streams now have two-phase deadlines: 30s for handshake, size-proportional for transfer
+  - `DownloadRange` supports offset-to-EOF (`end=-1` encoded as `0` in protocol, server treats `end<=0` as to-EOF)
+  - 500MB allocation cap: peer-controlled size header capped at 10MB initial alloc, grows incrementally
+  - TOCTOU race in upload tracking: merged `canAcceptUpload` + `trackUploadStart` into atomic `tryAcceptUpload`
+- **Cache correctness**:
+  - `trackedReader.Close()` uses `sync.Once` to prevent data race on concurrent close
+  - `packagePath()` guards against panic on empty/short hash strings
+  - `deleteUnlocked()` deletes from DB first, then removes file — prevents phantom DB entries
+  - `currentSize` double-counting on duplicate `Put` — checks for existing entry before INSERT
+  - Cache eviction formula: popularity boost changed from 3600 (1hr) to 86400 (1day) per access
+- **Rate limiter fixes**:
+  - `rate.WaitN` panic when `n > burst` — splits large reads into burst-sized chunks
+  - `LimitedWriter.Write` failing on large buffers — splits writes into burst-sized chunks with per-chunk WaitN
+- **Mirror/download fixes**:
+  - `FetchToWriter` data corruption on retry — removed retry (writer can't rewind), added `io.LimitReader` size cap
+  - Off-by-one in chunk range boundaries — convert exclusive end to inclusive end in MirrorSource
+  - Division by zero producing +Inf throughput — guarded with `if duration > 0`
+- **Config/daemon fixes**:
+  - `ParseSize` now returns errors for empty input, non-numeric values, unrecognized units, and integer overflow
+  - `ParseSize` digit parsing uses `strconv.ParseInt` instead of manual loop (overflow-safe), with multiplication overflow check
+  - `reloadConfig` now applies rate limit changes via `UpdateRateLimits()`
+  - `checkFilePermissions` checks world-writable (0002) before world-readable (0004) — more severe issue reported first
+  - Flag override logic uses `cmd.Flags().Changed()` — correctly distinguishes "not set" from "set to default value"
+  - SIGHUP signal handling skipped on Windows with informational log message
+- **Audit log fixes**:
+  - Byte counting uses `countingWriter` wrapper tracking actual bytes written (replaces hardcoded `+= 200` estimate)
+  - Rotation failure no longer silently drops events — continues writing to current file
+- **Timeout tracker**: Ring buffer pattern replaces FIFO reslicing — prevents unbounded backing array memory growth
+- **Downloader fixes**:
+  - Assembly file no longer created in CWD when resume is disabled — uses `os.MkdirTemp` fallback
+  - `New(nil)` no longer panics — all config field accesses moved inside nil guard
+- **Index parser**: Package count capped at 500,000 per repo to prevent unbounded memory growth
+
+### Tests
+- Added SSRF test cases for hex/octal/decimal IP bypass vectors
+- Updated `DurationTracker` overflow test for ring buffer semantics
+- Updated mirror prefix test expectations after security hardening
+
 ## [1.23.0] - 2026-02-03
 
 ### Added
@@ -947,6 +1004,7 @@ Re-release of v1.2.5 (CI asset conflict).
 [1.2.0]: https://github.com/clintcan/debswarm/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/clintcan/debswarm/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/clintcan/debswarm/compare/v1.0.1...v1.1.0
+[1.24.0]: https://github.com/clintcan/debswarm/compare/v1.23.0...v1.24.0
 [1.0.1]: https://github.com/clintcan/debswarm/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/clintcan/debswarm/compare/v0.8.2...v1.0.0
 [0.8.2]: https://github.com/clintcan/debswarm/compare/v0.8.0...v0.8.2

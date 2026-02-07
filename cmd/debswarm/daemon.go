@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -96,17 +97,18 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid configuration: %w", validateErr)
 	}
 
-	// Override with command-line flags
-	if proxyPort != 9977 {
+	// Override with command-line flags (use Changed() to detect explicit flags,
+	// so --proxy-port 9977 correctly overrides a config file value)
+	if cmd.Flags().Changed("proxy-port") {
 		cfg.Network.ProxyPort = proxyPort
 	}
-	if p2pPort != 4001 {
+	if cmd.Flags().Changed("p2p-port") {
 		cfg.Network.ListenPort = p2pPort
 	}
-	if metricsPort != 9978 {
+	if cmd.Flags().Changed("metrics-port") {
 		cfg.Metrics.Port = metricsPort
 	}
-	if metricsBind != "127.0.0.1" {
+	if cmd.Flags().Changed("metrics-bind") {
 		cfg.Metrics.Bind = metricsBind
 	}
 
@@ -145,7 +147,14 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	if runtime.GOOS == "windows" {
+		// Windows doesn't support SIGHUP; only register SIGINT/SIGTERM.
+		// Config reload requires daemon restart on Windows.
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		logger.Info("Running on Windows — config reload via SIGHUP is not available; restart daemon to apply config changes")
+	} else {
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	}
 
 	// Initialize metrics
 	m := metrics.New()
@@ -606,7 +615,7 @@ func checkDirectory(path, name string) error {
 
 // reloadConfig reloads configuration that can be changed at runtime.
 // Some settings (ports, cache path) require a full restart.
-func reloadConfig(logger *zap.Logger, _ *p2p.Node, pkgCache *cache.Cache) error {
+func reloadConfig(logger *zap.Logger, p2pNode *p2p.Node, pkgCache *cache.Cache) error {
 	// Load new configuration
 	newCfg, warnings, err := loadConfigWithWarnings()
 	if err != nil {
@@ -623,15 +632,10 @@ func reloadConfig(logger *zap.Logger, _ *p2p.Node, pkgCache *cache.Cache) error 
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	// Reload rate limits (if p2p node supports it)
+	// Apply new rate limits to the running P2P node
 	newUploadRate := newCfg.Transfer.MaxUploadRateBytes()
 	newDownloadRate := newCfg.Transfer.MaxDownloadRateBytes()
-
-	if newUploadRate > 0 || newDownloadRate > 0 {
-		logger.Info("Rate limits updated",
-			zap.Int64("uploadRate", newUploadRate),
-			zap.Int64("downloadRate", newDownloadRate))
-	}
+	p2pNode.UpdateRateLimits(newUploadRate, newDownloadRate)
 
 	// Check database integrity during reload
 	if err := pkgCache.CheckIntegrity(); err != nil {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -602,15 +603,27 @@ func (c *Config) Save(path string) error {
 	return os.WriteFile(path, data, 0600)
 }
 
-// ParseSize parses a size string like "10GB" into bytes
+// ParseSize parses a size string like "10GB" into bytes.
+// Returns an error for empty strings, non-numeric input, or unrecognized units.
 func ParseSize(s string) (int64, error) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0" {
+		return 0, nil
+	}
+
 	var size int64
 	var unit string
 
-	parseWithUnit(s, &size, &unit)
+	n := parseWithUnit(s, &size, &unit)
+	if n == 0 {
+		return 0, fmt.Errorf("invalid size: no numeric value in %q", s)
+	}
 
+	unit = strings.ToUpper(strings.TrimSpace(unit))
 	multiplier := int64(1)
 	switch unit {
+	case "", "B":
+		multiplier = 1
 	case "KB", "K":
 		multiplier = 1024
 	case "MB", "M":
@@ -619,20 +632,37 @@ func ParseSize(s string) (int64, error) {
 		multiplier = 1024 * 1024 * 1024
 	case "TB", "T":
 		multiplier = 1024 * 1024 * 1024 * 1024
+	default:
+		return 0, fmt.Errorf("invalid size unit %q in %q", unit, s)
 	}
 
-	return size * multiplier, nil
+	result := size * multiplier
+	// Check for overflow: if size is positive but result is negative or
+	// dividing back doesn't yield the original value, overflow occurred
+	if size > 0 && (result < 0 || result/multiplier != size) {
+		return 0, fmt.Errorf("size value overflows int64 in %q", s)
+	}
+	return result, nil
 }
 
 func parseWithUnit(s string, size *int64, unit *string) int {
+	// Find the end of the numeric prefix
 	var n int
 	for i, c := range s {
 		if c >= '0' && c <= '9' {
-			*size = *size*10 + int64(c-'0')
 			n = i + 1
 		} else {
 			break
 		}
+	}
+	if n > 0 {
+		// Use strconv.ParseInt for overflow-safe parsing
+		v, err := strconv.ParseInt(s[:n], 10, 64)
+		if err != nil {
+			// Overflow or other parse error — return 0 digits consumed
+			return 0
+		}
+		*size = v
 	}
 	*unit = s[n:]
 	return n
@@ -696,18 +726,21 @@ func checkFilePermissions(path string) *SecurityWarning {
 
 	mode := info.Mode().Perm()
 
-	// Check if file is world-readable (o+r) or world-writable (o+w)
+	// Check world-writable FIRST (more severe than world-readable).
+	// Previously, world-readable was checked first and returned early,
+	// which meant a file that was both world-readable AND world-writable
+	// would only report the less severe warning.
 	// Bits: -----rwx (world), --rwx--- (group), rwx------ (owner)
-	if mode&0004 != 0 { // world readable
+	if mode&0002 != 0 { // world writable
 		return &SecurityWarning{
-			Message: fmt.Sprintf("config file is world-readable (mode %04o); consider 'chmod 600 %s' for files with inline PSK", mode, path),
+			Message: fmt.Sprintf("config file is world-writable (mode %04o); this is a security risk", mode),
 			File:    path,
 		}
 	}
 
-	if mode&0002 != 0 { // world writable
+	if mode&0004 != 0 { // world readable
 		return &SecurityWarning{
-			Message: fmt.Sprintf("config file is world-writable (mode %04o); this is a security risk", mode),
+			Message: fmt.Sprintf("config file is world-readable (mode %04o); consider 'chmod 600 %s' for files with inline PSK", mode, path),
 			File:    path,
 		}
 	}

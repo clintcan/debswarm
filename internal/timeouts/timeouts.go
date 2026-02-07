@@ -365,11 +365,13 @@ func CalculateTransferTimeout(sizeBytes int64, bytesPerSecond int64, margin floa
 	return clampTimeout(timeout)
 }
 
-// PercentileTimeout calculates a timeout based on percentile of observed durations
+// PercentileTimeout calculates a timeout based on percentile of observed durations.
+// Uses a ring buffer to bound memory usage (reslicing would leak backing array).
 type DurationTracker struct {
 	mu         sync.Mutex
 	durations  []time.Duration
 	maxSamples int
+	writeIdx   int // ring buffer write position
 }
 
 // NewDurationTracker creates a new duration tracker
@@ -388,11 +390,14 @@ func (dt *DurationTracker) Record(d time.Duration) {
 	dt.mu.Lock()
 	defer dt.mu.Unlock()
 
-	if len(dt.durations) >= dt.maxSamples {
-		// Remove oldest (FIFO)
-		dt.durations = dt.durations[1:]
+	if len(dt.durations) < dt.maxSamples {
+		// Buffer not yet full — append
+		dt.durations = append(dt.durations, d)
+	} else {
+		// Buffer full — overwrite oldest entry in-place (ring buffer)
+		dt.durations[dt.writeIdx] = d
 	}
-	dt.durations = append(dt.durations, d)
+	dt.writeIdx = (dt.writeIdx + 1) % dt.maxSamples
 }
 
 // Percentile returns the nth percentile of recorded durations

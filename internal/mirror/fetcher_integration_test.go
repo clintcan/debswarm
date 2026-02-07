@@ -145,17 +145,14 @@ func TestFetch_MaxResponseSize_NoRetry(t *testing.T) {
 	}
 }
 
-func TestFetchToWriter_5xxRetries(t *testing.T) {
+func TestFetchToWriter_5xxNoRetry(t *testing.T) {
+	// FetchToWriter does NOT retry because the writer cannot be rewound.
+	// A 5xx error should fail immediately.
 	var attempts int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&attempts, 1)
-		if count < 2 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("written data"))
+		atomic.AddInt32(&attempts, 1)
+		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer server.Close()
 
@@ -163,19 +160,13 @@ func TestFetchToWriter_5xxRetries(t *testing.T) {
 	f := NewFetcher(cfg, testLogger())
 
 	var buf strings.Builder
-	written, err := f.FetchToWriter(context.Background(), server.URL, &buf)
+	_, err := f.FetchToWriter(context.Background(), server.URL, &buf)
 
-	if err != nil {
-		t.Fatalf("expected success: %v", err)
+	if err == nil {
+		t.Fatal("expected error for 500 response")
 	}
-	if buf.String() != "written data" {
-		t.Errorf("expected 'written data', got %q", buf.String())
-	}
-	if written != 12 {
-		t.Errorf("expected 12 bytes written, got %d", written)
-	}
-	if atomic.LoadInt32(&attempts) != 2 {
-		t.Errorf("expected 2 attempts, got %d", attempts)
+	if atomic.LoadInt32(&attempts) != 1 {
+		t.Errorf("expected 1 attempt (no retries), got %d", attempts)
 	}
 }
 
@@ -356,17 +347,11 @@ func TestFetch_ContextCancelledBeforeRetry(t *testing.T) {
 
 func TestFetchToWriter_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	var attempts int32
+	cancel() // Cancel immediately before the request
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&attempts, 1)
-		if count == 1 {
-			go func() {
-				time.Sleep(10 * time.Millisecond)
-				cancel()
-			}()
-		}
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("data"))
 	}))
 	defer server.Close()
 
@@ -376,8 +361,8 @@ func TestFetchToWriter_ContextCancelled(t *testing.T) {
 	var buf strings.Builder
 	_, err := f.FetchToWriter(ctx, server.URL, &buf)
 
-	if err != context.Canceled {
-		t.Errorf("expected context.Canceled, got %v", err)
+	if err == nil {
+		t.Error("expected error for cancelled context")
 	}
 }
 

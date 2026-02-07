@@ -570,10 +570,13 @@ func TestE2E_AllowedHosts(t *testing.T) {
 			"http://packages.linuxmint.com/dists/virginia/InRelease",
 			"http://security.debian.org/debian-security/dists/stable/InRelease",
 			"http://security.ubuntu.com/ubuntu/dists/jammy-security/InRelease",
-			"http://mirrors.kernel.org/debian/dists/stable/InRelease",
-			"http://mirror.example.com/ubuntu/dists/jammy/InRelease",
 			"http://ftp.us.debian.org/debian/dists/stable/InRelease",
 		}
+
+		// These are NOT auto-trusted anymore (mirror.* prefix removed for SSRF safety):
+		// "http://mirrors.kernel.org/debian/dists/stable/InRelease"
+		// "http://mirror.example.com/ubuntu/dists/jammy/InRelease"
+		// They must be added via allowed_hosts configuration.
 
 		for _, url := range builtInURLs {
 			if !server.isAllowedMirrorURL(url) {

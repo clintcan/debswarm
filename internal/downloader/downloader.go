@@ -154,26 +154,26 @@ func New(cfg *Config) *Downloader {
 	maxConc := MaxConcurrentChunks
 	minChunked := int64(MinChunkedSize)
 
-	if cfg != nil {
-		if cfg.ChunkSize > 0 {
-			chunkSize = cfg.ChunkSize
-		}
-		if cfg.MaxConcurrent > 0 {
-			maxConc = cfg.MaxConcurrent
-		}
-		if cfg.MinChunkedSize > 0 {
-			minChunked = cfg.MinChunkedSize
-		}
-	}
-
 	d := &Downloader{
-		scorer:         cfg.Scorer,
-		metrics:        cfg.Metrics,
 		chunkSize:      chunkSize,
 		maxConc:        maxConc,
-		stateManager:   cfg.StateManager,
-		cache:          cfg.Cache,
 		minChunkedSize: minChunked,
+	}
+
+	if cfg != nil {
+		if cfg.ChunkSize > 0 {
+			d.chunkSize = cfg.ChunkSize
+		}
+		if cfg.MaxConcurrent > 0 {
+			d.maxConc = cfg.MaxConcurrent
+		}
+		if cfg.MinChunkedSize > 0 {
+			d.minChunkedSize = cfg.MinChunkedSize
+		}
+		d.scorer = cfg.Scorer
+		d.metrics = cfg.Metrics
+		d.stateManager = cfg.StateManager
+		d.cache = cfg.Cache
 	}
 
 	// Initialize buffer pool for chunk I/O operations
@@ -429,10 +429,25 @@ func (d *Downloader) downloadChunked(
 		}
 	}
 
-	// Create temp file for assembly (streaming to disk, not memory)
+	// Create temp file for assembly (streaming to disk, not memory).
+	// When resume is disabled, partialDir is empty — use a temp directory
+	// to avoid creating files in the daemon's current working directory.
+	// The caller owns the returned FilePath on success; we clean up on error.
+	var tempAssemblyDir string
+	if partialDir == "" {
+		tmpDir, tmpErr := os.MkdirTemp("", "debswarm-assembly-*")
+		if tmpErr != nil {
+			return nil, fmt.Errorf("failed to create temp dir for assembly: %w", tmpErr)
+		}
+		partialDir = tmpDir
+		tempAssemblyDir = tmpDir
+	}
 	assemblyFile := filepath.Join(partialDir, "assembled")
 	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
+		if tempAssemblyDir != "" {
+			_ = os.RemoveAll(tempAssemblyDir)
+		}
 		return nil, fmt.Errorf("failed to create assembly file: %w", err)
 	}
 
@@ -524,7 +539,11 @@ func (d *Downloader) downloadChunked(
 			_ = d.stateManager.FailDownload(expectedHash, "hash mismatch")
 			_ = d.cache.CleanPartialDir(expectedHash)
 		}
-		_ = os.Remove(assemblyFile)
+		if tempAssemblyDir != "" {
+			_ = os.RemoveAll(tempAssemblyDir)
+		} else {
+			_ = os.Remove(assemblyFile)
+		}
 		return nil, ErrHashMismatch
 	}
 

@@ -21,6 +21,14 @@ func TestIsBlockedHost(t *testing.T) {
 		{"http://[fd00::1]/internal", true},
 		{"http://[fe80::1]/internal", true},
 
+		// Alt-encoded IP bypass attempts (hex, octal, decimal integer)
+		{"http://0x7f000001/test", true},  // 127.0.0.1 in hex
+		{"http://2130706433/test", true},  // 127.0.0.1 as decimal integer
+		{"http://0177.0.0.01/test", true}, // 127.0.0.1 in octal dotted
+		{"http://0x7f.0.0.1/test", true},  // 127.0.0.1 mixed hex octet
+		{"http://0xc0a80101/test", true},  // 192.168.1.1 in hex
+		{"http://0xa9fea9fe/test", true},  // 169.254.169.254 in hex
+
 		// Should not be blocked
 		{"http://deb.debian.org/debian/", false},
 		{"http://archive.ubuntu.com/ubuntu/", false},
@@ -79,7 +87,7 @@ func TestIsAllowedMirrorURL(t *testing.T) {
 		// Valid - external repo URLs
 		{"debian dists", "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz", true},
 		{"ubuntu pool", "http://archive.ubuntu.com/ubuntu/pool/main/v/vim/vim_9.0.deb", true},
-		{"https mirror", "https://mirror.example.com/debian/dists/stable/Release", true},
+		{"https mirror unknown host", "https://mirror.example.com/debian/dists/stable/Release", false}, // mirror.* prefix no longer auto-trusted
 
 		// Valid - Linux Mint
 		{"mint dists", "http://packages.linuxmint.com/dists/zara/InRelease", true},
@@ -94,6 +102,11 @@ func TestIsAllowedMirrorURL(t *testing.T) {
 		// Blocked - external hosts without repo paths
 		{"external without repo path", "http://example.com/api/packages", false},
 		{"random URL", "http://malicious.com/download/test.deb", false},
+
+		// SSRF attack vectors
+		{"attacker domain with ubuntu suffix", "http://attack-ubuntu.com/ubuntu/pool/main/test.deb", false},
+		{"attacker domain with debian suffix", "http://attack-debian.org/debian/dists/stable/InRelease", false},
+		{"mirror domain in path only", "http://evil.com/deb.debian.org/debian/dists/stable/InRelease", false},
 	}
 
 	for _, tt := range tests {
@@ -118,9 +131,9 @@ func TestIsAllowedConnectTarget(t *testing.T) {
 		{"security.debian.org:443", "security.debian.org:443", true},
 		{"security.ubuntu.com:443", "security.ubuntu.com:443", true},
 		{"deb.debian.org:80", "deb.debian.org:80", true},
-		{"mirrors.kernel.org:443", "mirrors.kernel.org:443", true},
-		{"mirror.example.com:443", "mirror.example.com:443", true},
-		{"ftp.debian.org:443", "ftp.debian.org:443", true},
+		{"mirrors.kernel.org:443", "mirrors.kernel.org:443", false}, // mirror.* prefix no longer auto-trusted
+		{"mirror.example.com:443", "mirror.example.com:443", false}, // mirror.* prefix no longer auto-trusted
+		{"ftp.debian.org:443", "ftp.debian.org:443", true},          // matches debian.org domain
 
 		// Valid Linux Mint mirrors
 		{"packages.linuxmint.com:443", "packages.linuxmint.com:443", true},
@@ -143,6 +156,10 @@ func TestIsAllowedConnectTarget(t *testing.T) {
 		{"random.com:443", "random.com:443", false},
 		{"evil.com:443", "evil.com:443", false},
 		{"example.com:443", "example.com:443", false},
+
+		// SSRF attack vectors
+		{"attack-ubuntu.com:443", "attack-ubuntu.com:443", false},
+		{"attack-debian.org:443", "attack-debian.org:443", false},
 
 		// Host without port (defaults to 443)
 		{"deb.debian.org no port", "deb.debian.org", true},
@@ -170,12 +187,22 @@ func TestIsKnownDebianMirror(t *testing.T) {
 		{"archive.ubuntu.com", true},
 		{"security.ubuntu.com", true},
 		{"packages.linuxmint.com", true},
-		{"mirrors.example.com", true},
-		{"mirror.example.org", true},
-		{"ftp.us.debian.org", true},
+		{"mirrors.example.com", false}, // mirror.* prefix no longer auto-trusted
+		{"mirror.example.org", false},  // mirror.* prefix no longer auto-trusted
+		{"ftp.us.debian.org", true},    // matches debian.org domain suffix
 		{"random.example.com", false},
 		{"evil.com", false},
 		{"google.com", false},
+
+		// SSRF attack vectors: attacker-controlled domains that should NOT match
+		{"attack-ubuntu.com", false},
+		{"attack-debian.org", false},
+		{"fake-deb.debian.org.evil.com", false},
+		{"notubuntu.com", false},
+		{"notdebian.org", false},
+		{"ubuntu.com.evil.com", false},
+		{"notmirror.example.com", false},
+		{"notftp.example.com", false},
 	}
 
 	for _, tt := range tests {
@@ -356,8 +383,8 @@ func TestIsAllowedConnectTarget_EdgeCases(t *testing.T) {
 		// Subdomain matching for CONNECT
 		{"subdomain exact match", "repo.example.com:443", []string{"repo.example.com"}, true},
 		{"subdomain suffix match", "cdn.repo.example.com:443", []string{"repo.example.com"}, true},
-		// Note: strings.Contains used for knownMirrorPatterns matches "mirror." anywhere
-		{"mirror pattern matches", "notmirror.example.com:443", nil, true}, // matches "mirror." pattern
+		// Prefix matching only matches at the start of the hostname
+		{"mirror prefix no match", "notmirror.example.com:443", nil, false}, // "mirror." prefix doesn't match mid-hostname
 		{"custom host not suffix", "notrepo.example.com:443", []string{"repo.example.com"}, false},
 
 		// Blocked hosts

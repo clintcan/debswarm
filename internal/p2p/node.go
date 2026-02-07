@@ -727,18 +727,33 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	}
 	defer stream.Close()
 
+	// Set initial stream deadline for the request/response header phase.
+	// This prevents io.ReadFull from blocking forever on unresponsive peers.
+	// Will be extended after reading the actual transfer size.
+	if deadlineErr := stream.SetDeadline(time.Now().Add(30 * time.Second)); deadlineErr != nil {
+		n.logger.Debug("Failed to set client stream deadline", zap.Error(deadlineErr))
+	}
+
 	// Send request
 	var request []byte
 	if proto == ProtocolTransferRange {
 		// Validate range values to prevent integer overflow
-		if start < 0 || end < 0 {
-			return nil, fmt.Errorf("invalid range: start=%d, end=%d (negative values not allowed)", start, end)
+		if start < 0 {
+			return nil, fmt.Errorf("invalid range: start=%d (negative start not allowed)", start)
+		}
+		if end < -1 {
+			return nil, fmt.Errorf("invalid range: end=%d (must be >= -1)", end)
 		}
 		// Range request: hash + start (8 bytes) + end (8 bytes) + newline
+		// end=-1 (to-EOF) is encoded as 0 in the protocol; the server treats end<=0 as "to end of file"
 		request = make([]byte, 64+16+1)
 		copy(request, sha256Hash)
 		binary.BigEndian.PutUint64(request[64:72], uint64(start)) // #nosec G115 -- validated non-negative above
-		binary.BigEndian.PutUint64(request[72:80], uint64(end))   // #nosec G115 -- validated non-negative above
+		encodedEnd := end
+		if encodedEnd < 0 {
+			encodedEnd = 0
+		}
+		binary.BigEndian.PutUint64(request[72:80], uint64(encodedEnd)) // #nosec G115 -- validated non-negative above
 		request[80] = '\n'
 	} else {
 		// Simple request: hash + newline
@@ -771,8 +786,21 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		return nil, fmt.Errorf("content too large: %d bytes", size)
 	}
 
-	// Read content with rate limiting (per-peer if available, else global)
-	data := make([]byte, size)
+	// Extend stream deadline based on actual transfer size
+	transferDeadline := n.timeouts.GetForSize(timeouts.OpPeerTransfer, size)
+	if deadlineErr := stream.SetDeadline(time.Now().Add(transferDeadline)); deadlineErr != nil {
+		n.logger.Debug("Failed to extend stream deadline", zap.Error(deadlineErr))
+	}
+
+	// Read content with rate limiting (per-peer if available, else global).
+	// Cap initial allocation to prevent OOM from peer-controlled size values.
+	// For sizes above the cap, grow incrementally via ReadFull into a pre-sized buffer.
+	const maxInitialAlloc = 10 * 1024 * 1024 // 10MB
+	allocSize := size
+	if allocSize > maxInitialAlloc {
+		allocSize = maxInitialAlloc
+	}
+	data := make([]byte, allocSize)
 	var reader io.Reader = stream
 	if n.peerDownloadLimiter != nil && n.peerDownloadLimiter.Enabled() {
 		// Use per-peer limiter (includes global limiting via composed reader)
@@ -781,9 +809,26 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		// Fall back to global limiter only
 		reader = n.downloadLimiter.ReaderContext(ctx, stream)
 	}
-	if _, err := io.ReadFull(reader, data); err != nil {
-		n.scorer.RecordFailure(peerInfo.ID, "read data failed")
-		return nil, fmt.Errorf("failed to read content: %w", err)
+	if size <= maxInitialAlloc {
+		// Small transfer: single allocation already sized correctly
+		if _, err := io.ReadFull(reader, data); err != nil {
+			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
+			return nil, fmt.Errorf("failed to read content: %w", err)
+		}
+	} else {
+		// Large transfer: read first chunk, then grow buffer incrementally
+		if _, err := io.ReadFull(reader, data); err != nil {
+			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
+			return nil, fmt.Errorf("failed to read content: %w", err)
+		}
+		// Peer is sending real data — now safe to grow to full size
+		remaining := size - maxInitialAlloc
+		tail := make([]byte, remaining)
+		if _, err := io.ReadFull(reader, tail); err != nil {
+			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
+			return nil, fmt.Errorf("failed to read content: %w", err)
+		}
+		data = append(data, tail...)
 	}
 
 	// Record success
@@ -825,12 +870,11 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 
 	peerID := stream.Conn().RemotePeer()
 
-	// Check upload limits
-	if !n.canAcceptUpload(peerID) {
-		n.writeSize(stream, 0)
+	// Check upload limits and atomically reserve a slot
+	if !n.tryAcceptUpload(peerID) {
+		_ = n.writeSize(stream, 0)
 		return
 	}
-	n.trackUploadStart(peerID)
 	defer n.trackUploadEnd(peerID)
 
 	if n.metrics != nil {
@@ -838,8 +882,11 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 		defer n.metrics.ActiveUploads.Dec()
 	}
 
-	// Read request using buffered reader for efficiency
-	bufReader := bufio.NewReader(stream)
+	// Read request using buffered reader with a size limit to prevent
+	// memory exhaustion from malicious peers sending unbounded data without a newline.
+	// Max legitimate request: 64 (hash) + 16 (range) + 1 (newline) = 81 bytes.
+	const maxRequestSize = 256
+	bufReader := bufio.NewReader(io.LimitReader(stream, maxRequestSize))
 	var sha256Hash string
 	var start, end int64 = 0, -1
 
@@ -885,33 +932,33 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 
 	if len(sha256Hash) != 64 {
 		n.logger.Debug("Invalid hash length", zap.Int("length", len(sha256Hash)))
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 
 	// Validate hex
 	if _, err := hex.DecodeString(sha256Hash); err != nil {
 		n.logger.Debug("Invalid hash format", zap.Error(err))
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 
 	// Get content
 	if n.getContent == nil {
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 
 	reader, totalSize, err := n.getContent(sha256Hash)
 	if err != nil {
 		n.logger.Debug("Content not found", zap.String("hash", sha256Hash[:16]+"..."))
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 	defer reader.Close()
 
-	// Handle range
-	if end == -1 || end > totalSize {
+	// Handle range: end<=0 means "to end of file" (client encodes -1/EOF as 0)
+	if end <= 0 || end > totalSize {
 		end = totalSize
 	}
 	if start < 0 {
@@ -924,7 +971,7 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 			zap.Int64("start", start),
 			zap.Int64("end", end),
 			zap.String("hash", sha256Hash[:16]+"..."))
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 	if start >= totalSize {
@@ -932,7 +979,7 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 			zap.Int64("start", start),
 			zap.Int64("totalSize", totalSize),
 			zap.String("hash", sha256Hash[:16]+"..."))
-		n.writeSize(stream, 0)
+		_ = n.writeSize(stream, 0)
 		return
 	}
 
@@ -942,20 +989,22 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	if start > 0 {
 		if seeker, ok := reader.(io.Seeker); ok {
 			if _, seekErr := seeker.Seek(start, io.SeekStart); seekErr != nil {
-				n.writeSize(stream, 0)
+				_ = n.writeSize(stream, 0)
 				return
 			}
 		} else {
 			// Can't seek, read and discard
 			if _, discardErr := io.CopyN(io.Discard, reader, start); discardErr != nil {
-				n.writeSize(stream, 0)
+				_ = n.writeSize(stream, 0)
 				return
 			}
 		}
 	}
 
-	// Send size
-	n.writeSize(stream, responseSize)
+	// Send size — if this fails, the peer will read misaligned data, so abort
+	if err := n.writeSize(stream, responseSize); err != nil {
+		return
+	}
 
 	// Send content (limited to response size) with rate limiting (per-peer if available, else global)
 	// Use context from the node to support proper cancellation
@@ -990,17 +1039,23 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	n.audit.Log(audit.NewUploadCompleteEvent(sha256Hash, written, peerID.String(), 0))
 }
 
-func (n *Node) writeSize(stream network.Stream, size int64) {
+func (n *Node) writeSize(stream network.Stream, size int64) error {
 	sizeBuf := make([]byte, 8)
 	// Size is always non-negative (file sizes), safe to convert
 	if size < 0 {
 		size = 0
 	}
 	binary.BigEndian.PutUint64(sizeBuf, uint64(size)) // #nosec G115 -- validated non-negative above
-	_, _ = stream.Write(sizeBuf)
+	_, err := stream.Write(sizeBuf)
+	if err != nil {
+		n.logger.Debug("Failed to write size to stream", zap.Error(err))
+	}
+	return err
 }
 
-func (n *Node) canAcceptUpload(peerID peer.ID) bool {
+// tryAcceptUpload atomically checks upload limits and reserves a slot.
+// Returns true if the upload was accepted, false if limits are exceeded.
+func (n *Node) tryAcceptUpload(peerID peer.ID) bool {
 	n.uploadsMu.Lock()
 	defer n.uploadsMu.Unlock()
 
@@ -1012,14 +1067,9 @@ func (n *Node) canAcceptUpload(peerID peer.ID) bool {
 		return false
 	}
 
-	return true
-}
-
-func (n *Node) trackUploadStart(peerID peer.ID) {
-	n.uploadsMu.Lock()
-	defer n.uploadsMu.Unlock()
 	n.activeUploads++
 	n.uploadsPerPeer[peerID]++
+	return true
 }
 
 func (n *Node) trackUploadEnd(peerID peer.ID) {
@@ -1030,6 +1080,16 @@ func (n *Node) trackUploadEnd(peerID peer.ID) {
 	if n.uploadsPerPeer[peerID] <= 0 {
 		delete(n.uploadsPerPeer, peerID)
 	}
+}
+
+// UpdateRateLimits updates the upload and download rate limits dynamically.
+// A value of 0 disables rate limiting for that direction.
+func (n *Node) UpdateRateLimits(uploadBytesPerSec, downloadBytesPerSec int64) {
+	n.uploadLimiter.UpdateRate(uploadBytesPerSec)
+	n.downloadLimiter.UpdateRate(downloadBytesPerSec)
+	n.logger.Info("Rate limits updated",
+		zap.Int64("uploadRate", uploadBytesPerSec),
+		zap.Int64("downloadRate", downloadBytesPerSec))
 }
 
 // HandlePeerFound implements mdns.Notifee

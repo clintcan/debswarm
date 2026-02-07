@@ -289,12 +289,15 @@ func (s *Server) startMetricsServer() {
 		})
 	}
 
-	// Add pprof endpoints for runtime profiling
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Add pprof endpoints for runtime profiling — only on localhost to prevent
+	// unauthorized access when metrics bind address is non-local.
+	if s.metricsBind == "127.0.0.1" || s.metricsBind == "localhost" || s.metricsBind == "::1" {
+		mux.HandleFunc("/debug/pprof/", pprof.Index)
+		mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+		mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+		mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.metricsBind, s.metricsPort)
 	s.logger.Info("Starting metrics server", zap.String("addr", addr))
@@ -727,7 +730,15 @@ func (s *Server) extractTargetURL(r *http.Request) string {
 	// For proxy requests, r.URL contains the full absolute URL
 	// Check if we have a complete URL with host
 	if r.URL.Host != "" {
-		return r.URL.String()
+		targetURL := r.URL.String()
+		// SECURITY: Validate proxy-style URLs to prevent SSRF attacks
+		if !s.isAllowedMirrorURL(targetURL) {
+			s.logger.Warn("Blocked proxy request to non-allowed URL",
+				zap.String("url", sanitize.URL(targetURL)),
+				zap.String("remoteAddr", r.RemoteAddr))
+			return ""
+		}
+		return targetURL
 	}
 
 	// Fall back to path-based extraction for non-proxy requests
@@ -887,6 +898,11 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	mirrorSource = &downloader.MirrorSource{
 		URL: url,
 		Fetcher: func(ctx context.Context, url string, start, end int64) ([]byte, error) {
+			// Convert from exclusive end (used by downloader chunks) to inclusive end
+			// (used by HTTP Range headers). end=-1 means full file, pass through as-is.
+			if end > 0 {
+				end = end - 1
+			}
 			return s.fetcher.FetchRange(ctx, url, start, end)
 		},
 	}
@@ -1502,6 +1518,23 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		s.audit.Log(audit.NewConnectTunnelBlockedEvent(host, port, err.Error()).WithRequestID(reqID))
 		http.Error(w, "Failed to connect to target", http.StatusBadGateway)
 		return
+	}
+
+	// Check resolved IP to prevent DNS rebinding attacks.
+	// The hostname passed validation above, but DNS could resolve to a private IP
+	// between our check and the actual connection.
+	if tcpAddr, ok := targetConn.RemoteAddr().(*net.TCPAddr); ok {
+		if security.IsBlockedIP(tcpAddr.IP) {
+			_ = targetConn.Close()
+			log.Warn("Blocked CONNECT tunnel - target resolved to private IP (DNS rebinding)",
+				zap.String("target", targetHost),
+				zap.String("resolvedIP", tcpAddr.IP.String()))
+			atomic.AddInt64(&s.connectFailed, 1)
+			s.metrics.ConnectRequestsFailed.Inc()
+			s.audit.Log(audit.NewConnectTunnelBlockedEvent(host, port, "dns_rebinding_blocked").WithRequestID(reqID))
+			http.Error(w, "CONNECT target resolved to blocked address", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Hijack the client connection

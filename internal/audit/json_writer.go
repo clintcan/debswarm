@@ -8,6 +8,18 @@ import (
 	"sync"
 )
 
+// countingWriter wraps an os.File and tracks bytes written for accurate rotation decisions.
+type countingWriter struct {
+	file    *os.File
+	written int64
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.file.Write(p)
+	cw.written += int64(n)
+	return n, err
+}
+
 // JSONWriter writes audit events to a JSON file with rotation support
 type JSONWriter struct {
 	path       string
@@ -15,8 +27,8 @@ type JSONWriter struct {
 	maxBackups int
 
 	file    *os.File
+	counter *countingWriter
 	encoder *json.Encoder
-	written int64
 	mu      sync.Mutex
 }
 
@@ -83,8 +95,8 @@ func (w *JSONWriter) openFile() error {
 	}
 
 	w.file = f
-	w.encoder = json.NewEncoder(f)
-	w.written = info.Size()
+	w.counter = &countingWriter{file: f, written: info.Size()}
+	w.encoder = json.NewEncoder(w.counter)
 
 	return nil
 }
@@ -99,22 +111,17 @@ func (w *JSONWriter) Log(event Event) {
 	}
 
 	// Check if rotation is needed
-	if w.written >= w.maxBytes {
+	if w.counter.written >= w.maxBytes {
 		if err := w.rotate(); err != nil {
-			// Log rotation failed, but continue writing
-			// The file may grow beyond maxBytes
-			return
+			// Rotation failed — continue writing rather than silently dropping
+			// the event. The file may grow beyond maxBytes, which is acceptable.
 		}
 	}
 
-	// Encode and write the event
+	// Encode and write the event (byte count tracked automatically by countingWriter)
 	if err := w.encoder.Encode(event); err != nil {
 		return
 	}
-
-	// Estimate bytes written (JSON + newline)
-	// This is approximate but good enough for rotation decisions
-	w.written += 200 // Rough average per event
 }
 
 // rotate rotates the log file
@@ -162,6 +169,7 @@ func (w *JSONWriter) Close() error {
 
 	err := w.file.Close()
 	w.file = nil
+	w.counter = nil
 	w.encoder = nil
 	return err
 }

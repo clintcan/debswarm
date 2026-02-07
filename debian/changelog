@@ -1,3 +1,30 @@
+debswarm (1.24.0-1) stable; urgency=medium
+
+  * Security hardening: 33 issues fixed (11 high, 14 medium, 8 low)
+  * SSRF: Block alternate IP encodings (hex, octal, decimal integer)
+  * SSRF: Domain matching rewrite — exact/subdomain only, no substring
+  * SSRF: Proxy-mode request validation, mirror prefix trust removed
+  * DNS rebinding prevention in CONNECT tunnel handler
+  * pprof endpoints restricted to localhost binding
+  * Decompression bomb protection on Packages files (512MB limit)
+  * Bounded P2P peer input (256 byte limit on stream requests)
+  * P2P: writeSize error handling, client stream deadlines, offset-to-EOF
+  * P2P: 10MB initial alloc cap, atomic upload tracking (TOCTOU fix)
+  * Cache: sync.Once for trackedReader, short hash guard, DB-first delete
+  * Cache: double-counting fix on duplicate Put, eviction formula tuning
+  * Rate limiter: burst-sized chunking for WaitN and LimitedWriter
+  * Mirror: removed retry in FetchToWriter, range boundary off-by-one fix
+  * Mirror: division by zero guard in throughput calculation
+  * Audit: actual byte counting via countingWriter, continue on rotation failure
+  * Config: overflow-safe ParseSize, proper error returns
+  * Config: world-writable permission check priority fix
+  * Daemon: flag override uses cobra Changed(), SIGHUP skip on Windows
+  * Downloader: temp dir for assembly, nil config guard
+  * Timeouts: ring buffer for DurationTracker (memory leak fix)
+  * Index: max 500K packages per repo limit
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 08 Feb 2026 00:00:00 +0000
+
 debswarm (1.23.0-1) stable; urgency=low
 
   * Package pinning: Prevent eviction of important packages

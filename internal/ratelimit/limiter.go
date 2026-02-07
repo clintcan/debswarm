@@ -41,6 +41,34 @@ func (l *Limiter) Enabled() bool {
 	return l != nil && l.enabled
 }
 
+// UpdateRate changes the rate limit dynamically.
+// bytesPerSecond of 0 or negative disables rate limiting.
+func (l *Limiter) UpdateRate(bytesPerSecond int64) {
+	if l == nil {
+		return
+	}
+	if bytesPerSecond <= 0 {
+		l.enabled = false
+		return
+	}
+
+	burst := bytesPerSecond
+	if burst < 64*1024 {
+		burst = 64 * 1024
+	}
+	if burst > 4*1024*1024 {
+		burst = 4 * 1024 * 1024
+	}
+
+	if l.limiter == nil {
+		l.limiter = rate.NewLimiter(rate.Limit(bytesPerSecond), int(burst))
+	} else {
+		l.limiter.SetLimit(rate.Limit(bytesPerSecond))
+		l.limiter.SetBurst(int(burst))
+	}
+	l.enabled = true
+}
+
 // Reader returns a rate-limited reader
 func (l *Limiter) Reader(r io.Reader) io.Reader {
 	if !l.Enabled() {
@@ -96,13 +124,23 @@ type LimitedReader struct {
 	ctx     context.Context
 }
 
-// Read implements io.Reader with rate limiting
+// Read implements io.Reader with rate limiting.
+// Splits large reads into burst-sized waits to avoid panicking when n > burst.
 func (lr *LimitedReader) Read(p []byte) (n int, err error) {
 	n, err = lr.r.Read(p)
 	if n > 0 {
-		// Wait for permission to have read n bytes
-		if waitErr := lr.limiter.WaitN(lr.ctx, n); waitErr != nil {
-			return n, waitErr
+		// Split into burst-sized waits to avoid WaitN panic when n > burst
+		burst := lr.limiter.Burst()
+		remaining := n
+		for remaining > 0 {
+			wait := remaining
+			if wait > burst {
+				wait = burst
+			}
+			if waitErr := lr.limiter.WaitN(lr.ctx, wait); waitErr != nil {
+				return n, waitErr
+			}
+			remaining -= wait
 		}
 	}
 	return n, err
@@ -115,11 +153,27 @@ type LimitedWriter struct {
 	ctx     context.Context
 }
 
-// Write implements io.Writer with rate limiting
+// Write implements io.Writer with rate limiting.
+// Splits large writes into burst-sized chunks to avoid WaitN panic when len(p) > burst.
 func (lw *LimitedWriter) Write(p []byte) (n int, err error) {
-	// Wait for permission before writing
-	if err := lw.limiter.WaitN(lw.ctx, len(p)); err != nil {
-		return 0, err
+	burst := lw.limiter.Burst()
+	for n < len(p) {
+		// Determine chunk size (at most burst)
+		end := n + burst
+		if end > len(p) {
+			end = len(p)
+		}
+		chunk := p[n:end]
+
+		// Wait for permission before writing this chunk
+		if err := lw.limiter.WaitN(lw.ctx, len(chunk)); err != nil {
+			return n, err
+		}
+		written, err := lw.w.Write(chunk)
+		n += written
+		if err != nil {
+			return n, err
+		}
 	}
-	return lw.w.Write(p)
+	return n, nil
 }

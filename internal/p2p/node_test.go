@@ -838,21 +838,19 @@ func TestNode_UploadTracking(t *testing.T) {
 	// Test upload tracking functions
 	testPeerID := node.PeerID() // Use own ID for testing
 
-	// Initially should be able to accept uploads
-	if !node.canAcceptUpload(testPeerID) {
+	// Initially should be able to accept uploads (tryAcceptUpload atomically checks and reserves)
+	if !node.tryAcceptUpload(testPeerID) {
 		t.Error("Should be able to accept upload initially")
 	}
 
-	// Track start
-	node.trackUploadStart(testPeerID)
-
-	// Track end
+	// Track end to release the slot
 	node.trackUploadEnd(testPeerID)
 
 	// Should still be able to accept
-	if !node.canAcceptUpload(testPeerID) {
+	if !node.tryAcceptUpload(testPeerID) {
 		t.Error("Should be able to accept upload after end")
 	}
+	node.trackUploadEnd(testPeerID)
 }
 
 func TestNode_UploadLimit(t *testing.T) {
@@ -870,13 +868,15 @@ func TestNode_UploadLimit(t *testing.T) {
 
 	testPeerID := node.PeerID()
 
-	// Start MaxUploadsPerPeer uploads for this peer
+	// Fill up MaxUploadsPerPeer slots for this peer using tryAcceptUpload
 	for i := 0; i < MaxUploadsPerPeer; i++ {
-		node.trackUploadStart(testPeerID)
+		if !node.tryAcceptUpload(testPeerID) {
+			t.Fatalf("Should accept upload %d", i)
+		}
 	}
 
 	// Should not accept more from this peer
-	if node.canAcceptUpload(testPeerID) {
+	if node.tryAcceptUpload(testPeerID) {
 		t.Error("Should not accept upload when per-peer limit reached")
 	}
 
@@ -884,9 +884,10 @@ func TestNode_UploadLimit(t *testing.T) {
 	node.trackUploadEnd(testPeerID)
 
 	// Should accept again
-	if !node.canAcceptUpload(testPeerID) {
+	if !node.tryAcceptUpload(testPeerID) {
 		t.Error("Should accept upload after one ends")
 	}
+	node.trackUploadEnd(testPeerID)
 }
 
 func TestNew_IPv6Addresses(t *testing.T) {
