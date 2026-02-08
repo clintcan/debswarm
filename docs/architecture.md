@@ -23,6 +23,9 @@ debswarm is a peer-to-peer package distribution system that operates as an HTTP 
 │                  │  │  ┌─────────┐  ┌──────────────┐   │    │  │
 │                  │  │  │ libp2p  │  │ Kademlia DHT │   │    │  │
 │                  │  │  └─────────┘  └──────────────┘   │    │  │
+│                  │  │  ┌──────────────────────────┐    │    │  │
+│                  │  │  │   Fleet Coordinator      │    │    │  │
+│                  │  │  └──────────────────────────┘    │    │  │
 │                  │  └──────────────────────────────────┘    │  │
 │                  └──────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────────┘
@@ -156,6 +159,31 @@ URL validation and SSRF protection:
 func IsAllowedMirrorURL(rawURL string) bool
 ```
 
+### Fleet Coordinator (`internal/fleet/`)
+
+LAN fleet coordination for download deduplication (v1.25+):
+
+- **Want/Have Protocol**: Peers broadcast `WantPackage` messages; peers with the package reply `HavePackage`
+- **Nonce-Based Election**: When no peer has the package, the peer with the lowest random nonce fetches from WAN
+- **Wait Notification**: Other peers wait for the elected fetcher and then download via P2P
+- **Progress Broadcasting**: Periodic progress updates during active WAN downloads
+- **Lifecycle Tracking**: `NotifyFetching`, `NotifyComplete`, `NotifyFailed` keep all peers informed
+
+```go
+type Coordinator struct {
+    config       FleetConfig
+    sender       FleetSender       // Protocol for broadcast/send
+    mDNSPeers    func() []peer.ID  // LAN peer discovery
+    inFlight     map[string]*inFlightDownload
+    pendingWants map[string]*pendingWant
+}
+```
+
+**Fleet Actions** returned by `WantPackage()`:
+- `ActionFetchLAN` — A peer already has the package cached; download from them
+- `ActionWaitPeer` — A peer is fetching from WAN; wait for completion then download via P2P
+- `ActionFetchWAN` — This node is the designated WAN fetcher
+
 ### Benchmark (`internal/benchmark/`)
 
 Performance testing with simulated peers:
@@ -223,6 +251,12 @@ debswarm seed import *.deb
    └─▶ Check if hash exists in local cache
        └─▶ HIT: Serve from cache, done
        └─▶ MISS: Continue
+
+3b. Fleet Coordination (if enabled)
+    └─▶ Broadcast WantPackage to LAN peers
+        └─▶ Peer has it: ActionFetchLAN (download from peer)
+        └─▶ Peer is fetching: ActionWaitPeer (wait, then download)
+        └─▶ No response: ActionFetchWAN (this node fetches)
 
 4. P2P Discovery
    └─▶ Query DHT for providers of this hash
@@ -321,6 +355,20 @@ Request:
 Response:
   [8 bytes: content length as big-endian uint64]
   [N bytes: content]
+```
+
+### Fleet Protocol
+
+```
+Protocol ID: /debswarm/fleet/1.0.0
+
+Messages (JSON-encoded):
+  MsgWantPackage  - "I need this package (hash, size, nonce)"
+  MsgHavePackage  - "I have this package cached"
+  MsgFetching     - "I'm downloading this from WAN (nonce for election)"
+  MsgFetched      - "WAN download complete, package available"
+  MsgFetchFailed  - "WAN download failed"
+  MsgProgress     - "Download progress update"
 ```
 
 ### DHT Namespace

@@ -15,6 +15,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Multi-Repository Support** - Works with Debian, Ubuntu, and third-party repositories simultaneously
 - **HTTPS Repository Support** - HTTP CONNECT tunneling for HTTPS sources (v1.20+)
 - **Hash Verification** - All packages verified against signed repository metadata
+- **Fleet Coordination** - LAN download deduplication: only one node fetches from WAN, others get it via P2P
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
 - **Package Rollback** - List and fetch old package versions from cache or P2P peers
@@ -89,11 +90,12 @@ echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
 ```
 
 1. APT requests a package via the local proxy (localhost:9977)
-2. debswarm looks up the package hash in the Kademlia DHT
-3. If peers have it, download using parallel chunks from multiple peers
-4. Verify SHA256 hash against signed repository metadata
-5. On failure, fall back to official mirror
-6. Cache the package and announce to DHT for other peers
+2. If fleet coordination is enabled, consult LAN peers to avoid redundant WAN downloads
+3. debswarm looks up the package hash in the Kademlia DHT
+4. If peers have it, download using parallel chunks from multiple peers
+5. Verify SHA256 hash against signed repository metadata
+6. On failure, fall back to official mirror
+7. Cache the package and announce to DHT for other peers
 
 ## Architecture
 
@@ -106,6 +108,7 @@ internal/
 ├── connectivity/   # Network connectivity monitoring
 ├── dashboard/      # Real-time web dashboard
 ├── downloader/     # Parallel chunked download engine with resume support
+├── fleet/          # LAN fleet coordination (download deduplication)
 ├── hashutil/       # Streaming hash computation utilities
 ├── httpclient/     # HTTP client factory with connection pooling
 ├── index/          # Debian Packages file parser

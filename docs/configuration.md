@@ -529,7 +529,7 @@ end_time = "23:59"
 
 ### [fleet]
 
-Settings for LAN fleet coordination (v1.9+). Prevents redundant WAN downloads across peers.
+Settings for LAN fleet coordination (v1.9+, fully wired in v1.25+). Prevents redundant WAN downloads across peers.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

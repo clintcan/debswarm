@@ -41,6 +41,26 @@ sudo systemctl start debswarm
 
 ## Version-Specific Notes
 
+### Upgrading to v1.25.x
+
+**From v1.24.x:**
+
+v1.25.x wires up fleet coordination for LAN download deduplication. When multiple nodes on the same LAN need the same package, only one fetches from WAN; the others download from that peer via P2P. Fully backwards compatible.
+
+1. **Fleet Coordination**: The fleet protocol (`/debswarm/fleet/1.0.0`) is now active when `fleet.enabled = true`. Peers coordinate via mDNS to avoid redundant WAN downloads.
+
+2. **Configuration**: Fleet coordination requires mDNS to be enabled (`privacy.enable_mdns = true`). See `[fleet]` configuration section.
+
+   **Action**: To enable fleet coordination, add to your config:
+   ```toml
+   [fleet]
+   enabled = true
+   claim_timeout = "5s"
+   max_wait_time = "5m"
+   ```
+
+3. **No breaking changes**: All existing behavior is preserved. Fleet coordination is opt-in via `fleet.enabled`.
+
 ### Upgrading to v1.4.x
 
 **From v1.3.x:**
@@ -255,6 +275,7 @@ For major version upgrades with breaking changes:
 
 | Version | Config Format | Cache Format | Database Schema | Protocol | SQLite Driver |
 |---------|--------------|--------------|-----------------|----------|---------------|
+| v1.25.x | v1           | v1           | v4              | v1.0.0   | Pure Go       |
 | v1.4.x  | v1           | v1           | v4              | v1.0.0   | Pure Go       |
 | v1.3.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |
 | v1.2.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |

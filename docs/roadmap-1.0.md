@@ -187,6 +187,7 @@ Implemented in `internal/p2p/node_test.go`:
 
 ## Version History
 
+- **v1.25.0** (2026-02-08): Fleet coordination wired up (LAN download deduplication)
 - **v1.17.0** (2026-01-29): Fuzz testing and load testing CLI commands
 - **v1.16.0** (2026-01-29): Request tracing with correlation IDs for end-to-end debugging
 - **v1.15.0** (2026-01-29): Package rollback commands (list/fetch old versions from cache)

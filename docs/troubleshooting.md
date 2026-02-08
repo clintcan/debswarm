@@ -347,6 +347,51 @@ While HTTPS traffic itself isn't cached, debswarm can still provide P2P benefits
 **Pre-v1.20 behavior:**
 In older versions, HTTPS repositories bypass the proxy entirely. For P2P benefits with older versions, use HTTP mirrors or configure mixed sources.
 
+### Fleet Coordination Issues
+
+#### Fleet not reducing WAN downloads
+
+**Symptom**: Multiple LAN nodes downloading the same package from WAN simultaneously.
+
+**Causes**:
+- Fleet coordination not enabled
+- mDNS disabled (fleet requires mDNS for peer discovery)
+- Peers not on the same LAN segment
+
+**Solution**:
+```bash
+# Verify fleet is enabled in config
+grep -A5 '\[fleet\]' /etc/debswarm/config.toml
+
+# Ensure mDNS is enabled
+grep enable_mdns /etc/debswarm/config.toml
+
+# Enable fleet coordination:
+# [fleet]
+# enabled = true
+# claim_timeout = "5s"
+# max_wait_time = "5m"
+
+# Check logs for fleet activity
+journalctl -u debswarm -f | grep -i fleet
+```
+
+#### Fleet peer timeout
+
+**Symptom**: "fleet wait timeout" in logs; node falls back to WAN download.
+
+**Cause**: The peer that claimed WAN download responsibility is taking too long.
+
+**Solution**:
+```bash
+# Increase max wait time in config.toml
+[fleet]
+max_wait_time = "10m"   # Default is 5m; increase for slow connections
+
+# Check if the claiming peer is healthy
+curl http://<peer-ip>:9978/health
+```
+
 ### Systemd Service Issues
 
 #### Service won't reload
