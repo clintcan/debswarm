@@ -1,3 +1,18 @@
+debswarm (1.25.0-1) stable; urgency=low
+
+  * Fleet coordination wired up: LAN download deduplication now functional
+  * When multiple LAN nodes request the same package, only one fetches from WAN
+  * Fleet protocol stream handler registered at daemon startup
+  * FleetSender interface with BroadcastMessage for coordinator messaging
+  * WantPackage() broadcasts to mDNS peers with nonce-based election
+  * Proxy consults fleet: ActionFetchLAN, ActionWaitPeer, or ActionFetchWAN
+  * NotifyFetching/Complete/Failed automatically broadcast to fleet peers
+  * downloadFromFleetPeer() with SHA256 verification and blacklisting
+  * Progress broadcaster goroutine for in-flight download status
+  * 7 new fleet coordination tests
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 08 Feb 2026 00:00:00 +0000
+
 debswarm (1.24.0-1) stable; urgency=medium
 
   * Security hardening: 33 issues fixed (11 high, 14 medium, 8 low)

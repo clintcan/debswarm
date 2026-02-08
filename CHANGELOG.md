@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-02-08
+
+### Added
+- **Fleet coordination wired up**: LAN download deduplication is now fully functional
+  - When multiple LAN nodes request the same package simultaneously, only one fetches from WAN; the others wait and grab it from that peer's cache via P2P transfer
+  - Fleet protocol stream handler (`/debswarm/fleet/1.0.0`) registered at daemon startup
+  - `FleetSender` interface with `BroadcastMessage` for coordinator-to-peer messaging
+  - `WantPackage()` broadcasts to mDNS peers with nonce-based election to designate a single WAN fetcher
+  - Proxy consults fleet coordinator before downloading: returns `ActionFetchLAN` (peer has it cached), `ActionWaitPeer` (peer is fetching, wait then grab from LAN), or `ActionFetchWAN` (this node fetches)
+  - `NotifyFetching`, `NotifyComplete`, `NotifyFailed` now automatically broadcast to fleet peers
+  - `downloadFromFleetPeer()` helper with SHA256 hash verification and peer blacklisting on mismatch
+  - Progress broadcaster goroutine started for in-flight download status updates
+
+### Tests
+- 7 new fleet coordination tests: broadcast verification, HavePackage response routing, Fetching lower-nonce election, timeout fallback to WAN, NotifyFetching/Complete broadcast verification, GetMaxWaitTime
+
 ## [1.24.0] - 2026-02-08
 
 ### Security
