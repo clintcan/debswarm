@@ -41,6 +41,22 @@ sudo systemctl start debswarm
 
 ## Version-Specific Notes
 
+### Upgrading to v1.28.x
+
+**From v1.27.x:**
+
+v1.28.x adds real-time dashboard charts with nonce-based CSP. Fully backwards compatible, no configuration changes required.
+
+1. **Dashboard Charts**: The dashboard now includes 4 live-updating canvas charts (throughput, request rate, P2P ratio, connected peers) that poll `/dashboard/api/stats` every 5 seconds.
+
+2. **CSP Change**: The dashboard page now uses `script-src 'nonce-...'` instead of `script-src 'none'` to allow inline chart JavaScript. API endpoints retain `script-src 'none'`. If you have a reverse proxy that overrides CSP headers, ensure it passes through the dashboard's CSP or uses nonce forwarding.
+
+3. **`<noscript>` Fallback**: When JavaScript is disabled, the dashboard falls back to the original 5-second meta-refresh behavior. Chart canvases are hidden via CSS.
+
+4. **Routing Fix**: `/dashboard/api/stats` now correctly routes through `http.StripPrefix`. Previously this path did not resolve to the dashboard's internal API handler.
+
+   **Action**: None required. New features available immediately after upgrade.
+
 ### Upgrading to v1.25.x
 
 **From v1.24.x:**
@@ -275,6 +291,7 @@ For major version upgrades with breaking changes:
 
 | Version | Config Format | Cache Format | Database Schema | Protocol | SQLite Driver |
 |---------|--------------|--------------|-----------------|----------|---------------|
+| v1.28.x | v1           | v1           | v4              | v1.0.0   | Pure Go       |
 | v1.25.x | v1           | v1           | v4              | v1.0.0   | Pure Go       |
 | v1.4.x  | v1           | v1           | v4              | v1.0.0   | Pure Go       |
 | v1.3.x  | v1           | v1           | v3              | v1.0.0   | Pure Go       |

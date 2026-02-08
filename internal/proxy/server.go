@@ -279,8 +279,9 @@ func (s *Server) startMetricsServer() {
 
 	// Add dashboard routes if dashboard is set
 	if s.dashboard != nil {
-		mux.Handle("/dashboard", s.dashboard.Handler())
-		mux.Handle("/dashboard/", s.dashboard.Handler())
+		dashHandler := s.dashboard.Handler()
+		mux.Handle("/dashboard", dashHandler)
+		mux.Handle("/dashboard/", http.StripPrefix("/dashboard", dashHandler))
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/" {
 				http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)

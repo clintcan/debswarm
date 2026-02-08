@@ -38,7 +38,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 ### Security
 - **SSRF Protection** - Block requests to localhost, cloud metadata, private networks
 - **Response Size Limits** - Prevent memory exhaustion from malicious mirrors (500MB max)
-- **HTTP Security Headers** - CSP, X-Frame-Options, X-Content-Type-Options on dashboard
+- **HTTP Security Headers** - Nonce-based CSP on dashboard, `script-src 'none'` on API endpoints, X-Frame-Options, X-Content-Type-Options
 - **Error Disclosure Prevention** - Hide internal errors from dashboard users
 - **Request Size Limits** - MaxHeaderBytes (1MB) on all HTTP servers
 
@@ -248,13 +248,14 @@ debswarm version            # Show version and features
 
 Real-time dashboard available at `http://localhost:9978/dashboard`:
 
-- **Overview**: Uptime, P2P ratio, total requests
-- **Cache**: Size, count, usage percentage
+- **Live Charts**: 4 real-time canvas charts (throughput, request rate, P2P ratio, connected peers) with 5-minute rolling window
+- **Overview**: Uptime, P2P ratio, total requests (live-updating via polling)
+- **Cache**: Size, count, usage percentage with progress bar
 - **Network**: Peer ID, connected peers, routing table size
 - **Transfers**: Active uploads/downloads, recent activity
 - **Peers**: Table with scores, latency, throughput per peer
 
-The dashboard auto-refreshes every 5 seconds.
+Charts and stats update every 5 seconds via JavaScript polling. With JavaScript disabled, falls back to meta-refresh.
 
 ### Prometheus Metrics
 

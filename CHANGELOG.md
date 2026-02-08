@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-02-08
+
+### Added
+- **Dashboard charts**: Real-time throughput visualization with 4 live-updating canvas charts
+  - Throughput chart: P2P vs mirror bytes/sec (dual area, green/orange)
+  - Request rate chart: Requests per second (area, blue)
+  - P2P ratio chart: Percentage of traffic from P2P (area, green)
+  - Connected peers chart: Peer count over time (line, blue)
+  - 5-minute rolling window (60 data points at 5s intervals)
+  - Client-side history accumulation with counter-diff rate derivation
+  - Custom canvas renderer (~150 lines inline JS, no external libraries)
+  - HiDPI/Retina display support via devicePixelRatio scaling
+  - Responsive 2x2 grid layout (1-column on mobile)
+- **Nonce-based CSP**: Dashboard uses per-request `crypto/rand` nonce for `script-src` instead of `script-src 'none'`; API endpoints retain `script-src 'none'`
+- **`<noscript>` fallback**: When JavaScript is disabled, dashboard falls back to the original 5-second meta-refresh behavior and hides chart canvases
+- **Live DOM updates**: All stat values update in real-time via polling without full page reload
+- **Dashboard API routing fix**: `/dashboard/api/stats` now correctly routes through `http.StripPrefix`
+
+### Tests
+- 6 new dashboard tests: CSP nonce uniqueness/matching, no meta-refresh outside noscript, noscript fallback presence, chart canvas presence, API endpoint CSP isolation
+
 ## [1.27.0] - 2026-02-08
 
 ### Added

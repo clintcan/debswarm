@@ -76,7 +76,7 @@ The HTTP endpoints are localhost-only by default. Only the P2P port (4001) accep
 | Hash Verification | All P2P downloads verified against expected SHA256 | v0.2.5 |
 | Multi-Source Verification | Queries DHT to confirm other providers have same hash | v1.14.0 |
 | Streaming Downloads | Large files stream to disk, prevents OOM attacks | v1.7.0 |
-| Security Headers | X-Content-Type-Options, X-Frame-Options, X-XSS-Protection | v0.5.5 |
+| Security Headers | Nonce-based CSP on dashboard, `script-src 'none'` on APIs, X-Frame-Options, X-XSS-Protection | v0.5.5 (CSP nonce v1.28.0) |
 | MaxHeaderBytes | 1MB limit on HTTP headers (DoS protection) | v1.0.0 |
 | Response Size Limit | 500MB max from mirrors | v0.5.5 |
 | CONNECT Tunnel Validation | Restricts CONNECT targets to known mirrors on ports 80/443 | v1.20.0 |

@@ -421,7 +421,7 @@ Additional security measures beyond content verification:
 
 - **SSRF Protection**: Block requests to localhost, cloud metadata, private networks
 - **Response Limits**: Mirror responses capped at 500MB to prevent memory exhaustion
-- **HTTP Headers**: Dashboard/metrics serve security headers (CSP, X-Frame-Options, X-Content-Type-Options)
+- **HTTP Headers**: Dashboard uses nonce-based CSP (`script-src 'nonce-...'`), API endpoints use `script-src 'none'`, plus X-Frame-Options, X-Content-Type-Options
 - **Error Disclosure**: Dashboard hides internal error details from users
 - **Identity Protection**: Ed25519 keys stored with 0600 permissions
 - **PSK Security**: Only fingerprints logged, never full keys

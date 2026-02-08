@@ -233,9 +233,16 @@ func TestHandler_SecurityHeaders(t *testing.T) {
 		}
 	}
 
-	// Check CSP is set
-	if csp := w.Header().Get("Content-Security-Policy"); csp == "" {
+	// Check CSP contains nonce for dashboard page
+	csp := w.Header().Get("Content-Security-Policy")
+	if csp == "" {
 		t.Error("Content-Security-Policy header not set")
+	}
+	if !strings.Contains(csp, "script-src 'nonce-") {
+		t.Errorf("Dashboard CSP should contain nonce-based script-src, got: %s", csp)
+	}
+	if !strings.Contains(csp, "connect-src 'self'") {
+		t.Errorf("Dashboard CSP should allow connect-src 'self', got: %s", csp)
 	}
 }
 
@@ -412,5 +419,145 @@ func TestDashboard_UptimeCalculation(t *testing.T) {
 	// Uptime should be set
 	if stats.Uptime == "" {
 		t.Error("Uptime should not be empty")
+	}
+}
+
+func TestHandler_CSPNonce(t *testing.T) {
+	cfg := &Config{Version: "1.0.0", PeerID: "test"}
+	d := New(cfg, func() *Stats { return &Stats{} }, func() []PeerInfo { return nil })
+	handler := d.Handler()
+
+	// First request
+	req1 := httptest.NewRequest("GET", "/", nil)
+	w1 := httptest.NewRecorder()
+	handler.ServeHTTP(w1, req1)
+
+	csp1 := w1.Header().Get("Content-Security-Policy")
+	body1 := w1.Body.String()
+
+	// Extract nonce from CSP header
+	const prefix = "script-src 'nonce-"
+	idx := strings.Index(csp1, prefix)
+	if idx == -1 {
+		t.Fatal("CSP header missing nonce")
+	}
+	nonceStart := idx + len(prefix)
+	nonceEnd := strings.Index(csp1[nonceStart:], "'")
+	if nonceEnd == -1 {
+		t.Fatal("CSP nonce not properly terminated")
+	}
+	nonce1 := csp1[nonceStart : nonceStart+nonceEnd]
+
+	// Verify nonce appears in script tag
+	scriptAttr := `nonce="` + nonce1 + `"`
+	if !strings.Contains(body1, scriptAttr) {
+		t.Errorf("Body should contain script tag with nonce %q", nonce1)
+	}
+
+	// Second request should have a different nonce
+	req2 := httptest.NewRequest("GET", "/", nil)
+	w2 := httptest.NewRecorder()
+	handler.ServeHTTP(w2, req2)
+
+	csp2 := w2.Header().Get("Content-Security-Policy")
+	idx2 := strings.Index(csp2, prefix)
+	if idx2 == -1 {
+		t.Fatal("Second request CSP header missing nonce")
+	}
+	nonceStart2 := idx2 + len(prefix)
+	nonceEnd2 := strings.Index(csp2[nonceStart2:], "'")
+	nonce2 := csp2[nonceStart2 : nonceStart2+nonceEnd2]
+
+	if nonce1 == nonce2 {
+		t.Error("Nonces should differ between requests")
+	}
+}
+
+func TestHandler_NoMetaRefresh(t *testing.T) {
+	cfg := &Config{Version: "1.0.0", PeerID: "test"}
+	d := New(cfg, func() *Stats { return &Stats{} }, func() []PeerInfo { return nil })
+	handler := d.Handler()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	// The meta refresh should only appear inside <noscript>, not at the top level
+	// Remove <noscript> blocks and check that no meta refresh remains
+	noNoscript := body
+	for {
+		start := strings.Index(noNoscript, "<noscript>")
+		if start == -1 {
+			break
+		}
+		end := strings.Index(noNoscript[start:], "</noscript>")
+		if end == -1 {
+			break
+		}
+		noNoscript = noNoscript[:start] + noNoscript[start+end+len("</noscript>"):]
+	}
+	if strings.Contains(noNoscript, `http-equiv="refresh"`) {
+		t.Error("Meta refresh should only appear inside <noscript> block")
+	}
+}
+
+func TestHandler_NoscriptFallback(t *testing.T) {
+	cfg := &Config{Version: "1.0.0", PeerID: "test"}
+	d := New(cfg, func() *Stats { return &Stats{} }, func() []PeerInfo { return nil })
+	handler := d.Handler()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	if !strings.Contains(body, "<noscript>") {
+		t.Error("Body should contain <noscript> fallback")
+	}
+	if !strings.Contains(body, `http-equiv="refresh"`) {
+		t.Error("Noscript block should contain meta refresh")
+	}
+}
+
+func TestHandler_ChartCanvases(t *testing.T) {
+	cfg := &Config{Version: "1.0.0", PeerID: "test"}
+	d := New(cfg, func() *Stats { return &Stats{} }, func() []PeerInfo { return nil })
+	handler := d.Handler()
+
+	req := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	body := w.Body.String()
+
+	canvases := []string{
+		`id="chart-throughput"`,
+		`id="chart-requests"`,
+		`id="chart-p2p-ratio"`,
+		`id="chart-peers"`,
+	}
+	for _, c := range canvases {
+		if !strings.Contains(body, c) {
+			t.Errorf("Body should contain canvas with %s", c)
+		}
+	}
+}
+
+func TestHandler_APIStatsCSPNoScript(t *testing.T) {
+	cfg := &Config{Version: "1.0.0", PeerID: "test"}
+	d := New(cfg, func() *Stats { return &Stats{} }, func() []PeerInfo { return nil })
+	handler := d.Handler()
+
+	// API endpoints should keep script-src 'none' from middleware
+	req := httptest.NewRequest("GET", "/api/stats", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	csp := w.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'none'") {
+		t.Errorf("API endpoint CSP should have script-src 'none', got: %s", csp)
 	}
 }

@@ -27,7 +27,7 @@ Each feature is rated:
 |-------|-------------|-------------|-------|
 | Prometheus alerting rules | Ready-to-use alert configurations | Trivial | **Done v1.26.0** |
 | Web API expansion | REST endpoints for cache management | Easy | **Done v1.27.0** |
-| Dashboard charts | Real-time throughput visualization | Medium | Requires JS library, CSP relaxation |
+| Dashboard charts | Real-time throughput visualization | Medium | **Done v1.28.0** |
 | Configuration wizard | Interactive setup for new installations | Easy | Add survey/promptui dependency |
 
 ## Low Priority
@@ -109,14 +109,16 @@ groups:
         expr: debswarm_cache_size_bytes / debswarm_cache_max_bytes > 0.9
 ```
 
-### Dashboard Charts (Medium)
+### Dashboard Charts (Done - v1.28.0)
 
-Current CSP blocks JavaScript (`script-src 'none'`). Options:
-1. Add Chart.js with nonce-based CSP
-2. Use CSS-only sparklines (limited)
-3. SVG-based charts server-rendered
+Implemented in v1.28.0 with nonce-based CSP and custom canvas renderer (no external library):
 
-Recommended: Nonce-based CSP with lightweight chart library.
+- **4 live-updating charts**: Throughput (P2P vs mirror), request rate, P2P ratio, connected peers
+- **Nonce-based CSP**: Per-request `crypto/rand` nonce for `script-src`; API endpoints keep `script-src 'none'`
+- **5-minute rolling window**: 60 data points at 5s intervals, counter-diff rate derivation
+- **Custom canvas renderer**: ~150 lines inline JS, HiDPI support, responsive 2x2 grid
+- **`<noscript>` fallback**: Restores meta-refresh and hides charts when JS disabled
+- **Live DOM updates**: All stat values update without full page reload
 
 ### Predictive Pre-warming (Hard)
 
@@ -137,10 +139,11 @@ Recommended sequence based on value/effort ratio:
 3. ~~**Prometheus alerts** - Zero code, high ops value~~ **Done v1.26.0**
 4. ~~**CLI stats watch** - Quick win~~ **Done v1.26.0**
 5. ~~**Web API expansion** - Enables external tools~~ **Done v1.27.0**
-6. **Dashboard charts** - Visual impact, medium effort
+6. ~~**Dashboard charts** - Visual impact, medium effort~~ **Done v1.28.0**
 
 ## Version History
 
+- **v1.28.0** - Dashboard charts: 4 real-time canvas charts with nonce-based CSP
 - **v1.27.0** - Web API expansion: REST endpoints for cache management (`/api/cache/...`)
 - **v1.26.0** - Prometheus alerting rules (`packaging/prometheus/alerts.yml`), CLI `stats --watch` command
 - **v1.23.0** - Package pinning: `cache pin`, `cache unpin`, `cache list --pinned`
@@ -148,4 +151,4 @@ Recommended sequence based on value/effort ratio:
 
 ## Status
 
-**In Progress** - Web API expansion completed, continuing with dashboard charts next.
+**All medium priority items complete.** Dashboard charts (v1.28.0) was the last medium-priority feature. Remaining items are low priority or require significant research.

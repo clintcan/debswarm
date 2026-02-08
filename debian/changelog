@@ -1,3 +1,15 @@
+debswarm (1.28.0-1) stable; urgency=low
+
+  * Dashboard charts: 4 real-time canvas charts (throughput, request rate,
+    P2P ratio, connected peers) with 5-minute rolling window
+  * Nonce-based CSP for dashboard inline scripts (API keeps script-src 'none')
+  * Noscript fallback restores meta-refresh when JS disabled
+  * Live DOM updates via /dashboard/api/stats polling
+  * Dashboard API routing fix with http.StripPrefix
+  * 6 new dashboard tests
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 08 Feb 2026 00:00:00 +0000
+
 debswarm (1.27.0-1) stable; urgency=low
 
   * Web API expansion: 7 REST endpoints for cache management

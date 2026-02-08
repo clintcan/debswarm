@@ -20,7 +20,7 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("  • Prometheus metrics\n")
 			fmt.Printf("  • Package seeding\n")
 			fmt.Printf("  • Bandwidth limiting\n")
-			fmt.Printf("  • Web dashboard\n")
+			fmt.Printf("  • Web dashboard with live charts\n")
 			fmt.Printf("  • Private swarms (PSK)\n")
 			fmt.Printf("  • Persistent identity\n")
 			fmt.Printf("  • Simulated benchmarking\n")
