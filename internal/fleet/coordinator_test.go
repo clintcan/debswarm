@@ -184,16 +184,17 @@ func TestCoordinatorStatus(t *testing.T) {
 	}
 }
 
-// mockMessageSender implements MessageSender for testing
-type mockMessageSender struct {
+// mockFleetSender implements FleetSender for testing
+type mockFleetSender struct {
 	mu       sync.Mutex
 	messages []struct {
 		peerID peer.ID
 		msg    *Message
 	}
+	broadcasts []*Message
 }
 
-func (m *mockMessageSender) SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error {
+func (m *mockFleetSender) SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.messages = append(m.messages, struct {
@@ -203,18 +204,32 @@ func (m *mockMessageSender) SendMessage(ctx context.Context, peerID peer.ID, msg
 	return nil
 }
 
-func (m *mockMessageSender) getMessages() []struct {
+func (m *mockFleetSender) BroadcastMessage(ctx context.Context, msg *Message) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcasts = append(m.broadcasts, msg)
+	return nil
+}
+
+func (m *mockFleetSender) getMessages() []struct {
 	peerID peer.ID
 	msg    *Message
 } {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Return a copy to avoid race
 	result := make([]struct {
 		peerID peer.ID
 		msg    *Message
 	}, len(m.messages))
 	copy(result, m.messages)
+	return result
+}
+
+func (m *mockFleetSender) getBroadcasts() []*Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]*Message, len(m.broadcasts))
+	copy(result, m.broadcasts)
 	return result
 }
 
@@ -226,7 +241,7 @@ func TestHandleWantPackageWithCache(t *testing.T) {
 	c := New(nil, peers, cache, logger)
 	defer func() { _ = c.Close() }()
 
-	sender := &mockMessageSender{}
+	sender := &mockFleetSender{}
 	c.SetSender(sender)
 
 	fromPeer := peer.ID("peer123")
@@ -275,7 +290,7 @@ func TestHandleWantPackageWhileFetching(t *testing.T) {
 	c := New(nil, peers, cache, logger)
 	defer func() { _ = c.Close() }()
 
-	sender := &mockMessageSender{}
+	sender := &mockFleetSender{}
 	c.SetSender(sender)
 
 	// Start fetching a package
@@ -380,5 +395,243 @@ func TestMessageEncodeDecode(t *testing.T) {
 				t.Errorf("Offset = %v, want %v", decoded.Offset, tt.msg.Offset)
 			}
 		})
+	}
+}
+
+func TestWantPackageBroadcasts(t *testing.T) {
+	logger := zap.NewNop()
+	peerList := &mockPeerProvider{
+		peers: []peer.AddrInfo{{ID: peer.ID("peer1")}, {ID: peer.ID("peer2")}},
+	}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	cfg := DefaultConfig()
+	cfg.ClaimTimeout = 100 * time.Millisecond // Short timeout for test
+
+	c := New(cfg, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	// WantPackage should broadcast MsgWantPackage and timeout to ActionFetchWAN
+	result, err := c.WantPackage(context.Background(), "hash123456789012", 1000)
+	if err != nil {
+		t.Fatalf("WantPackage() error = %v", err)
+	}
+	if result.Action != ActionFetchWAN {
+		t.Errorf("expected ActionFetchWAN, got %v", result.Action)
+	}
+
+	broadcasts := sender.getBroadcasts()
+	if len(broadcasts) == 0 {
+		t.Fatal("expected at least one broadcast")
+	}
+	if broadcasts[0].Type != MsgWantPackage {
+		t.Errorf("expected MsgWantPackage broadcast, got %d", broadcasts[0].Type)
+	}
+	if broadcasts[0].Hash != "hash123456789012" {
+		t.Errorf("expected hash 'hash123456789012', got %s", broadcasts[0].Hash)
+	}
+}
+
+func TestWantPackageHaveResponse(t *testing.T) {
+	logger := zap.NewNop()
+	provider := peer.ID("provider-peer")
+	peerList := &mockPeerProvider{
+		peers: []peer.AddrInfo{{ID: provider}},
+	}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	cfg := DefaultConfig()
+	cfg.ClaimTimeout = 5 * time.Second // Long enough to receive response
+
+	c := New(cfg, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	hash := "hash_have_response"
+
+	// Start WantPackage in goroutine
+	resultChan := make(chan *WantResult, 1)
+	go func() {
+		result, _ := c.WantPackage(context.Background(), hash, 1000)
+		resultChan <- result
+	}()
+
+	// Give WantPackage time to register pending want and broadcast
+	time.Sleep(50 * time.Millisecond)
+
+	// Inject HavePackage response via HandleMessage
+	c.HandleMessage(provider, Message{
+		Type: MsgHavePackage,
+		Hash: hash,
+	})
+
+	select {
+	case result := <-resultChan:
+		if result.Action != ActionFetchLAN {
+			t.Errorf("expected ActionFetchLAN, got %v", result.Action)
+		}
+		if result.Provider != provider {
+			t.Errorf("expected provider %v, got %v", provider, result.Provider)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("WantPackage did not return in time")
+	}
+}
+
+func TestWantPackageFetchingLowerNonce(t *testing.T) {
+	logger := zap.NewNop()
+	fetcherPeer := peer.ID("fetcher-peer")
+	peerList := &mockPeerProvider{
+		peers: []peer.AddrInfo{{ID: fetcherPeer}},
+	}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	cfg := DefaultConfig()
+	cfg.ClaimTimeout = 5 * time.Second
+
+	c := New(cfg, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	hash := "hash_fetching_nonce"
+
+	resultChan := make(chan *WantResult, 1)
+	go func() {
+		result, _ := c.WantPackage(context.Background(), hash, 1000)
+		resultChan <- result
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Inject Fetching response with nonce=0 (guaranteed lower than any random nonce)
+	c.HandleMessage(fetcherPeer, Message{
+		Type:  MsgFetching,
+		Hash:  hash,
+		Nonce: 0,
+		Size:  1000,
+	})
+
+	select {
+	case result := <-resultChan:
+		if result.Action != ActionWaitPeer {
+			t.Errorf("expected ActionWaitPeer, got %v", result.Action)
+		}
+		if result.Provider != fetcherPeer {
+			t.Errorf("expected provider %v, got %v", fetcherPeer, result.Provider)
+		}
+		if result.WaitChan == nil {
+			t.Error("expected non-nil WaitChan")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("WantPackage did not return in time")
+	}
+}
+
+func TestWantPackageTimeout(t *testing.T) {
+	logger := zap.NewNop()
+	peerList := &mockPeerProvider{
+		peers: []peer.AddrInfo{{ID: peer.ID("some-peer")}},
+	}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	cfg := DefaultConfig()
+	cfg.ClaimTimeout = 50 * time.Millisecond
+
+	c := New(cfg, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	// No responses injected — should timeout to ActionFetchWAN
+	result, err := c.WantPackage(context.Background(), "hash_timeout_test", 1000)
+	if err != nil {
+		t.Fatalf("WantPackage() error = %v", err)
+	}
+	if result.Action != ActionFetchWAN {
+		t.Errorf("expected ActionFetchWAN on timeout, got %v", result.Action)
+	}
+}
+
+func TestNotifyFetchingBroadcasts(t *testing.T) {
+	logger := zap.NewNop()
+	peerList := &mockPeerProvider{}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	c := New(nil, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	c.NotifyFetching("hash_notify_fetch", 5000)
+
+	broadcasts := sender.getBroadcasts()
+	if len(broadcasts) != 1 {
+		t.Fatalf("expected 1 broadcast, got %d", len(broadcasts))
+	}
+	if broadcasts[0].Type != MsgFetching {
+		t.Errorf("expected MsgFetching broadcast, got %d", broadcasts[0].Type)
+	}
+	if broadcasts[0].Hash != "hash_notify_fetch" {
+		t.Errorf("expected hash 'hash_notify_fetch', got %s", broadcasts[0].Hash)
+	}
+	if broadcasts[0].Size != 5000 {
+		t.Errorf("expected size 5000, got %d", broadcasts[0].Size)
+	}
+}
+
+func TestNotifyCompleteBroadcasts(t *testing.T) {
+	logger := zap.NewNop()
+	peerList := &mockPeerProvider{}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	c := New(nil, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	sender := &mockFleetSender{}
+	c.SetSender(sender)
+
+	// Must register as in-flight first
+	c.NotifyFetching("hash_complete_bc", 3000)
+	c.NotifyComplete("hash_complete_bc")
+
+	broadcasts := sender.getBroadcasts()
+	// Should have MsgFetching + MsgFetched
+	var foundFetched bool
+	for _, b := range broadcasts {
+		if b.Type == MsgFetched && b.Hash == "hash_complete_bc" {
+			foundFetched = true
+		}
+	}
+	if !foundFetched {
+		t.Errorf("expected MsgFetched broadcast, got broadcasts: %v", broadcasts)
+	}
+}
+
+func TestGetMaxWaitTime(t *testing.T) {
+	logger := zap.NewNop()
+	peerList := &mockPeerProvider{}
+	ch := &mockCacheChecker{hashes: make(map[string]bool)}
+
+	cfg := &Config{
+		ClaimTimeout:    5 * time.Second,
+		MaxWaitTime:     3 * time.Minute,
+		AllowConcurrent: 1,
+		RefreshInterval: time.Second,
+	}
+
+	c := New(cfg, peerList, ch, logger)
+	defer func() { _ = c.Close() }()
+
+	if c.GetMaxWaitTime() != 3*time.Minute {
+		t.Errorf("expected 3m, got %v", c.GetMaxWaitTime())
 	}
 }

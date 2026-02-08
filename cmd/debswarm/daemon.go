@@ -393,6 +393,12 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		}, p2pNode, pkgCache, logger)
 		defer func() { _ = fleetCoord.Close() }()
 
+		// Wire up fleet protocol: registers /debswarm/fleet/1.0.0 stream handler
+		// and injects the FleetSender into the coordinator
+		fleetProto := fleet.NewProtocol(p2pNode.Host(), fleetCoord, logger)
+		defer func() { _ = fleetProto.Close() }()
+		go fleetProto.StartProgressBroadcaster(ctx, cfg.Fleet.RefreshIntervalDuration())
+
 		logger.Info("Fleet coordination enabled",
 			zap.Duration("claimTimeout", cfg.Fleet.ClaimTimeoutDuration()),
 			zap.Duration("maxWaitTime", cfg.Fleet.MaxWaitTimeDuration()),

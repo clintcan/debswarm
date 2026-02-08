@@ -60,17 +60,40 @@ type MessageSender interface {
 	SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error
 }
 
+// FleetSender extends MessageSender with broadcast capability.
+// Protocol implements this interface.
+type FleetSender interface {
+	MessageSender
+	BroadcastMessage(ctx context.Context, msg *Message) error
+}
+
+// pendingWant tracks an active WantPackage query awaiting responses from peers
+type pendingWant struct {
+	haveChan     chan peer.ID          // fed by handleHavePackage
+	fetchingChan chan fetchingResponse // fed by handleFetching
+	done         chan struct{}         // closed when WantPackage returns
+}
+
+type fetchingResponse struct {
+	peer  peer.ID
+	nonce uint32
+}
+
 // Coordinator manages fleet coordination for download deduplication
 type Coordinator struct {
 	config *Config
 	logger *zap.Logger
 	peers  PeerProvider
 	cache  CacheChecker
-	sender MessageSender
+	sender FleetSender
 
 	// In-flight downloads being coordinated
 	inFlight map[string]*FetchState
 	mu       sync.RWMutex
+
+	// Pending want queries awaiting peer responses
+	pendingWants   map[string]*pendingWant
+	pendingWantsMu sync.Mutex
 
 	// Message handlers
 	msgChan chan PeerMessage
@@ -90,14 +113,15 @@ func New(cfg *Config, peers PeerProvider, cache CacheChecker, logger *zap.Logger
 	ctx, cancel := context.WithCancel(context.Background())
 
 	c := &Coordinator{
-		config:   cfg,
-		logger:   logger,
-		peers:    peers,
-		cache:    cache,
-		inFlight: make(map[string]*FetchState),
-		msgChan:  make(chan PeerMessage, 100),
-		ctx:      ctx,
-		cancel:   cancel,
+		config:       cfg,
+		logger:       logger,
+		peers:        peers,
+		cache:        cache,
+		inFlight:     make(map[string]*FetchState),
+		pendingWants: make(map[string]*pendingWant),
+		msgChan:      make(chan PeerMessage, 100),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	// Start message handler
@@ -116,7 +140,7 @@ func (c *Coordinator) Close() error {
 
 // SetSender sets the message sender for responding to peers.
 // This is called after Protocol is created to avoid circular dependency.
-func (c *Coordinator) SetSender(sender MessageSender) {
+func (c *Coordinator) SetSender(sender FleetSender) {
 	c.sender = sender
 }
 
@@ -157,93 +181,115 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 	nonce := c.generateNonce()
 
 	// Broadcast WantPackage to fleet peers
-	peers := c.peers.GetMDNSPeers()
-	if len(peers) == 0 {
+	fleetPeers := c.peers.GetMDNSPeers()
+	if len(fleetPeers) == 0 {
 		// No fleet peers, just fetch from WAN
 		return &WantResult{Action: ActionFetchWAN}, nil
 	}
 
-	// Create channels for responses
-	haveChan := make(chan peer.ID, len(peers))
-	fetchingChan := make(chan struct {
-		peer  peer.ID
-		nonce uint32
-	}, len(peers))
+	// Register pending want so response handlers can route messages to us
+	pw := &pendingWant{
+		haveChan:     make(chan peer.ID, len(fleetPeers)),
+		fetchingChan: make(chan fetchingResponse, len(fleetPeers)),
+		done:         make(chan struct{}),
+	}
+	c.pendingWantsMu.Lock()
+	c.pendingWants[hash] = pw
+	c.pendingWantsMu.Unlock()
+
+	defer func() {
+		close(pw.done)
+		c.pendingWantsMu.Lock()
+		delete(c.pendingWants, hash)
+		c.pendingWantsMu.Unlock()
+	}()
+
+	// Broadcast WantPackage to all fleet peers
+	if c.sender != nil {
+		msg := &Message{
+			Type:  MsgWantPackage,
+			Hash:  hash,
+			Size:  size,
+			Nonce: nonce,
+		}
+		if err := c.sender.BroadcastMessage(ctx, msg); err != nil {
+			c.logger.Debug("Failed to broadcast WantPackage",
+				zap.Error(err),
+				zap.String("hash", hash[:min(16, len(hash))]+"..."))
+		}
+	}
 
 	// Wait for responses with timeout
 	timer := time.NewTimer(c.config.ClaimTimeout)
 	defer timer.Stop()
 
-	// In a real implementation, we would:
-	// 1. Send MsgWantPackage to all peers
-	// 2. Collect MsgHavePackage and MsgFetching responses
-	// 3. If someone has it, return ActionFetchLAN
-	// 4. If someone else is fetching (lower nonce), return ActionWaitPeer
-	// 5. If we have lowest nonce, return ActionFetchWAN
+	for {
+		select {
+		case provider := <-pw.haveChan:
+			// Someone has it cached, fetch from them via LAN
+			return &WantResult{
+				Action:   ActionFetchLAN,
+				Provider: provider,
+			}, nil
 
-	// For now, simplified implementation:
-	// Just register our intent to fetch and proceed
-	select {
-	case <-timer.C:
-		// Timeout, no one else claimed it - we fetch
-		c.mu.Lock()
-		c.inFlight[hash] = &FetchState{
-			Hash:       hash,
-			Size:       size,
-			Fetcher:    peer.ID(""), // self
-			Nonce:      nonce,
-			StartTime:  time.Now(),
-			LastUpdate: time.Now(),
-			Waiters:    nil,
-		}
-		c.mu.Unlock()
-
-		return &WantResult{Action: ActionFetchWAN}, nil
-
-	case provider := <-haveChan:
-		// Someone has it, fetch from them
-		return &WantResult{
-			Action:   ActionFetchLAN,
-			Provider: provider,
-		}, nil
-
-	case fetching := <-fetchingChan:
-		// Someone else is fetching
-		if fetching.nonce < nonce {
-			// They win, wait for them
-			waitChan := make(chan error, 1)
-			c.mu.Lock()
-			if state, ok := c.inFlight[hash]; ok {
-				state.Waiters = append(state.Waiters, waitChan)
-			} else {
-				c.inFlight[hash] = &FetchState{
-					Hash:       hash,
-					Size:       size,
-					Fetcher:    fetching.peer,
-					Nonce:      fetching.nonce,
-					StartTime:  time.Now(),
-					LastUpdate: time.Now(),
-					Waiters:    []chan error{waitChan},
+		case fetching := <-pw.fetchingChan:
+			if fetching.nonce < nonce {
+				// They have a lower nonce — they win the election, wait for them
+				waitChan := make(chan error, 1)
+				c.mu.Lock()
+				if state, ok := c.inFlight[hash]; ok {
+					state.Waiters = append(state.Waiters, waitChan)
+				} else {
+					c.inFlight[hash] = &FetchState{
+						Hash:       hash,
+						Size:       size,
+						Fetcher:    fetching.peer,
+						Nonce:      fetching.nonce,
+						StartTime:  time.Now(),
+						LastUpdate: time.Now(),
+						Waiters:    []chan error{waitChan},
+					}
 				}
+				c.mu.Unlock()
+
+				return &WantResult{
+					Action:   ActionWaitPeer,
+					Provider: fetching.peer,
+					WaitChan: waitChan,
+				}, nil
+			}
+			// We have a lower nonce — we win, keep collecting (may still get HavePackage)
+			continue
+
+		case <-timer.C:
+			// Timeout, no one claimed it — we fetch from WAN
+			c.mu.Lock()
+			c.inFlight[hash] = &FetchState{
+				Hash:       hash,
+				Size:       size,
+				Fetcher:    peer.ID(""), // self
+				Nonce:      nonce,
+				StartTime:  time.Now(),
+				LastUpdate: time.Now(),
 			}
 			c.mu.Unlock()
 
-			return &WantResult{
-				Action:   ActionWaitPeer,
-				Provider: fetching.peer,
-				WaitChan: waitChan,
-			}, nil
+			return &WantResult{Action: ActionFetchWAN}, nil
+
+		case <-ctx.Done():
+			return &WantResult{Action: ActionFetchWAN}, ctx.Err()
 		}
-		// We win, fetch from WAN
-		return &WantResult{Action: ActionFetchWAN}, nil
 	}
+}
+
+// GetMaxWaitTime returns the configured maximum wait time for peer downloads
+func (c *Coordinator) GetMaxWaitTime() time.Duration {
+	return c.config.MaxWaitTime
 }
 
 // NotifyFetching announces that this node is fetching a package from WAN
 func (c *Coordinator) NotifyFetching(hash string, size int64) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	nonce := c.generateNonce()
 	c.inFlight[hash] = &FetchState{
 		Hash:       hash,
@@ -253,10 +299,25 @@ func (c *Coordinator) NotifyFetching(hash string, size int64) {
 		StartTime:  time.Now(),
 		LastUpdate: time.Now(),
 	}
+	c.mu.Unlock()
 
 	c.logger.Debug("Notifying fleet of WAN fetch",
 		zap.String("hash", hash[:min(16, len(hash))]+"..."),
 		zap.Int64("size", size))
+
+	if c.sender != nil {
+		msg := &Message{
+			Type:  MsgFetching,
+			Hash:  hash,
+			Size:  size,
+			Nonce: nonce,
+		}
+		if err := c.sender.BroadcastMessage(c.ctx, msg); err != nil {
+			c.logger.Debug("Failed to broadcast Fetching",
+				zap.Error(err),
+				zap.String("hash", hash[:min(16, len(hash))]+"..."))
+		}
+	}
 }
 
 // NotifyProgress reports download progress to the fleet
@@ -272,9 +333,9 @@ func (c *Coordinator) NotifyProgress(hash string, offset int64) {
 // NotifyComplete signals that a download completed successfully
 func (c *Coordinator) NotifyComplete(hash string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	var size int64
 	if state, ok := c.inFlight[hash]; ok {
+		size = state.Size
 		// Notify all waiters of success
 		for _, ch := range state.Waiters {
 			select {
@@ -289,18 +350,30 @@ func (c *Coordinator) NotifyComplete(hash string) {
 			zap.String("hash", hash[:min(16, len(hash))]+"..."),
 			zap.Int("waiters", len(state.Waiters)))
 	}
+	c.mu.Unlock()
+
+	if c.sender != nil {
+		msg := &Message{
+			Type: MsgFetched,
+			Hash: hash,
+			Size: size,
+		}
+		if err := c.sender.BroadcastMessage(c.ctx, msg); err != nil {
+			c.logger.Debug("Failed to broadcast Fetched",
+				zap.Error(err),
+				zap.String("hash", hash[:min(16, len(hash))]+"..."))
+		}
+	}
 }
 
 // NotifyFailed signals that a download failed
-func (c *Coordinator) NotifyFailed(hash string, err error) {
+func (c *Coordinator) NotifyFailed(hash string, fetchErr error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if state, ok := c.inFlight[hash]; ok {
 		// Notify all waiters of failure
 		for _, ch := range state.Waiters {
 			select {
-			case ch <- err:
+			case ch <- fetchErr:
 			default:
 			}
 			close(ch)
@@ -309,7 +382,20 @@ func (c *Coordinator) NotifyFailed(hash string, err error) {
 
 		c.logger.Debug("Fleet download failed",
 			zap.String("hash", hash[:min(16, len(hash))]+"..."),
-			zap.Error(err))
+			zap.Error(fetchErr))
+	}
+	c.mu.Unlock()
+
+	if c.sender != nil {
+		msg := &Message{
+			Type: MsgFetchFailed,
+			Hash: hash,
+		}
+		if err := c.sender.BroadcastMessage(c.ctx, msg); err != nil {
+			c.logger.Debug("Failed to broadcast FetchFailed",
+				zap.Error(err),
+				zap.String("hash", hash[:min(16, len(hash))]+"..."))
+		}
 	}
 }
 
@@ -420,12 +506,22 @@ func (c *Coordinator) handleHavePackage(from peer.ID, msg Message) {
 	c.logger.Debug("Peer has package",
 		zap.String("peer", from.String()[:min(12, len(from.String()))]),
 		zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))
+
+	// Route to pending WantPackage query if one exists
+	c.pendingWantsMu.Lock()
+	pw, ok := c.pendingWants[msg.Hash]
+	c.pendingWantsMu.Unlock()
+
+	if ok {
+		select {
+		case pw.haveChan <- from:
+		case <-pw.done:
+		}
+	}
 }
 
 func (c *Coordinator) handleFetching(from peer.ID, msg Message) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	// Record that this peer is fetching
 	if _, exists := c.inFlight[msg.Hash]; !exists {
 		c.inFlight[msg.Hash] = &FetchState{
@@ -437,10 +533,23 @@ func (c *Coordinator) handleFetching(from peer.ID, msg Message) {
 			LastUpdate: time.Now(),
 		}
 	}
+	c.mu.Unlock()
 
 	c.logger.Debug("Peer is fetching package",
 		zap.String("peer", from.String()[:min(12, len(from.String()))]),
 		zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))
+
+	// Route to pending WantPackage query if one exists
+	c.pendingWantsMu.Lock()
+	pw, ok := c.pendingWants[msg.Hash]
+	c.pendingWantsMu.Unlock()
+
+	if ok {
+		select {
+		case pw.fetchingChan <- fetchingResponse{peer: from, nonce: msg.Nonce}:
+		case <-pw.done:
+		}
+	}
 }
 
 func (c *Coordinator) handleFetchProgress(from peer.ID, msg Message) {

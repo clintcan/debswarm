@@ -856,7 +856,7 @@ type packageDownloadResult struct {
 }
 
 // downloadPackage performs the actual download (called via singleflight)
-func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string) (*packageDownloadResult, error) {
+func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, expectedSize int64, path string) (result *packageDownloadResult, retErr error) {
 	log := requestid.LoggerFromContext(ctx, s.logger)
 	reqID := requestid.FromContext(ctx)
 
@@ -866,6 +866,87 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		log.Debug("Security update detected, using full speed",
 			zap.String("url", sanitize.URL(url)))
 		s.metrics.SchedulerUrgentDownloads.Inc()
+	}
+
+	// Consult fleet coordinator before downloading
+	if expectedHash != "" && s.fleet != nil {
+		fleetResult, fleetErr := s.fleet.WantPackage(ctx, expectedHash, expectedSize)
+		if fleetErr == nil {
+			switch fleetResult.Action {
+			case fleet.ActionFetchLAN:
+				// A peer already has this package cached — download from LAN
+				data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash)
+				if dlErr == nil {
+					log.Debug("Downloaded from fleet peer (LAN cache hit)",
+						zap.String("hash", expectedHash[:16]+"..."),
+						zap.Int("size", len(data)),
+						zap.String("provider", fleetResult.Provider.String()[:min(12, len(fleetResult.Provider.String()))]))
+
+					atomic.AddInt64(&s.requestsP2P, 1)
+					atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
+					s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
+					s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
+					s.cacheAndAnnounce(data, expectedHash, path)
+
+					return &packageDownloadResult{
+						data:        data,
+						hash:        expectedHash,
+						source:      downloader.SourceTypePeer,
+						contentType: "application/vnd.debian.binary-package",
+					}, nil
+				}
+				log.Debug("Fleet LAN download failed, falling back to normal download", zap.Error(dlErr))
+
+			case fleet.ActionWaitPeer:
+				// Another peer is fetching this package — wait for them, then grab via LAN
+				waitCtx, waitCancel := context.WithTimeout(ctx, s.fleet.GetMaxWaitTime())
+				select {
+				case waitErr := <-fleetResult.WaitChan:
+					waitCancel()
+					if waitErr == nil {
+						data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash)
+						if dlErr == nil {
+							log.Debug("Downloaded from fleet peer after wait",
+								zap.String("hash", expectedHash[:16]+"..."),
+								zap.Int("size", len(data)),
+								zap.String("provider", fleetResult.Provider.String()[:min(12, len(fleetResult.Provider.String()))]))
+
+							atomic.AddInt64(&s.requestsP2P, 1)
+							atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
+							s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
+							s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
+							s.cacheAndAnnounce(data, expectedHash, path)
+
+							return &packageDownloadResult{
+								data:        data,
+								hash:        expectedHash,
+								source:      downloader.SourceTypePeer,
+								contentType: "application/vnd.debian.binary-package",
+							}, nil
+						}
+						log.Debug("Fleet peer download after wait failed, falling back", zap.Error(dlErr))
+					}
+				case <-waitCtx.Done():
+					waitCancel()
+					log.Debug("Fleet wait timed out, falling back to normal download")
+				}
+
+			case fleet.ActionFetchWAN:
+				// We're the designated WAN fetcher — fall through to normal download
+			}
+		}
+	}
+
+	// Notify fleet that we're fetching from WAN (so other nodes can wait for us)
+	if expectedHash != "" && s.fleet != nil {
+		s.fleet.NotifyFetching(expectedHash, expectedSize)
+		defer func() {
+			if retErr != nil {
+				s.fleet.NotifyFailed(expectedHash, retErr)
+			} else {
+				s.fleet.NotifyComplete(expectedHash)
+			}
+		}()
 	}
 
 	// Build download sources
@@ -1019,6 +1100,30 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		source:      downloader.SourceTypeMirror,
 		contentType: "application/vnd.debian.binary-package",
 	}, nil
+}
+
+// downloadFromFleetPeer downloads a package from a fleet peer that has it cached
+func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, expectedHash string) ([]byte, error) {
+	addrs := s.p2pNode.Host().Peerstore().Addrs(providerID)
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("no addresses for fleet peer %s", providerID.String()[:min(12, len(providerID.String()))])
+	}
+
+	peerCtx, cancel := context.WithTimeout(ctx, s.p2pTimeout)
+	defer cancel()
+
+	data, err := s.p2pNode.Download(peerCtx, peer.AddrInfo{ID: providerID, Addrs: addrs}, expectedHash)
+	if err != nil {
+		return nil, fmt.Errorf("fleet peer download: %w", err)
+	}
+
+	// Verify hash
+	actualHash := sha256.Sum256(data)
+	if hex.EncodeToString(actualHash[:]) != expectedHash {
+		s.scorer.Blacklist(providerID, "fleet hash mismatch", 24*time.Hour)
+		return nil, fmt.Errorf("fleet peer hash mismatch")
+	}
+	return data, nil
 }
 
 // processDownloadSuccess processes a successful parallel download result
