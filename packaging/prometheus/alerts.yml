@@ -1,0 +1,124 @@
+# Prometheus alerting rules for debswarm
+# Copy this file to your Prometheus rules directory and reload.
+# See README.md for setup instructions.
+
+groups:
+  - name: debswarm
+    rules:
+      # ── Critical ──────────────────────────────────────────────
+
+      - alert: DebswarmDown
+        expr: up{job="debswarm"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "debswarm instance is unreachable"
+          description: "{{ $labels.instance }} has been down for more than 5 minutes."
+
+      - alert: HighVerificationFailureRate
+        expr: rate(debswarm_verification_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High package verification failure rate"
+          description: >-
+            {{ $labels.instance }} is seeing {{ $value | printf "%.2f" }}
+            verification failures/sec. This may indicate a compromised peer
+            or corrupt packages.
+
+      - alert: NoPeersConnected
+        expr: debswarm_connected_peers == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No peers connected"
+          description: >-
+            {{ $labels.instance }} has had zero connected peers for more than
+            10 minutes. P2P downloads will fall back to mirrors.
+
+      # ── Warning ───────────────────────────────────────────────
+
+      - alert: CacheNearlyFull
+        expr: debswarm_cache_size_bytes > 5e9 and debswarm_cache_count > 1000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Cache is growing large"
+          description: >-
+            {{ $labels.instance }} cache is {{ $value | humanize1024 }}B with
+            over 1000 packages. Consider increasing max_size or enabling
+            more aggressive eviction.
+
+      - alert: HighMirrorFallbackRate
+        expr: >-
+          (
+            rate(debswarm_bytes_downloaded_total{source="mirror"}[15m])
+            /
+            (
+              rate(debswarm_bytes_downloaded_total{source="p2p"}[15m])
+              + rate(debswarm_bytes_downloaded_total{source="mirror"}[15m])
+              + 1
+            )
+          ) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mirror fallback rate"
+          description: >-
+            {{ $labels.instance }} P2P ratio is below 20% over the last
+            15 minutes. Most downloads are falling back to mirrors.
+
+      - alert: DHTRoutingTableEmpty
+        expr: debswarm_routing_table_size == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DHT routing table is empty"
+          description: >-
+            {{ $labels.instance }} has an empty DHT routing table for more
+            than 5 minutes. The node cannot discover peers via DHT.
+
+      - alert: HighErrorRate
+        expr: >-
+          sum(rate(debswarm_errors_total[5m])) by (instance) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate"
+          description: >-
+            {{ $labels.instance }} is experiencing {{ $value | printf "%.1f" }}
+            errors/sec across all error types.
+
+      # ── Info ──────────────────────────────────────────────────
+
+      - alert: FleetCoordinationInactive
+        expr: >-
+          debswarm_fleet_peers > 0
+          and rate(debswarm_fleet_coordination_total[30m]) == 0
+        for: 30m
+        labels:
+          severity: info
+        annotations:
+          summary: "Fleet coordination inactive despite peers"
+          description: >-
+            {{ $labels.instance }} has {{ $value }} fleet peers but no
+            coordination activity in the last 30 minutes.
+
+      - alert: DownloadResumeFrequent
+        expr: rate(debswarm_downloads_resumed_total[15m]) > 0.1
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Frequent download resumes"
+          description: >-
+            {{ $labels.instance }} is resuming downloads at
+            {{ $value | printf "%.2f" }}/sec. This may indicate unstable
+            peer connections or network issues.

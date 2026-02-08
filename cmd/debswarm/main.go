@@ -59,6 +59,7 @@ Features:
 	rootCmd.AddCommand(identityCmd())
 	rootCmd.AddCommand(benchmarkCmd())
 	rootCmd.AddCommand(rollbackCmd())
+	rootCmd.AddCommand(statsCmd())
 	rootCmd.AddCommand(versionCmd())
 
 	if err := rootCmd.Execute(); err != nil {
