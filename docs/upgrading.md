@@ -41,6 +41,16 @@ sudo systemctl start debswarm
 
 ## Version-Specific Notes
 
+### Upgrading to v1.29.x
+
+**From v1.28.x:**
+
+v1.29.x adds an interactive configuration wizard. No breaking changes, no new dependencies.
+
+1. **Configuration Wizard**: Run `debswarm config wizard` for guided setup. Offers 3 deployment profiles (Home, Seeding server, Private swarm) and walks through the most important settings with inline validation.
+
+   **Action**: None required. Existing configurations are unaffected. The wizard is useful for new installations or when regenerating a config from scratch.
+
 ### Upgrading to v1.28.x
 
 **From v1.27.x:**

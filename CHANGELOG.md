@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.29.0] - 2026-02-08
+
+### Added
+- **Configuration wizard**: Interactive setup via `debswarm config wizard` for new installations
+  - 3 deployment profiles: Home user, Seeding server, Private swarm
+  - Guided prompts for cache size, bandwidth limits, ports, mDNS, fleet, log level
+  - Inline validation with re-prompt on invalid input (cache size, rates, ports)
+  - PSK generation integrated for private swarm profile
+  - Summary display with confirm-before-save
+  - `--output` flag for custom config file path
+  - Standard library only — no new dependencies
+
+### Tests
+- 8 new wizard tests with simulated stdin: all profiles, custom ports, invalid input re-prompt, abort save, custom output path, debug log level
+
 ## [1.28.0] - 2026-02-08
 
 ### Added

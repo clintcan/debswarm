@@ -28,7 +28,7 @@ Each feature is rated:
 | Prometheus alerting rules | Ready-to-use alert configurations | Trivial | **Done v1.26.0** |
 | Web API expansion | REST endpoints for cache management | Easy | **Done v1.27.0** |
 | Dashboard charts | Real-time throughput visualization | Medium | **Done v1.28.0** |
-| Configuration wizard | Interactive setup for new installations | Easy | Add survey/promptui dependency |
+| Configuration wizard | Interactive setup for new installations | Easy | **Done v1.29.0** |
 
 ## Low Priority
 

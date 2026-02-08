@@ -1,3 +1,14 @@
+debswarm (1.29.0-1) stable; urgency=low
+
+  * Configuration wizard: interactive setup via `debswarm config wizard`
+    - 3 deployment profiles (Home, Server, Private Swarm)
+    - Guided prompts for cache, bandwidth, ports, mDNS, fleet, logging
+    - Inline validation, PSK generation, summary display
+    - --output flag for custom config path
+    - 8 new tests with simulated stdin
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sun, 08 Feb 2026 00:00:00 +0000
+
 debswarm (1.28.0-1) stable; urgency=low
 
   * Dashboard charts: 4 real-time canvas charts (throughput, request rate,

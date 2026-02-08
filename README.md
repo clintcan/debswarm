@@ -230,6 +230,7 @@ debswarm identity regenerate            # Generate new identity (requires --forc
 # Configuration
 debswarm config show        # Display current config
 debswarm config init        # Create default config file
+debswarm config wizard      # Interactive guided setup
 
 # Benchmarking
 debswarm benchmark                      # Run default performance benchmark

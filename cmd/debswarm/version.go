@@ -21,6 +21,7 @@ func versionCmd() *cobra.Command {
 			fmt.Printf("  • Package seeding\n")
 			fmt.Printf("  • Bandwidth limiting\n")
 			fmt.Printf("  • Web dashboard with live charts\n")
+			fmt.Printf("  • Configuration wizard\n")
 			fmt.Printf("  • Private swarms (PSK)\n")
 			fmt.Printf("  • Persistent identity\n")
 			fmt.Printf("  • Simulated benchmarking\n")

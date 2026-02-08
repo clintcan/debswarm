@@ -12,6 +12,17 @@ debswarm searches for configuration files in the following order (first found wi
 
 If no configuration file is found, debswarm uses sensible defaults.
 
+### Interactive Wizard (v1.29+)
+
+For new installations, the configuration wizard provides a guided setup:
+
+```bash
+debswarm config wizard                      # interactive prompts
+debswarm config wizard --output /tmp/c.toml # custom output path
+```
+
+The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, mDNS, fleet coordination, and log level with inline validation.
+
 ## Environment Variables
 
 The following environment variables override configuration file settings:
