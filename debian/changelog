@@ -1,3 +1,29 @@
+debswarm (1.27.0-1) stable; urgency=low
+
+  * Web API expansion: 7 REST endpoints for cache management
+    - GET /api/cache: Cache statistics (total, size, usage, bandwidth saved)
+    - GET /api/cache/packages: List with filters (?pinned, ?name, ?limit)
+    - GET /api/cache/packages/popular: Top packages by access count
+    - GET /api/cache/packages/recent: Recently accessed packages
+    - POST /api/cache/packages/{hash}/pin: Pin a package
+    - POST /api/cache/packages/{hash}/unpin: Unpin a package
+    - DELETE /api/cache/packages/{hash}: Delete a package
+  * SHA256 hash validation, proper error codes (400/404/409/500)
+  * Security headers on all API responses
+  * 17 new API tests
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 08 Feb 2026 00:00:00 +0000
+
+debswarm (1.26.0-1) stable; urgency=low
+
+  * CLI stats --watch: Live-updating terminal statistics (2s refresh)
+    - Supports --json flag for machine-readable output
+  * Prometheus alerting rules in packaging/prometheus/
+    - HighVerificationFailureRate, NoPeersConnected, CacheNearlyFull
+    - Setup guide in packaging/prometheus/README.md
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 08 Feb 2026 00:00:00 +0000
+
 debswarm (1.25.0-1) stable; urgency=low
 
   * Fleet coordination wired up: LAN download deduplication now functional

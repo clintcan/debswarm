@@ -19,14 +19,14 @@ Each feature is rated:
 |-------|-------------|-------------|--------|
 | Cache analytics | Popular packages, bandwidth savings, hit rate reporting | Easy | **Done v1.22.0** |
 | Package pinning | Prevent eviction of specific packages | Easy | **Done v1.23.0** |
-| CLI `stats --watch` | Live updating statistics in terminal | Easy | Planned |
+| CLI `stats --watch` | Live updating statistics in terminal | Easy | **Done v1.26.0** |
 
 ## Medium Priority
 
 | Issue | Description | Feasibility | Notes |
 |-------|-------------|-------------|-------|
-| Prometheus alerting rules | Ready-to-use alert configurations | Trivial | Documentation only, no code changes |
-| Web API expansion | REST endpoints for cache management | Easy | Expand existing `/api/` endpoints |
+| Prometheus alerting rules | Ready-to-use alert configurations | Trivial | **Done v1.26.0** |
+| Web API expansion | REST endpoints for cache management | Easy | **Done v1.27.0** |
 | Dashboard charts | Real-time throughput visualization | Medium | Requires JS library, CSP relaxation |
 | Configuration wizard | Interactive setup for new installations | Easy | Add survey/promptui dependency |
 
@@ -134,16 +134,18 @@ Recommended sequence based on value/effort ratio:
 
 1. ~~**Cache analytics** - High value, easy~~ **Done v1.22.0**
 2. ~~**Package pinning** - Frequently requested, easy~~ **Done v1.23.0**
-3. **Prometheus alerts** - Zero code, high ops value
-4. **CLI stats watch** - Quick win
-5. **Web API expansion** - Enables external tools
+3. ~~**Prometheus alerts** - Zero code, high ops value~~ **Done v1.26.0**
+4. ~~**CLI stats watch** - Quick win~~ **Done v1.26.0**
+5. ~~**Web API expansion** - Enables external tools~~ **Done v1.27.0**
 6. **Dashboard charts** - Visual impact, medium effort
 
 ## Version History
 
+- **v1.27.0** - Web API expansion: REST endpoints for cache management (`/api/cache/...`)
+- **v1.26.0** - Prometheus alerting rules (`packaging/prometheus/alerts.yml`), CLI `stats --watch` command
 - **v1.23.0** - Package pinning: `cache pin`, `cache unpin`, `cache list --pinned`
 - **v1.22.0** - Cache analytics: `cache stats`, `cache popular`, `cache recent` commands
 
 ## Status
 
-**In Progress** - Cache analytics and package pinning completed, continuing with CLI stats watch next.
+**In Progress** - Web API expansion completed, continuing with dashboard charts next.

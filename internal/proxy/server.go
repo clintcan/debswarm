@@ -275,6 +275,7 @@ func (s *Server) startMetricsServer() {
 	mux.Handle("/metrics", s.metrics.Handler())
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/stats", s.handleStats)
+	s.registerAPIRoutes(mux)
 
 	// Add dashboard routes if dashboard is set
 	if s.dashboard != nil {

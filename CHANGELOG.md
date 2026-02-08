@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-02-08
+
+### Added
+- **Web API expansion**: 7 REST endpoints for programmatic cache management on the metrics server (port 9978)
+  - `GET /api/cache`: Cache statistics (total packages, size, usage percent, bandwidth saved, pinned count)
+  - `GET /api/cache/packages`: List packages with filters (`?pinned=true`, `?name=curl`, `?limit=N`)
+  - `GET /api/cache/packages/popular`: Top packages by access count
+  - `GET /api/cache/packages/recent`: Recently accessed packages
+  - `POST /api/cache/packages/{hash}/pin`: Pin a package to prevent eviction
+  - `POST /api/cache/packages/{hash}/unpin`: Unpin a package
+  - `DELETE /api/cache/packages/{hash}`: Delete a package from cache
+- SHA256 hash validation on all hash-based endpoints (400 on invalid format)
+- Proper error mapping: 404 for missing packages, 409 for packages currently being read, 500 for internal errors
+- Security headers on all API responses
+
+### Tests
+- 17 new API tests covering all endpoints, filters, error cases, validation, and security headers
+
+## [1.26.0] - 2026-02-08
+
+### Added
+- **CLI `stats --watch`**: Live-updating statistics in terminal via `debswarm stats --watch`
+  - Refreshes every 2 seconds with real-time P2P ratio, cache size, and connection counts
+  - `--json` flag for machine-readable output
+- **Prometheus alerting rules**: Ready-to-use alert configurations in `packaging/prometheus/`
+  - `HighVerificationFailureRate`: Triggers when verification failures exceed 0.1/s
+  - `NoPeersConnected`: Triggers when peer count drops to zero
+  - `CacheNearlyFull`: Triggers when cache usage exceeds 90%
+  - Includes setup guide in `packaging/prometheus/README.md`
+
 ## [1.25.0] - 2026-02-08
 
 ### Added
