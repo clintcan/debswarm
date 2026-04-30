@@ -1,6 +1,6 @@
 module github.com/debswarm/debswarm
 
-go 1.24.6
+go 1.25.0
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
@@ -11,7 +11,8 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.15
 	go.uber.org/zap v1.27.1
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/time v0.14.0
 	modernc.org/sqlite v1.44.3
 )
@@ -119,7 +120,6 @@ require (
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/mod v0.32.0 // indirect
 	golang.org/x/net v0.49.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260109210033-bd525da824e2 // indirect
 	golang.org/x/text v0.33.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect
