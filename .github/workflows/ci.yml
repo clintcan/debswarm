@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   GOTOOLCHAIN: auto
   GO_VERSION: '1.24'
@@ -22,7 +25,7 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: sudo apt-get install -y libsqlite3-dev
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
 
       - name: Verify modules
         run: go mod verify
@@ -69,7 +72,7 @@ jobs:
           cache: true
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
 
       - name: Run gosec security scanner
         run: gosec -fmt=json -out=gosec-results.json -stdout -verbose=text ./... || true
@@ -77,8 +80,8 @@ jobs:
       - name: Check for high-severity findings
         run: |
           if [ ! -f gosec-results.json ]; then
-            echo "⚠️ Warning: gosec-results.json not found, gosec may have failed"
-            exit 0
+            echo "❌ gosec-results.json not found — gosec failed to run"
+            exit 1
           fi
           HIGH_COUNT=$(jq '[.Issues[]? | select(.severity == "HIGH")] | length' gosec-results.json)
           if [ "$HIGH_COUNT" -gt 0 ]; then
