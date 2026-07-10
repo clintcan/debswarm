@@ -119,7 +119,7 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Build
         run: go build -v ./...
@@ -141,7 +141,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
       
       - name: Build
         env:
@@ -180,7 +180,7 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
@@ -214,7 +214,7 @@ jobs:
       
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.25'
 
       - name: Install build dependencies
         run: |

@@ -20,7 +20,7 @@ Note: No C compiler or external libraries required - debswarm uses pure Go SQLit
 
 ### Go Version
 
-debswarm requires Go 1.24 or later. Check your version:
+debswarm requires Go 1.25 or later. Check your version:
 
 ```bash
 go version
@@ -30,8 +30,8 @@ If you need a newer version:
 
 ```bash
 # Ubuntu/Debian - use official Go
-wget https://go.dev/dl/go1.24.6.linux-amd64.tar.gz
-sudo tar -C /usr/local -xzf go1.24.6.linux-amd64.tar.gz
+wget https://go.dev/dl/go1.25.0.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.25.0.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 ```
 

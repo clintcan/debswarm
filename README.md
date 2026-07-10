@@ -476,7 +476,7 @@ MemoryMax=512M
 ## Building
 
 Requirements:
-- Go 1.24+
+- Go 1.25+
 
 No C compiler or external dependencies required - uses pure Go SQLite implementation.
 
