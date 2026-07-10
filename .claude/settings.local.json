@@ -8,7 +8,21 @@
       "Bash(xargs -I {} sh -c 'head -30 {} | grep -q \"\"github.com/debswarm/debswarm\"\" && head -30 {} | grep -A1 \"\"github.com/debswarm/debswarm\"\" | grep -v \"\"github.com/debswarm\"\" | grep -v \"\"^--$\"\" | grep \"\"github.com\"\" && echo \"\"FILE: {}\"\"')",
       "Bash(go test:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(command -v golangci-lint)",
+      "Bash(golangci-lint --version)",
+      "Bash(go env *)",
+      "Bash(sed -n 100,210p \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/conn.go\")",
+      "Bash(grep -rn \"_pragma\\\\|ParseQuery\\\\|applyQueryParams\" \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/sqlite.go\")",
+      "Bash(sed -n 105,200p \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/sqlite.go\")",
+      "Bash(grep -n \"busy_timeout\\\\|busyTimeout\\\\|BusyTimeout\" \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/sqlite.go\")",
+      "Bash(grep -rn \"busy_timeout\\\\|Xsqlite3_busy_timeout\" \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3\"/*.go)",
+      "Bash(grep -n \"openV2\\\\|Xsqlite3_open\\\\|func newConn\\\\|strings.Cut\\\\|query\\\\b\" \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/sqlite.go\")",
+      "Bash(grep -rn \"applyQueryParams\\\\|getVFSName\\\\|openV2\\\\|open\\(\" \"$\\(go env GOMODCACHE\\)/modernc.org/sqlite@v1.44.3/conn.go\")",
+      "PowerShell($g = Get-Command gh -ErrorAction SilentlyContinue; if \\($g\\) { $g.Source } else { \"gh not found\" })",
+      "Bash(git log *)",
+      "Bash(git --no-pager diff -- .github/workflows/ci.yml .github/workflows/release.yml)",
+      "Bash(git *)"
     ]
   }
 }
