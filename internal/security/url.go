@@ -105,7 +105,9 @@ func parseIPPermissive(host string) net.IP {
 		}
 
 		if err == nil && num <= 0xFFFFFFFF {
-			return net.IPv4(byte(num>>24), byte(num>>16), byte(num>>8), byte(num))
+			// num is guarded to fit in 32 bits above; each byte() extracts one
+			// octet of the packed IPv4 address (G115 warnings are false positives).
+			return net.IPv4(byte(num>>24), byte(num>>16), byte(num>>8), byte(num)) // #nosec G115 -- guarded 32-bit value, intentional octet extraction
 		}
 	}
 

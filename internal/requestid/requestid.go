@@ -34,16 +34,19 @@ func Generate() string {
 	randomBytes := make([]byte, 4)
 	_, _ = rand.Read(randomBytes)
 
-	// Combine timestamp and random bytes
+	// Combine timestamp and random bytes.
+	// Each byte(ts >> n) intentionally keeps the low 8 bits: this is a
+	// big-endian serialization of a positive UnixMilli timestamp, so the
+	// G115 truncation warnings below are expected and safe.
 	id := make([]byte, 12)
 	id[0] = byte(ts >> 56)
-	id[1] = byte(ts >> 48)
-	id[2] = byte(ts >> 40)
-	id[3] = byte(ts >> 32)
-	id[4] = byte(ts >> 24)
-	id[5] = byte(ts >> 16)
-	id[6] = byte(ts >> 8)
-	id[7] = byte(ts)
+	id[1] = byte(ts >> 48) // #nosec G115 -- intentional big-endian byte extraction
+	id[2] = byte(ts >> 40) // #nosec G115 -- intentional big-endian byte extraction
+	id[3] = byte(ts >> 32) // #nosec G115 -- intentional big-endian byte extraction
+	id[4] = byte(ts >> 24) // #nosec G115 -- intentional big-endian byte extraction
+	id[5] = byte(ts >> 16) // #nosec G115 -- intentional big-endian byte extraction
+	id[6] = byte(ts >> 8)  // #nosec G115 -- intentional big-endian byte extraction
+	id[7] = byte(ts)       // #nosec G115 -- intentional big-endian byte extraction
 	copy(id[8:], randomBytes)
 
 	return hex.EncodeToString(id)
