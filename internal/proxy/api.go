@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -58,14 +59,33 @@ type apiPackageList struct {
 }
 
 // registerAPIRoutes registers all cache management REST API routes on the given mux.
+// Mutating endpoints are restricted to loopback clients: the metrics server may be
+// bound to a non-local address (for dashboard/metrics access), and these endpoints
+// have no authentication or CSRF protection.
 func (s *Server) registerAPIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/cache", s.handleAPICache)
 	mux.HandleFunc("GET /api/cache/packages", s.handleAPIListPackages)
 	mux.HandleFunc("GET /api/cache/packages/popular", s.handleAPIPopularPackages)
 	mux.HandleFunc("GET /api/cache/packages/recent", s.handleAPIRecentPackages)
-	mux.HandleFunc("POST /api/cache/packages/{hash}/pin", s.handleAPIPinPackage)
-	mux.HandleFunc("POST /api/cache/packages/{hash}/unpin", s.handleAPIUnpinPackage)
-	mux.HandleFunc("DELETE /api/cache/packages/{hash}", s.handleAPIDeletePackage)
+	mux.HandleFunc("POST /api/cache/packages/{hash}/pin", requireLoopback(s.handleAPIPinPackage))
+	mux.HandleFunc("POST /api/cache/packages/{hash}/unpin", requireLoopback(s.handleAPIUnpinPackage))
+	mux.HandleFunc("DELETE /api/cache/packages/{hash}", requireLoopback(s.handleAPIDeletePackage))
+}
+
+// requireLoopback rejects requests from non-loopback clients with 403.
+func requireLoopback(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			writeError(w, http.StatusForbidden, "this endpoint is restricted to localhost")
+			return
+		}
+		next(w, r)
+	}
 }
 
 // Helpers

@@ -32,6 +32,64 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestCheckRedirectSafety(t *testing.T) {
+	makeReq := func(url string) *http.Request {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			t.Fatalf("NewRequest(%q): %v", url, err)
+		}
+		return req
+	}
+
+	tests := []struct {
+		name    string
+		url     string
+		via     int // number of prior requests in the chain
+		wantErr bool
+	}{
+		{"public mirror allowed", "http://deb.debian.org/debian/pool/main/x.deb", 1, false},
+		{"public CDN allowed", "https://launchpadlibrarian.net/123/x.deb", 1, false},
+		{"localhost blocked", "http://localhost:8080/x.deb", 1, true},
+		{"loopback IP blocked", "http://127.0.0.1/x.deb", 1, true},
+		{"private IP blocked", "http://10.0.0.5/x.deb", 1, true},
+		{"link-local metadata IP blocked", "http://169.254.169.254/latest/meta-data/", 1, true},
+		{"metadata hostname blocked", "http://metadata.google.internal/x", 1, true},
+		{"hex-encoded loopback blocked", "http://0x7f000001/x.deb", 1, true},
+		{"non-http scheme blocked", "ftp://deb.debian.org/x.deb", 1, true},
+		{"too many redirects", "http://deb.debian.org/x.deb", 10, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			via := make([]*http.Request, tc.via)
+			for i := range via {
+				via[i] = makeReq("http://deb.debian.org/debian/dists/stable/Release")
+			}
+			err := checkRedirectSafety(makeReq(tc.url), via)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("checkRedirectSafety(%q) error = %v, wantErr %v", tc.url, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestFetch_RedirectToBlockedHostRefused(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer server.Close()
+
+	f := NewFetcher(&Config{MaxRetries: 1}, testLogger())
+
+	_, err := f.Fetch(context.Background(), server.URL+"/pool/main/x.deb")
+	if err == nil {
+		t.Fatal("Fetch should fail when redirected to a blocked host")
+	}
+	if !strings.Contains(err.Error(), "blocked host") {
+		t.Errorf("error should mention blocked host, got: %v", err)
+	}
+}
+
 func TestNewFetcher(t *testing.T) {
 	f := NewFetcher(nil, testLogger())
 
