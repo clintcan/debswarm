@@ -581,7 +581,7 @@ func validateDirectories(cachePath, dataDir string) error {
 		if checkErr := checkDirectory(dataDir, "data"); checkErr != nil {
 			if os.IsNotExist(checkErr) {
 				// Data directory doesn't exist - try to create it
-				if mkdirErr := os.MkdirAll(dataDir, 0700); mkdirErr != nil {
+				if mkdirErr := os.MkdirAll(dataDir, 0700); mkdirErr != nil { // #nosec G703 -- dataDir is operator-supplied config/CLI/env, not untrusted input
 					return fmt.Errorf("cannot create data directory %s: %w", dataDir, mkdirErr)
 				}
 			} else {
@@ -595,7 +595,7 @@ func validateDirectories(cachePath, dataDir string) error {
 
 // checkDirectory verifies a directory exists and is writable.
 func checkDirectory(path, name string) error {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) // #nosec G703 -- path is operator-supplied config/CLI/env, not untrusted input
 	if err != nil {
 		if os.IsNotExist(err) {
 			return err
@@ -609,12 +609,12 @@ func checkDirectory(path, name string) error {
 
 	// Check if writable by attempting to create a temp file
 	testFile := filepath.Join(path, ".debswarm-write-test")
-	f, err := os.Create(testFile)
+	f, err := os.Create(testFile) // #nosec G703 -- testFile is under an operator-supplied directory, not untrusted input
 	if err != nil {
 		return fmt.Errorf("%s directory %s is not writable: %w", name, path, err)
 	}
 	_ = f.Close()
-	_ = os.Remove(testFile)
+	_ = os.Remove(testFile) // #nosec G703 -- testFile is under an operator-supplied directory, not untrusted input
 
 	return nil
 }

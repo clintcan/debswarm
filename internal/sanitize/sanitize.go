@@ -42,10 +42,12 @@ func String(s string) string {
 			b.WriteString("\\\\")
 		default:
 			if unicode.IsControl(r) {
-				// Replace other control characters with escaped hex
+				// Replace other control characters with escaped hex.
+				// Unicode control chars are all <= U+009F, so byte(r) is a
+				// lossless conversion here (G115 warnings are false positives).
 				b.WriteString("\\x")
-				b.WriteByte(hexChar(byte(r) >> 4))
-				b.WriteByte(hexChar(byte(r) & 0x0f))
+				b.WriteByte(hexChar(byte(r) >> 4))   // #nosec G115 -- control chars are <= 0x9F
+				b.WriteByte(hexChar(byte(r) & 0x0f)) // #nosec G115 -- control chars are <= 0x9F
 			} else {
 				b.WriteRune(r)
 			}
