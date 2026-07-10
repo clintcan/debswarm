@@ -350,6 +350,38 @@ func TestAPIDeletePackage_InvalidHash(t *testing.T) {
 	}
 }
 
+func TestRequireLoopback(t *testing.T) {
+	s := newTestServer(t)
+	hash := testPkg(t, s, "loopback-pkg", "pool/main/l/loop/loop_1.0_amd64.deb")
+	handler := requireLoopback(s.handleAPIPinPackage)
+
+	tests := []struct {
+		name       string
+		remoteAddr string
+		wantCode   int
+	}{
+		{"remote client rejected", "192.0.2.1:1234", http.StatusForbidden},
+		{"private LAN client rejected", "10.0.0.5:9999", http.StatusForbidden},
+		{"unparseable address rejected", "not-an-address", http.StatusForbidden},
+		{"IPv4 loopback allowed", "127.0.0.1:54321", http.StatusOK},
+		{"IPv6 loopback allowed", "[::1]:54321", http.StatusOK},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest("POST", "/api/cache/packages/"+hash+"/pin", nil)
+			r.SetPathValue("hash", hash)
+			r.RemoteAddr = tc.remoteAddr
+			handler(w, r)
+
+			if w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d; body: %s", w.Code, tc.wantCode, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestAPISecurityHeaders(t *testing.T) {
 	s := newTestServer(t)
 

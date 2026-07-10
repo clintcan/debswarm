@@ -1076,13 +1076,15 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	if expectedHash != "" {
 		actualHash := sha256.Sum256(data)
 		actualHashHex := hex.EncodeToString(actualHash[:])
-		if actualHashHex == expectedHash {
-			s.cacheAndAnnounce(data, expectedHash, path)
-		} else {
+		if actualHashHex != expectedHash {
 			log.Warn("Mirror hash mismatch",
 				zap.String("expected", expectedHash),
 				zap.String("actual", actualHashHex))
+			s.metrics.VerificationFailures.Inc()
+			s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, "mirror").WithRequestID(reqID))
+			return nil, fmt.Errorf("mirror data failed hash verification: expected %s, got %s", expectedHash, actualHashHex)
 		}
+		s.cacheAndAnnounce(data, expectedHash, path)
 	}
 
 	// Audit log mirror download complete

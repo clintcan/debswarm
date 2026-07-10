@@ -18,7 +18,7 @@ Thank you for your interest in contributing to debswarm!
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.25 or later
 - Make
 - golangci-lint (for linting)
 

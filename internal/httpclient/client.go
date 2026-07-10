@@ -23,6 +23,10 @@ type Config struct {
 
 	// IdleConnTimeout is how long idle connections stay open (default: 90s)
 	IdleConnTimeout time.Duration
+
+	// CheckRedirect controls redirect-following policy. If nil, Go's default
+	// policy applies (follow up to 10 redirects without validation).
+	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
 
 // New creates a new HTTP client with the given configuration.
@@ -53,8 +57,9 @@ func New(cfg *Config) *http.Client {
 	}
 
 	return &http.Client{
-		Transport: transport,
-		Timeout:   timeout,
+		Transport:     transport,
+		Timeout:       timeout,
+		CheckRedirect: cfg.CheckRedirect,
 	}
 }
 

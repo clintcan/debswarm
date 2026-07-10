@@ -13,6 +13,7 @@ import (
 
 	"github.com/debswarm/debswarm/internal/httpclient"
 	"github.com/debswarm/debswarm/internal/retry"
+	"github.com/debswarm/debswarm/internal/security"
 )
 
 // Stats holds statistics for a mirror
@@ -69,6 +70,7 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 	client := httpclient.New(&httpclient.Config{
 		Timeout:             cfg.Timeout,
 		MaxIdleConnsPerHost: cfg.MaxIdleConn,
+		CheckRedirect:       checkRedirectSafety,
 	})
 
 	maxResponseSize := cfg.MaxResponseSize
@@ -84,6 +86,24 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 		maxRetries:      cfg.MaxRetries,
 		maxResponseSize: maxResponseSize,
 	}
+}
+
+// checkRedirectSafety validates each redirect hop before it is followed.
+// The initial URL is validated against the mirror allowlist by the proxy, but
+// a malicious or compromised mirror could redirect to an internal address
+// (SSRF). Loopback, private, link-local and metadata targets are refused;
+// public cross-host redirects (e.g. PPA -> CDN) remain allowed.
+func checkRedirectSafety(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after 10 redirects")
+	}
+	if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+		return fmt.Errorf("redirect to disallowed scheme %q refused", req.URL.Scheme)
+	}
+	if security.IsBlockedHost(req.URL.String()) {
+		return fmt.Errorf("redirect to blocked host %q refused", req.URL.Hostname())
+	}
+	return nil
 }
 
 // Fetch downloads content from a URL

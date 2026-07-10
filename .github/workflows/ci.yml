@@ -11,7 +11,7 @@ permissions:
 
 env:
   GOTOOLCHAIN: auto
-  GO_VERSION: '1.24'
+  GO_VERSION: '1.25'
 
 jobs:
   test:
@@ -72,7 +72,12 @@ jobs:
           cache: true
 
       - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+        # Install the prebuilt binary rather than `go install`. Building gosec
+        # v2.21.4 from source fails under Go 1.25 because it pins
+        # golang.org/x/tools@v0.25.0, which no longer compiles with the 1.25
+        # toolchain. The released binary was built with an older Go and runs
+        # fine. Keep the version pinned here in sync with the tag in the URL.
+        run: curl -sfL https://raw.githubusercontent.com/securego/gosec/v2.21.4/install.sh | sh -s -- -b "$(go env GOPATH)/bin" v2.21.4
 
       - name: Run gosec security scanner
         run: gosec -fmt=json -out=gosec-results.json -stdout -verbose=text ./... || true

@@ -29,6 +29,11 @@ func newTestCache(t *testing.T) *cache.Cache {
 	if err != nil {
 		t.Fatalf("Failed to create cache: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := c.Close(); err != nil {
+			t.Logf("Failed to close cache: %v", err)
+		}
+	})
 	return c
 }
 
