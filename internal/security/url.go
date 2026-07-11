@@ -159,15 +159,77 @@ func parseOctet(s string) (byte, bool) {
 	return byte(val), true
 }
 
-// IsDebianRepoURL checks if a URL looks like a legitimate Debian/Ubuntu/Mint repository
-// Valid repository URLs contain /dists/, /pool/, /debian/, /ubuntu/, or /linuxmint/
-func IsDebianRepoURL(url string) bool {
-	lower := strings.ToLower(url)
-	return strings.Contains(lower, "/dists/") ||
+// IsDebianRepoURL checks if a URL looks like a legitimate Debian/Ubuntu/Mint
+// repository request. It recognizes both the standard pool/dists hierarchy and
+// "flat" repositories, which serve metadata and packages directly without a
+// dists/pool tree (e.g. Kubernetes' pkgs.k8s.io/.../deb/Release), by the shape
+// of the requested file. This heuristic is applied in addition to the host
+// allow list; it keeps the proxy from being used to fetch arbitrary non-repository
+// files from an otherwise-allowed host.
+func IsDebianRepoURL(rawURL string) bool {
+	lower := strings.ToLower(rawURL)
+
+	// Standard pool/dists layout, distribution roots, and by-hash acquisition.
+	if strings.Contains(lower, "/dists/") ||
 		strings.Contains(lower, "/pool/") ||
 		strings.Contains(lower, "/debian/") ||
 		strings.Contains(lower, "/ubuntu/") ||
-		strings.Contains(lower, "/linuxmint/")
+		strings.Contains(lower, "/linuxmint/") ||
+		strings.Contains(lower, "/by-hash/") {
+		return true
+	}
+
+	// Flat repositories: recognize by the requested file name.
+	return isAPTFileName(basePath(lower))
+}
+
+// basePath returns the final path segment (basename) of a URL, without any
+// trailing slash, query string, or fragment. The input is expected to be
+// already lower-cased.
+func basePath(lowerURL string) string {
+	p := lowerURL
+	if u, err := url.Parse(lowerURL); err == nil && u.Path != "" {
+		p = u.Path
+	}
+	p = strings.TrimSuffix(p, "/")
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		p = p[i+1:]
+	}
+	return p
+}
+
+// isAPTFileName reports whether name is an APT package or repository-metadata
+// file, tolerating common compression suffixes. Used to recognize flat repos.
+func isAPTFileName(name string) bool {
+	if name == "" {
+		return false
+	}
+
+	// Package files.
+	if strings.HasSuffix(name, ".deb") ||
+		strings.HasSuffix(name, ".ddeb") ||
+		strings.HasSuffix(name, ".udeb") {
+		return true
+	}
+
+	// Strip a single compression extension from metadata file names.
+	stem := name
+	for _, ext := range []string{".gz", ".xz", ".bz2", ".zst", ".lz4"} {
+		if s, ok := strings.CutSuffix(stem, ext); ok {
+			stem = s
+			break
+		}
+	}
+
+	switch stem {
+	case "release", "inrelease", "release.gpg", "packages", "sources", "index":
+		return true
+	}
+
+	// Prefixed metadata families: Contents-*, Translation-*, Commands-*.
+	return strings.HasPrefix(stem, "contents-") ||
+		strings.HasPrefix(stem, "translation-") ||
+		strings.HasPrefix(stem, "commands-")
 }
 
 // IsAllowedMirrorURL validates that a URL is safe to fetch from

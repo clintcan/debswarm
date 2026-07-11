@@ -157,7 +157,7 @@ Settings for the HTTP proxy behavior.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `trust_known_repos` | bool | `true` | Trust the curated set of common third-party repositories (see below) in addition to the built-in Debian/Ubuntu/Mint mirrors. Set to `false` for a strict, mirrors-only posture. |
-| `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy, on top of the built-ins and (when enabled) the trusted set. These hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`). |
+| `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy, on top of the built-ins and (when enabled) the trusted set. Requests must still look like APT traffic (`/dists/`+`/pool/` layout, or a recognized APT file such as `Release`/`Packages`/`*.deb`); flat-layout repos are supported. |
 
 **Example:**
 ```toml
@@ -182,9 +182,10 @@ Always allowed (no configuration needed):
 - Launchpad PPAs: `ppa.launchpad.net`, `ppa.launchpadcontent.net`, `launchpadlibrarian.net`
 - `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`
 - `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org`
+- `pkgs.k8s.io` (Kubernetes — flat-layout repository)
 
 **Security Notes:**
-- Allowed hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`, etc.), so flat/non-standard repository layouts are not proxied even when the host is allowed.
+- Requests must look like APT traffic: either the standard `/dists/` + `/pool/` layout, or a recognized APT file (`Release`, `InRelease`, `Packages*`, `Sources*`, `by-hash/`, `*.deb`). This supports flat-layout repositories (e.g. Kubernetes) while still blocking arbitrary non-repository files on an allowed host.
 - Private/internal hosts (localhost, 10.x.x.x, 192.168.x.x, link-local, cloud metadata, etc.) are always blocked, even if listed in `allowed_hosts`.
 - Every package is verified against the SHA256 in the signed repository index regardless of source, so a trusted host cannot serve a tampered package.
 - Only ports 443 and 80 are allowed for HTTPS CONNECT tunnels.

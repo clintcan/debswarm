@@ -61,6 +61,7 @@ var DefaultTrustedRepos = []string{
 	"packages.microsoft.com",     // Microsoft (VS Code, .NET, etc.)
 	"apt.releases.hashicorp.com", // HashiCorp
 	"mirrors.kernel.org",         // kernel.org Debian/Ubuntu mirror
+	"pkgs.k8s.io",                // Kubernetes (flat-layout repository)
 }
 
 // TrustsKnownRepos reports whether the curated DefaultTrustedRepos set is trusted.

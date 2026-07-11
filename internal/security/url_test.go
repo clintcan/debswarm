@@ -62,10 +62,23 @@ func TestIsDebianRepoURL(t *testing.T) {
 		{"http://packages.linuxmint.com/pool/main/m/mint-meta/mint-meta_1.0.deb", true},
 		{"http://example.com/linuxmint/pool/main/", true},
 
+		// Flat repositories (no dists/pool) recognized by requested file name
+		{"https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release", true},
+		{"https://pkgs.k8s.io/core:/stable:/v1.32/deb/InRelease", true},
+		{"https://pkgs.k8s.io/core:/stable:/v1.32/deb/Packages", true},
+		{"https://pkgs.k8s.io/core:/stable:/v1.32/deb/Packages.gz", true},
+		{"https://pkgs.k8s.io/core:/stable:/v1.32/deb/kubectl_1.32_amd64.deb", true},
+		{"https://example.com/flat/repo/Release.gpg", true},
+		{"https://example.com/flat/by-hash/SHA256/abcdef", true},
+		// Package request is repo-shaped regardless of directory (host allowlist
+		// is what actually restricts the source).
+		{"http://malicious.com/packages/test.deb", true},
+
 		// Invalid URLs (not repo-like)
 		{"http://example.com/api/internal", false},
 		{"http://example.com/admin/", false},
-		{"http://malicious.com/packages/test.deb", false},
+		{"https://download.docker.com/linux/static/stable/x86_64/docker.tgz", false},
+		{"https://example.com/flat/deb/", false},
 	}
 
 	for _, tt := range tests {
@@ -75,6 +88,25 @@ func TestIsDebianRepoURL(t *testing.T) {
 				t.Errorf("IsDebianRepoURL(%q) = %v, want %v", tt.url, got, tt.valid)
 			}
 		})
+	}
+}
+
+func TestFlatRepoAllowed(t *testing.T) {
+	allowed := []string{"pkgs.k8s.io"}
+	// A flat-layout repo (colons in path, no dists/pool) passes the full check
+	// when its host is allowed.
+	repoURL := "https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release"
+	if !IsAllowedMirrorURLWithHosts(repoURL, allowed) {
+		t.Errorf("flat repo %q should be allowed when host is in allowed_hosts", repoURL)
+	}
+	// The same URL must be blocked when the host is not allowed.
+	if IsAllowedMirrorURLWithHosts(repoURL, nil) {
+		t.Errorf("flat repo %q must be blocked when host is not allowed", repoURL)
+	}
+	// A non-repository file on the same allowed host is still blocked.
+	nonRepo := "https://pkgs.k8s.io/some/random/file.tgz"
+	if IsAllowedMirrorURLWithHosts(nonRepo, allowed) {
+		t.Errorf("non-repo file %q should be blocked even on an allowed host", nonRepo)
 	}
 }
 
