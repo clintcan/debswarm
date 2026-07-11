@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Clearer blocked-request errors**: when the proxy refuses a repository it now returns `403` with a message naming the host and pointing to `proxy.allowed_hosts` (and distinguishes SSRF-blocked internal addresses), instead of an opaque `400 "Invalid request"`. The HTTPS `CONNECT` rejection is similarly descriptive.
 
+### Fixed
+- **Download retry worker never retried anything**: resume state was persisted with an empty URL, so the retry worker — which is enabled by default (`retry_max_attempts = 3`, `retry_interval = "5m"`) — skipped every failed download it found via its `state.URL == ""` guard and silently did nothing. The mirror URL is now stored alongside the download state, so failed downloads are actually retried. Affects large chunked downloads, the only path that persists resume state.
+
 ### Security
 - **Mirror redirect SSRF protection**: HTTP redirects returned by mirrors are now validated on every hop; redirects to loopback, private, link-local, or cloud-metadata addresses are refused, while legitimate public cross-host redirects (e.g. PPA → CDN) still work
 - **Loopback-only cache mutation API**: the `pin`, `unpin`, and `delete` cache endpoints now reject non-loopback clients with 403 (the metrics server may bind to a non-local address and these endpoints have no authentication)
