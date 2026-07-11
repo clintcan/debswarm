@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Tests
 - Added tests for mirror redirect safety (including hex-encoded loopback) and loopback API enforcement (IPv4/IPv6)
 - Added tests for upstream HTTPS fetch (scheme upgrade, subdomain/case handling, explicit `:80` stripping) and `EffectiveHTTPSUpstreamHosts` merging
+- Covered blank entries in `https_upstream_hosts`: a stray `""` in the host list is skipped rather than treated as a wildcard matching every host. `upstreamFetchURL`, `isHTTPSUpstreamHost`, and `EffectiveHTTPSUpstreamHosts` are now all at 100% statement coverage.
 
 ### Dependencies
 - Bumped `modernc.org/sqlite` from 1.44.3 to 1.53.0
