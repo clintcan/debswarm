@@ -244,7 +244,7 @@ func TestExtractTargetURL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest("GET", tc.path, nil)
-			result := server.extractTargetURL(req)
+			result, _ := server.extractTargetURL(req)
 			if result != tc.expected {
 				t.Errorf("extractTargetURL(%q) = %q, want %q", tc.path, result, tc.expected)
 			}
@@ -267,9 +267,8 @@ func TestExtractTargetURL_BlockedURLs(t *testing.T) {
 	for _, path := range blockedURLs {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest("GET", path, nil)
-			result := server.extractTargetURL(req)
-			if result != "" {
-				t.Errorf("extractTargetURL should block %q, got %q", path, result)
+			if _, allowed := server.extractTargetURL(req); allowed {
+				t.Errorf("extractTargetURL should block %q", path)
 			}
 		})
 	}

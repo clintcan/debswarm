@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1264,4 +1266,75 @@ func TestProxyConfig_SaveAndLoad(t *testing.T) {
 	if loaded.Proxy.AllowedHosts[1] != "test.org" {
 		t.Errorf("Expected second host 'test.org', got %q", loaded.Proxy.AllowedHosts[1])
 	}
+}
+
+func TestProxyConfig_TrustsKnownRepos(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name string
+		val  *bool
+		want bool
+	}{
+		{"unset defaults to true", nil, true},
+		{"explicit true", &tru, true},
+		{"explicit false", &fls, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ProxyConfig{TrustKnownRepos: tc.val}
+			if got := p.TrustsKnownRepos(); got != tc.want {
+				t.Errorf("TrustsKnownRepos() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProxyConfig_EffectiveAllowedHosts(t *testing.T) {
+	t.Run("default merges curated repos with user hosts", func(t *testing.T) {
+		p := ProxyConfig{AllowedHosts: []string{"my-mirror.example.com"}}
+		got := p.EffectiveAllowedHosts()
+		if !slices.Contains(got, "my-mirror.example.com") {
+			t.Error("user host should be preserved")
+		}
+		if !slices.Contains(got, "download.docker.com") {
+			t.Error("curated default (download.docker.com) should be included when trust_known_repos is unset")
+		}
+		if got[0] != "my-mirror.example.com" {
+			t.Errorf("user hosts should come first, got %v", got)
+		}
+	})
+
+	t.Run("toggle off returns only user hosts", func(t *testing.T) {
+		off := false
+		p := ProxyConfig{AllowedHosts: []string{"my-mirror.example.com"}, TrustKnownRepos: &off}
+		got := p.EffectiveAllowedHosts()
+		if slices.Contains(got, "download.docker.com") {
+			t.Error("curated defaults must not be included when trust_known_repos is false")
+		}
+		if len(got) != 1 || got[0] != "my-mirror.example.com" {
+			t.Errorf("expected only the user host, got %v", got)
+		}
+	})
+
+	t.Run("de-duplicates case-insensitively", func(t *testing.T) {
+		p := ProxyConfig{AllowedHosts: []string{"Download.Docker.COM"}}
+		got := p.EffectiveAllowedHosts()
+		count := 0
+		for _, h := range got {
+			if strings.EqualFold(h, "download.docker.com") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected download.docker.com once, got %d in %v", count, got)
+		}
+	})
+
+	t.Run("empty config yields curated defaults", func(t *testing.T) {
+		p := ProxyConfig{}
+		got := p.EffectiveAllowedHosts()
+		if len(got) != len(DefaultTrustedRepos) {
+			t.Errorf("expected %d curated defaults, got %d", len(DefaultTrustedRepos), len(got))
+		}
+	})
 }

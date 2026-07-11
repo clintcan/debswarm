@@ -48,16 +48,23 @@ bootstrap_peers = [
 # [proxy] - HTTP proxy settings
 #─────────────────────────────────────────────────────────────────────────────
 [proxy]
-# Additional Debian-style repository hosts to allow through the proxy
-# By default, only Debian, Ubuntu, and Linux Mint repositories are allowed.
-# Add third-party Debian-style repositories here (must use /dists/ or /pool/ paths).
-# Private/internal hosts are always blocked for security.
+# Trust a curated set of common third-party repositories by default, in addition
+# to Debian, Ubuntu, and Linux Mint. Set to false for a strict, mirrors-only posture.
+# Trusted by default (all use standard /dists/ and /pool/ layouts):
+#   Launchpad PPAs (ppa.launchpad.net, ppa.launchpadcontent.net, launchpadlibrarian.net),
+#   download.docker.com, apt.postgresql.org, deb.nodesource.com,
+#   packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org
+# Regardless of this setting, private/internal hosts are always blocked (SSRF
+# protection) and every package is verified against the signed index's SHA256.
+trust_known_repos = true
+
+# Additional Debian-style repository hosts to allow, on top of the built-ins and
+# (when enabled) the trusted set above. Add repos not covered by trust_known_repos
+# here. They must use /dists/ or /pool/ paths.
 allowed_hosts = [
-  # "download.docker.com",
-  # "ppa.launchpad.net",
-  # "apt.postgresql.org",
-  # "deb.nodesource.com",
-  # "packages.microsoft.com",
+  # "packages.gitlab.com",
+  # "apt.grafana.com",
+  # "my-mirror.example.com",
 ]
 
 #─────────────────────────────────────────────────────────────────────────────

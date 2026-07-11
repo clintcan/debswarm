@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Trusted third-party repositories by default**: common repositories now work through the proxy without configuration — Launchpad PPAs (`ppa.launchpad.net`, `ppa.launchpadcontent.net`, `launchpadlibrarian.net`), `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`, `packages.microsoft.com`, `apt.releases.hashicorp.com`, and `mirrors.kernel.org`. Controlled by the new `[proxy] trust_known_repos` option (default `true`; set to `false` for a strict Debian/Ubuntu/Mint-only posture). SSRF protection and SHA256 verification are unchanged.
+
+### Changed
+- **Clearer blocked-request errors**: when the proxy refuses a repository it now returns `403` with a message naming the host and pointing to `proxy.allowed_hosts` (and distinguishes SSRF-blocked internal addresses), instead of an opaque `400 "Invalid request"`. The HTTPS `CONNECT` rejection is similarly descriptive.
+
 ### Security
 - **Mirror redirect SSRF protection**: HTTP redirects returned by mirrors are now validated on every hop; redirects to loopback, private, link-local, or cloud-metadata addresses are refused, while legitimate public cross-host redirects (e.g. PPA → CDN) still work
 - **Loopback-only cache mutation API**: the `pin`, `unpin`, and `delete` cache endpoints now reject non-loopback clients with 403 (the metrics server may bind to a non-local address and these endpoints have no authentication)

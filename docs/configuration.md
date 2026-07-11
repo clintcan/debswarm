@@ -115,23 +115,26 @@ When APT requests an HTTPS URL, the proxy creates a TCP tunnel to the target ser
 
 **Tunnel Security:**
 - Only ports 443 and 80 are allowed
-- Only known Debian/Ubuntu/Mint mirrors are permitted by default
+- Debian/Ubuntu/Mint mirrors plus a curated set of common third-party repositories are permitted by default (see below)
 - Additional hosts can be configured via `[proxy] allowed_hosts`
 - Private/internal addresses are blocked (SSRF protection)
 
 **Configuring Additional Repository Hosts:**
 
-Third-party Debian-style repositories (Docker, PPAs, PostgreSQL, etc.) can be allowed via configuration:
+Common third-party Debian-style repositories (Docker, Launchpad PPAs, PostgreSQL, NodeSource, Microsoft, HashiCorp, kernel.org) are trusted **by default** via `trust_known_repos`, so they work with no configuration. For any repository not in that set, add its host to `allowed_hosts`:
 
 ```toml
 [proxy]
-# Additional Debian-style repository hosts to allow through the proxy
-# These must still use /dists/ or /pool/ URL patterns
+# Trust the curated set of common third-party repos by default (default: true).
+# Set to false for a strict Debian/Ubuntu/Mint-only posture.
+trust_known_repos = true
+
+# Additional Debian-style repository hosts to allow, on top of the built-ins and
+# the trusted set. These must still use /dists/ or /pool/ URL patterns.
 allowed_hosts = [
-  "download.docker.com",
-  "ppa.launchpad.net",
-  "apt.postgresql.org",
-  "deb.nodesource.com",
+  "packages.gitlab.com",
+  "apt.grafana.com",
+  "my-mirror.example.com",
 ]
 ```
 
@@ -153,33 +156,38 @@ Settings for the HTTP proxy behavior.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy. These hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`). |
+| `trust_known_repos` | bool | `true` | Trust the curated set of common third-party repositories (see below) in addition to the built-in Debian/Ubuntu/Mint mirrors. Set to `false` for a strict, mirrors-only posture. |
+| `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy, on top of the built-ins and (when enabled) the trusted set. These hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`). |
 
 **Example:**
 ```toml
 [proxy]
-# Allow third-party Debian-style repositories through the proxy
+trust_known_repos = true
+# Allow repositories not covered by the trusted set
 allowed_hosts = [
-  "download.docker.com",
-  "ppa.launchpad.net",
-  "apt.postgresql.org",
-  "deb.nodesource.com",
-  "packages.microsoft.com",
+  "packages.gitlab.com",
+  "apt.grafana.com",
+  "my-mirror.example.com",
 ]
 ```
 
 **Built-in Allowed Hosts:**
 
-The following hosts are always allowed (no configuration needed):
+Always allowed (no configuration needed):
 - `deb.debian.org`, `*.debian.org`
-- `archive.ubuntu.com`, `*.ubuntu.com`
+- `archive.ubuntu.com`, `*.ubuntu.com`, `security.ubuntu.com`
 - `packages.linuxmint.com`, `*.linuxmint.com`
-- `mirrors.*`, `mirror.*`, `ftp.*`
+
+**Trusted by default** (when `trust_known_repos = true`, the default):
+- Launchpad PPAs: `ppa.launchpad.net`, `ppa.launchpadcontent.net`, `launchpadlibrarian.net`
+- `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`
+- `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org`
 
 **Security Notes:**
-- Configured hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`, etc.)
-- Private/internal hosts (localhost, 10.x.x.x, 192.168.x.x, etc.) are always blocked
-- Only ports 443 and 80 are allowed for HTTPS CONNECT tunnels
+- Allowed hosts must still use Debian-style URL patterns (`/dists/`, `/pool/`, etc.), so flat/non-standard repository layouts are not proxied even when the host is allowed.
+- Private/internal hosts (localhost, 10.x.x.x, 192.168.x.x, link-local, cloud metadata, etc.) are always blocked, even if listed in `allowed_hosts`.
+- Every package is verified against the SHA256 in the signed repository index regardless of source, so a trusted host cannot serve a tampered package.
+- Only ports 443 and 80 are allowed for HTTPS CONNECT tunnels.
 
 ---
 
