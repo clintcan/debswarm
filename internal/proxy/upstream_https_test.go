@@ -86,3 +86,16 @@ func TestServer_IsHTTPSUpstreamHost(t *testing.T) {
 		}
 	}
 }
+
+// A blank entry in https_upstream_hosts (e.g. a stray "" in the config list)
+// must be skipped rather than treated as a wildcard that matches every host.
+func TestServer_IsHTTPSUpstreamHost_SkipsBlankEntries(t *testing.T) {
+	s := &Server{httpsUpstreamHosts: []string{"", "   ", "pkgs.k8s.io"}}
+
+	if !s.isHTTPSUpstreamHost("pkgs.k8s.io") {
+		t.Error("real host should still match when the list contains blank entries")
+	}
+	if s.isHTTPSUpstreamHost("deb.debian.org") {
+		t.Error("blank entry must not match an unrelated host")
+	}
+}
