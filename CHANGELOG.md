@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Mirror redirect SSRF protection**: HTTP redirects returned by mirrors are now validated on every hop; redirects to loopback, private, link-local, or cloud-metadata addresses are refused, while legitimate public cross-host redirects (e.g. PPA → CDN) still work
+- **Loopback-only cache mutation API**: the `pin`, `unpin`, and `delete` cache endpoints now reject non-loopback clients with 403 (the metrics server may bind to a non-local address and these endpoints have no authentication)
+- **Hard-fail on mirror hash mismatch**: a mirror download whose SHA256 does not match the signed Packages index is now rejected (error, `VerificationFailures` metric, and audit event) instead of only being logged
+
+### Tests
+- Added tests for mirror redirect safety (including hex-encoded loopback) and loopback API enforcement (IPv4/IPv6)
+
+### Dependencies
+- Bumped `modernc.org/sqlite` from 1.44.3 to 1.53.0
+- Bumped `github.com/libp2p/go-libp2p-kad-dht` from 0.37.1 to 0.41.0
+- Bumped `github.com/pelletier/go-toml/v2` from 2.2.4 to 2.4.3
+- Bumped `github.com/fsnotify/fsnotify` from 1.9.0 to 1.10.1
+- Bumped `golang.org/x/sys` from 0.40.0 to 0.47.0
+
+### CI
+- Updated CI and release workflows to Go 1.25 (matches the `go 1.25.0` directive in `go.mod`)
+- Upgraded the `gosec` security scanner to v2.27.1 and annotated 16 verified false-positive findings (intentional byte conversions and operator-supplied directory paths)
+- Bumped `actions/checkout` from 6.0.2 to 7.0.0
+- Bumped `actions/setup-go` from 6.4.0 to 6.5.0
+- Bumped `codecov/codecov-action` from 5.5.2 to 7.0.0
+- Bumped `golangci/golangci-lint-action` from 9.2.0 to 9.3.0
+- Bumped `goreleaser/goreleaser-action` from 7.2.1 to 7.2.3
+
 ## [1.29.0] - 2026-02-08
 
 ### Added
