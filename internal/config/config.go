@@ -33,8 +33,69 @@ type Config struct {
 type ProxyConfig struct {
 	// AllowedHosts is a list of additional repository hostnames to allow through the proxy.
 	// These hosts must still use Debian-style URL patterns (/dists/, /pool/).
-	// Built-in allowed hosts (Debian, Ubuntu, Mint, mirrors.*, etc.) are always permitted.
+	// Built-in allowed hosts (Debian, Ubuntu, and Linux Mint domains) are always permitted.
 	AllowedHosts []string `toml:"allowed_hosts"`
+
+	// TrustKnownRepos controls whether the curated DefaultTrustedRepos set (common
+	// third-party repositories such as Docker, Launchpad PPAs, and PostgreSQL) is
+	// merged into the effective allowed-hosts list. Defaults to true when unset;
+	// set to false for a strict Debian/Ubuntu/Mint-only posture.
+	TrustKnownRepos *bool `toml:"trust_known_repos"`
+}
+
+// DefaultTrustedRepos is a curated set of well-known public APT repositories that
+// debswarm trusts by default (in addition to the built-in Debian/Ubuntu/Mint
+// mirrors) so common third-party sources work without manual configuration.
+//
+// This only broadens which *public* hosts the proxy will fetch from: private and
+// internal addresses remain blocked (SSRF protection), and every package is still
+// verified against the SHA256 in the signed repository index. All entries use the
+// standard /dists/ and /pool/ layout required by the proxy's path check.
+var DefaultTrustedRepos = []string{
+	"ppa.launchpad.net",          // Launchpad PPAs
+	"ppa.launchpadcontent.net",   // Launchpad PPAs (current content host)
+	"launchpadlibrarian.net",     // Launchpad file downloads
+	"download.docker.com",        // Docker
+	"apt.postgresql.org",         // PostgreSQL
+	"deb.nodesource.com",         // NodeSource (Node.js)
+	"packages.microsoft.com",     // Microsoft (VS Code, .NET, etc.)
+	"apt.releases.hashicorp.com", // HashiCorp
+	"mirrors.kernel.org",         // kernel.org Debian/Ubuntu mirror
+}
+
+// TrustsKnownRepos reports whether the curated DefaultTrustedRepos set is trusted.
+// It defaults to true when the option is unset.
+func (p *ProxyConfig) TrustsKnownRepos() bool {
+	return p.TrustKnownRepos == nil || *p.TrustKnownRepos
+}
+
+// EffectiveAllowedHosts returns the full set of additional hosts the proxy should
+// permit: the user-configured AllowedHosts, plus DefaultTrustedRepos when
+// TrustKnownRepos is enabled. The result is de-duplicated (case-insensitively),
+// preserving user entries first.
+func (p *ProxyConfig) EffectiveAllowedHosts() []string {
+	if !p.TrustsKnownRepos() {
+		return p.AllowedHosts
+	}
+
+	seen := make(map[string]struct{}, len(p.AllowedHosts)+len(DefaultTrustedRepos))
+	result := make([]string, 0, len(p.AllowedHosts)+len(DefaultTrustedRepos))
+	add := func(hosts []string) {
+		for _, h := range hosts {
+			key := strings.ToLower(strings.TrimSpace(h))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, h)
+		}
+	}
+	add(p.AllowedHosts)
+	add(DefaultTrustedRepos)
+	return result
 }
 
 // NetworkConfig holds network-related settings

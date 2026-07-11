@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -667,9 +668,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetURL := s.extractTargetURL(r)
+	targetURL, allowed := s.extractTargetURL(r)
 	if targetURL == "" {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		http.Error(w, "debswarm: could not parse a repository URL from the request", http.StatusBadRequest)
+		return
+	}
+	if !allowed {
+		s.writeBlockedURLError(w, r, targetURL)
 		return
 	}
 
@@ -728,43 +733,54 @@ func (s *Server) classifyRequest(url string) requestType {
 	return requestTypeUnknown
 }
 
-func (s *Server) extractTargetURL(r *http.Request) string {
-	// For proxy requests, r.URL contains the full absolute URL
-	// Check if we have a complete URL with host
+// extractTargetURL parses the target repository URL from the request and reports
+// whether it is allowed. It returns ("", false) when no URL can be parsed, and
+// (url, false) when a URL was parsed but is not permitted (blocked internal host,
+// or a host not in the allow list) so the caller can produce a specific error.
+func (s *Server) extractTargetURL(r *http.Request) (targetURL string, allowed bool) {
+	// For proxy requests, r.URL contains the full absolute URL.
 	if r.URL.Host != "" {
-		targetURL := r.URL.String()
-		// SECURITY: Validate proxy-style URLs to prevent SSRF attacks
-		if !s.isAllowedMirrorURL(targetURL) {
-			s.logger.Warn("Blocked proxy request to non-allowed URL",
-				zap.String("url", sanitize.URL(targetURL)),
-				zap.String("remoteAddr", r.RemoteAddr))
-			return ""
-		}
-		return targetURL
-	}
-
-	// Fall back to path-based extraction for non-proxy requests
-	path := strings.TrimPrefix(r.URL.Path, "/")
-
-	var targetURL string
-	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		targetURL = path
-	} else if strings.Contains(path, "/") {
-		targetURL = "http://" + path
+		targetURL = r.URL.String()
 	} else {
-		return ""
+		// Fall back to path-based extraction for non-proxy requests.
+		path := strings.TrimPrefix(r.URL.Path, "/")
+		switch {
+		case strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://"):
+			targetURL = path
+		case strings.Contains(path, "/"):
+			targetURL = "http://" + path
+		default:
+			return "", false
+		}
 	}
 
-	// SECURITY: Validate URL to prevent SSRF attacks
-	// Only allow requests to legitimate Debian/Ubuntu package mirrors
-	if !s.isAllowedMirrorURL(targetURL) {
-		s.logger.Warn("Blocked request to non-allowed URL",
-			zap.String("url", sanitize.URL(targetURL)),
-			zap.String("remoteAddr", r.RemoteAddr))
-		return ""
+	// SECURITY: Validate the URL to prevent SSRF and restrict to allowed repos.
+	return targetURL, s.isAllowedMirrorURL(targetURL)
+}
+
+// writeBlockedURLError responds with a clear, actionable error when a request is
+// refused by the allow list, distinguishing an internal/SSRF-blocked target from
+// a host that simply hasn't been allow-listed.
+func (s *Server) writeBlockedURLError(w http.ResponseWriter, r *http.Request, targetURL string) {
+	log := requestid.LoggerFromContext(r.Context(), s.logger)
+	log.Warn("Blocked request to non-allowed URL",
+		zap.String("url", sanitize.URL(targetURL)),
+		zap.String("remoteAddr", r.RemoteAddr))
+
+	if security.IsBlockedHost(targetURL) {
+		http.Error(w, "debswarm: refused request to an internal or private address (SSRF protection)", http.StatusForbidden)
+		return
 	}
 
-	return targetURL
+	host := targetURL
+	if parsed, err := url.Parse(targetURL); err == nil && parsed.Hostname() != "" {
+		host = parsed.Hostname()
+	}
+	http.Error(w, fmt.Sprintf(
+		"debswarm: repository host %q is not in the allowed list. If this is a legitimate repository, "+
+			"add its host to proxy.allowed_hosts in your debswarm config (common third-party repos are trusted "+
+			"by default unless trust_known_repos is disabled).", host),
+		http.StatusForbidden)
 }
 
 // isAllowedMirrorURL validates that a URL is a legitimate Debian/Ubuntu mirror
@@ -1608,7 +1624,10 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt64(&s.connectFailed, 1)
 		s.metrics.ConnectRequestsFailed.Inc()
 		s.audit.Log(audit.NewConnectTunnelBlockedEvent(host, port, "not_allowed").WithRequestID(reqID))
-		http.Error(w, "CONNECT target not allowed", http.StatusForbidden)
+		http.Error(w, fmt.Sprintf(
+			"debswarm: HTTPS repository host %q is not in the allowed list. If this is a legitimate repository, "+
+				"add its host to proxy.allowed_hosts in your debswarm config.", host),
+			http.StatusForbidden)
 		return
 	}
 
