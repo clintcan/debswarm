@@ -118,16 +118,19 @@ func (w *wizard) run(outputPath string) error {
 	// Step 4: Ports
 	w.promptPorts()
 
-	// Step 5: Privacy (mDNS + PSK)
+	// Step 5: Repositories
+	w.promptRepositories()
+
+	// Step 6: Privacy (mDNS + PSK)
 	w.promptPrivacy(profileIdx)
 
-	// Step 6: Fleet coordination
+	// Step 7: Fleet coordination
 	w.promptFleet()
 
-	// Step 7: Log level
+	// Step 8: Log level
 	w.promptLogLevel()
 
-	// Step 8: Summary + confirm
+	// Step 9: Summary + confirm
 	w.printSummary()
 
 	if !w.promptYesNo("Save this configuration?", true) {
@@ -243,16 +246,59 @@ func (w *wizard) promptPorts() {
 	)
 }
 
+// promptRepositories configures which repository hosts the proxy will fetch from.
+//
+// Both settings are written explicitly rather than left to their defaults: an
+// absent key is invisible, and users with a private mirror or an HTTPS-only repo
+// need to discover that these knobs exist.
+func (w *wizard) promptRepositories() {
+	w.printf("\n")
+	w.printf("  Debian, Ubuntu, and Linux Mint mirrors are always allowed.\n")
+	w.printf("  Common third-party repos (Docker, Launchpad PPAs, PostgreSQL, NodeSource,\n")
+	w.printf("  Microsoft, HashiCorp, kernel.org, Kubernetes) can be trusted automatically.\n")
+
+	trust := w.promptYesNo(
+		"Step 5a: Trust common third-party repositories?",
+		w.cfg.Proxy.TrustsKnownRepos(),
+	)
+	w.cfg.Proxy.TrustKnownRepos = &trust
+
+	w.printf("  Any other repository hosts to allow? (comma-separated, blank for none)\n")
+	hosts := w.promptString("Step 5b: Additional repository hosts? []", "")
+	w.cfg.Proxy.AllowedHosts = parseHostList(hosts)
+
+	// HTTPS-only repos need an http:// source plus an entry in https_upstream_hosts.
+	// The curated default already covers the common case (pkgs.k8s.io), so surface
+	// this as a hint rather than another prompt.
+	if len(w.cfg.Proxy.EffectiveHTTPSUpstreamHosts()) > 0 {
+		w.printf("  Note: HTTPS-only repos are fetched over HTTPS upstream so they can still be\n")
+		w.printf("  cached and P2P-shared. Enabled for: %s\n", strings.Join(w.cfg.Proxy.EffectiveHTTPSUpstreamHosts(), ", "))
+		w.printf("  To add your own, set [proxy] https_upstream_hosts and use http:// in sources.list.\n")
+	}
+}
+
+// parseHostList splits a comma-separated host list, trimming blanks.
+// Returns nil (not an empty slice) when no hosts are given.
+func parseHostList(s string) []string {
+	var hosts []string
+	for h := range strings.SplitSeq(s, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
 func (w *wizard) promptPrivacy(profileIdx int) {
 	w.printf("\n")
 	w.cfg.Privacy.EnableMDNS = w.promptYesNo(
-		fmt.Sprintf("Step 5a: Enable LAN discovery (mDNS)? [%s]", boolDefault(w.cfg.Privacy.EnableMDNS)),
+		"Step 6a: Enable LAN discovery (mDNS)?",
 		w.cfg.Privacy.EnableMDNS,
 	)
 
 	// PSK generation for private swarm profile
 	if profileIdx == 2 {
-		if w.promptYesNo("Step 5b: Generate a new PSK now?", true) {
+		if w.promptYesNo("Step 6b: Generate a new PSK now?", true) {
 			psk, err := p2p.GeneratePSK()
 			if err != nil {
 				w.printf("  Failed to generate PSK: %v\n", err)
@@ -279,7 +325,7 @@ func (w *wizard) promptPrivacy(profileIdx int) {
 func (w *wizard) promptFleet() {
 	w.printf("\n")
 	w.cfg.Fleet.Enabled = w.promptYesNo(
-		fmt.Sprintf("Step 6: Enable fleet coordination (LAN download dedup)? [%s]", boolDefault(w.cfg.Fleet.Enabled)),
+		"Step 7: Enable fleet coordination (LAN download dedup)?",
 		w.cfg.Fleet.Enabled,
 	)
 }
@@ -294,7 +340,7 @@ func (w *wizard) promptLogLevel() {
 	case "warn":
 		currentDefault = 2
 	}
-	idx := w.promptChoice("Step 7: Log level", levels, currentDefault)
+	idx := w.promptChoice("Step 8: Log level", levels, currentDefault)
 	switch idx {
 	case 0:
 		w.cfg.Logging.Level = "info"
@@ -321,6 +367,13 @@ func (w *wizard) printSummary() {
 	w.printf("  %-28s %v\n", "mDNS:", w.cfg.Privacy.EnableMDNS)
 	w.printf("  %-28s %v\n", "Fleet coordination:", w.cfg.Fleet.Enabled)
 	w.printf("  %-28s %s\n", "Log level:", w.cfg.Logging.Level)
+	w.printf("  %-28s %v\n", "Trust known repos:", w.cfg.Proxy.TrustsKnownRepos())
+	if len(w.cfg.Proxy.AllowedHosts) > 0 {
+		w.printf("  %-28s %s\n", "Additional repo hosts:", strings.Join(w.cfg.Proxy.AllowedHosts, ", "))
+	}
+	if hosts := w.cfg.Proxy.EffectiveHTTPSUpstreamHosts(); len(hosts) > 0 {
+		w.printf("  %-28s %s\n", "HTTPS upstream fetch:", strings.Join(hosts, ", "))
+	}
 	if w.cfg.Privacy.PSKPath != "" {
 		w.printf("  %-28s %s\n", "PSK path:", w.cfg.Privacy.PSKPath)
 	}
@@ -406,12 +459,4 @@ func (w *wizard) readLine() string {
 // printf writes to the wizard's output.
 func (w *wizard) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(w.out, format, args...)
-}
-
-// boolDefault returns "Y/n" or "y/N" depending on the boolean.
-func boolDefault(b bool) string {
-	if b {
-		return "Y/n"
-	}
-	return "y/N"
 }

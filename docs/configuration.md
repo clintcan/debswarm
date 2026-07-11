@@ -21,7 +21,9 @@ debswarm config wizard                      # interactive prompts
 debswarm config wizard --output /tmp/c.toml # custom output path
 ```
 
-The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, mDNS, fleet coordination, and log level with inline validation.
+The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, repositories, mDNS, fleet coordination, and log level with inline validation.
+
+The repositories step asks whether to trust the curated set of common third-party repositories (`trust_known_repos`) and lets you list any additional hosts (`allowed_hosts`). Both are written explicitly to the generated config. If you have an HTTPS-only repository, the wizard points you at [`https_upstream_hosts`](#https-only-repositories) — `pkgs.k8s.io` is enabled by default.
 
 ## Environment Variables
 
