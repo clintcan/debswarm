@@ -1392,4 +1392,16 @@ func TestProxyConfig_EffectiveHTTPSUpstreamHosts(t *testing.T) {
 			t.Errorf("expected no hosts, got %v", got)
 		}
 	})
+
+	t.Run("skips blank entries", func(t *testing.T) {
+		off := false
+		p := ProxyConfig{
+			HTTPSUpstreamHosts: []string{"", "apt.example.com", "   "},
+			TrustKnownRepos:    &off,
+		}
+		got := p.EffectiveHTTPSUpstreamHosts()
+		if len(got) != 1 || got[0] != "apt.example.com" {
+			t.Errorf("blank entries should be dropped, got %v", got)
+		}
+	})
 }
