@@ -24,6 +24,187 @@ func newTestWizard(lines ...string) (*wizard, *os.File) {
 	}, devNull
 }
 
+// customConfigTOML is an existing config with values that differ from every
+// default, so any reset shows up as a test failure.
+const customConfigTOML = `
+[network]
+proxy_port = 8888
+listen_port = 5555
+
+[cache]
+max_size = "99GB"
+
+[transfer]
+max_upload_rate = "25MB/s"
+
+[logging]
+level = "debug"
+
+[proxy]
+trust_known_repos = false
+allowed_hosts = ["my-mirror.example.com"]
+`
+
+// newEditingWizard writes customConfigTOML to a temp file and returns a wizard
+// that is editing it, mirroring what the command does when a config already exists.
+func newEditingWizard(t *testing.T, lines ...string) (*wizard, string, *os.File) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(customConfigTOML), 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load existing config: %v", err)
+	}
+
+	devNull, _ := os.Open(os.DevNull)
+	w := &wizard{
+		scanner:      bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n")),
+		cfg:          cfg,
+		out:          devNull,
+		existingPath: path,
+	}
+	return w, path, devNull
+}
+
+// editKeepAllInputs answers "keep current settings" at step 1 and presses Enter
+// through every remaining prompt. Nothing should change.
+func editKeepAllInputs() []string {
+	return []string{
+		"",  // step 1: keep current settings
+		"",  // cache size
+		"",  // upload rate
+		"",  // download rate
+		"",  // proxy port
+		"",  // p2p port
+		"",  // metrics port
+		"",  // trust known repos
+		"",  // additional repo hosts
+		"",  // mdns
+		"",  // fleet
+		"",  // log level
+		"y", // confirm save
+	}
+}
+
+func TestWizard_EditExisting_KeepsAllSettings(t *testing.T) {
+	w, path, f := newEditingWizard(t, editKeepAllInputs()...)
+	defer f.Close()
+
+	// Saves back to the file it was loaded from.
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 (reset!)", cfg.Network.ProxyPort)
+	}
+	if cfg.Network.ListenPort != 5555 {
+		t.Errorf("listen_port = %d, want 5555 (reset!)", cfg.Network.ListenPort)
+	}
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q (reset!)", cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "25MB/s" {
+		t.Errorf("max_upload_rate = %q, want %q (reset!)", cfg.Transfer.MaxUploadRate, "25MB/s")
+	}
+	if cfg.Logging.Level != "debug" {
+		t.Errorf("logging.level = %q, want %q (reset!)", cfg.Logging.Level, "debug")
+	}
+	if cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos = true, want false (reset!)")
+	}
+	if !slices.Equal(cfg.Proxy.AllowedHosts, []string{"my-mirror.example.com"}) {
+		t.Errorf("allowed_hosts = %v, want [my-mirror.example.com] (reset!)", cfg.Proxy.AllowedHosts)
+	}
+}
+
+func TestWizard_EditExisting_ApplyProfileOverwrites(t *testing.T) {
+	lines := append([]string{
+		"2", // step 1: Home user profile (option 1 is "keep current")
+		"y", // yes, apply it (overwrites cache size, rates, etc.)
+	}, editKeepAllInputs()[1:]...)
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	// Applying a profile is opt-in, and it does overwrite.
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want %q from the home profile", cfg.Cache.MaxSize, "10GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "0" {
+		t.Errorf("max_upload_rate = %q, want %q from the home profile", cfg.Transfer.MaxUploadRate, "0")
+	}
+	// Ports are not part of a profile, so they survive.
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 (profiles must not touch ports)", cfg.Network.ProxyPort)
+	}
+}
+
+func TestWizard_EditExisting_DeclineProfileKeepsSettings(t *testing.T) {
+	lines := append([]string{
+		"2", // step 1: pick Home user profile...
+		"n", // ...then decline to apply it
+	}, editKeepAllInputs()[1:]...)
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q — declining must not apply the profile",
+			cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "25MB/s" {
+		t.Errorf("max_upload_rate = %q, want %q — declining must not apply the profile",
+			cfg.Transfer.MaxUploadRate, "25MB/s")
+	}
+}
+
+func TestWizard_EditExisting_ClearHostsWithNone(t *testing.T) {
+	lines := editKeepAllInputs()
+	lines[8] = "none" // additional repo hosts: clear the list
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if len(cfg.Proxy.AllowedHosts) != 0 {
+		t.Errorf(`allowed_hosts = %v, want empty — "none" should clear the list`, cfg.Proxy.AllowedHosts)
+	}
+}
+
 func TestWizard_HomeProfile(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "config.toml")
@@ -446,6 +627,8 @@ func TestParseHostList(t *testing.T) {
 		{"", nil},
 		{"   ", nil},
 		{",,", nil},
+		{"none", nil},    // explicit clear
+		{"  NONE ", nil}, // case-insensitive, trimmed
 		{"a.example.com", []string{"a.example.com"}},
 		{" a.example.com , b.example.com ", []string{"a.example.com", "b.example.com"}},
 		{"a.example.com,,b.example.com,", []string{"a.example.com", "b.example.com"}},

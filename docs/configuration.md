@@ -14,16 +14,23 @@ If no configuration file is found, debswarm uses sensible defaults.
 
 ### Interactive Wizard (v1.29+)
 
-For new installations, the configuration wizard provides a guided setup:
+The configuration wizard provides a guided setup:
 
 ```bash
 debswarm config wizard                      # interactive prompts
 debswarm config wizard --output /tmp/c.toml # custom output path
+debswarm config wizard --config /etc/debswarm/config.toml  # edit a specific file
 ```
 
 The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, repositories, mDNS, fleet coordination, and log level with inline validation.
 
-The repositories step asks whether to trust the curated set of common third-party repositories (`trust_known_repos`) and lets you list any additional hosts (`allowed_hosts`). Both are written explicitly to the generated config. If you have an HTTPS-only repository, the wizard points you at [`https_upstream_hosts`](#https-only-repositories) — `pkgs.k8s.io` is enabled by default.
+**Editing an existing configuration (v1.30+):** if a config file already exists, the wizard loads it and edits it in place rather than starting from defaults. Every prompt defaults to your current value, so pressing Enter through the wizard changes nothing, and the result is written back to the file it was read from. Step 1 defaults to **"Keep current settings"**; picking a deployment profile instead will overwrite your cache size, rate limits, mDNS, fleet, and metrics settings, so the wizard asks for confirmation before applying one.
+
+The wizard finds an existing config using the same precedence as the daemon: `--config`, then `/etc/debswarm/config.toml`, then `~/.config/debswarm/config.toml`.
+
+The repositories step asks whether to trust the curated set of common third-party repositories (`trust_known_repos`) and lets you list any additional hosts (`allowed_hosts`). Both are written explicitly to the generated config. When editing, a blank answer keeps your current host list; answer `none` to clear it. If you have an HTTPS-only repository, the wizard points you at [`https_upstream_hosts`](#https-only-repositories) — `pkgs.k8s.io` is enabled by default.
+
+> **Note:** the wizard rewrites the config file from its parsed values, so hand-written comments in an existing config are not preserved. Keep a copy if you rely on them.
 
 ## Environment Variables
 

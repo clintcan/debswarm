@@ -19,6 +19,12 @@ type wizard struct {
 	scanner *bufio.Scanner
 	cfg     *config.Config
 	out     *os.File // output writer (os.Stdout in production)
+
+	// existingPath is the config file the wizard loaded its starting values from,
+	// or "" when starting from defaults. When set, the wizard is editing rather
+	// than creating: prompts default to the current values, the profile step
+	// offers to keep them, and the result is saved back to this path.
+	existingPath string
 }
 
 // profile presets applied after the user picks a deployment mode.
@@ -83,6 +89,17 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 				cfg:     config.DefaultConfig(),
 				out:     os.Stdout,
 			}
+
+			// Start from the existing config when there is one, so re-running the
+			// wizard edits the current settings instead of silently resetting them.
+			if path, ok := existingConfigPath(); ok {
+				if loaded, err := config.Load(path); err == nil {
+					w.cfg = loaded
+					w.existingPath = path
+				} else {
+					fmt.Fprintf(os.Stdout, "Warning: could not read %s (%v).\nStarting from defaults.\n", path, err)
+				}
+			}
 			return w.run(outputPath)
 		},
 	}
@@ -92,22 +109,30 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 
 // run executes the full wizard flow.
 func (w *wizard) run(outputPath string) error {
+	editing := w.existingPath != ""
+
 	w.printf("\n")
 	w.printf("╔══════════════════════════════════════════╗\n")
 	w.printf("║   debswarm configuration wizard          ║\n")
-	w.printf("║   Press Enter to accept [defaults]       ║\n")
+	if editing {
+		w.printf("║   Press Enter to keep [current] values    ║\n")
+	} else {
+		w.printf("║   Press Enter to accept [defaults]       ║\n")
+	}
 	w.printf("╚══════════════════════════════════════════╝\n")
+	if editing {
+		w.printf("\nEditing existing configuration: %s\n", w.existingPath)
+	}
 	w.printf("\n")
 
-	// Step 1: Deployment profile
-	profileIdx := w.promptChoice(
-		"Step 1: Deployment profile",
-		[]string{"Home user — small cache, public DHT",
-			"Seeding server — large cache, rate-limited, fleet enabled",
-			"Private swarm — PSK, mDNS only, no public DHT"},
-		0,
-	)
-	w.applyProfile(profileIdx)
+	// Step 1: Deployment profile.
+	// profileIdx is -1 when keeping the current settings (no profile applied).
+	// Applying a profile overwrites cache size, rates, mDNS, fleet, metrics bind,
+	// and connectivity mode, so when editing we must not do it unless asked.
+	profileIdx := w.promptProfile(editing)
+	if profileIdx >= 0 {
+		w.applyProfile(profileIdx)
+	}
 
 	// Step 2: Cache size
 	w.promptCacheSize()
@@ -144,12 +169,16 @@ func (w *wizard) run(outputPath string) error {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// Resolve output path
+	// Resolve output path. When editing, write back to the file we read from so
+	// re-running the wizard updates that config instead of creating a second one.
 	savePath := outputPath
 	if savePath == "" {
-		if cfgFile != "" {
+		switch {
+		case cfgFile != "":
 			savePath = cfgFile
-		} else {
+		case w.existingPath != "":
+			savePath = w.existingPath
+		default:
 			homeDir, _ := os.UserHomeDir()
 			savePath = filepath.Join(homeDir, ".config", "debswarm", "config.toml")
 		}
@@ -165,6 +194,35 @@ func (w *wizard) run(outputPath string) error {
 	w.printf("  debswarm config show               # review configuration\n")
 	w.printf("  sudo systemctl enable --now debswarm  # enable on boot (Linux)\n")
 	return nil
+}
+
+// profileLabels are the deployment profiles offered in step 1, in the same order
+// as the profiles slice.
+var profileLabels = []string{
+	"Home user — small cache, public DHT",
+	"Seeding server — large cache, rate-limited, fleet enabled",
+	"Private swarm — PSK, mDNS only, no public DHT",
+}
+
+// promptProfile asks for a deployment profile. When editing an existing config it
+// offers "keep current settings" as the default, and returns -1 for that choice —
+// applying a profile would overwrite values the user already chose.
+func (w *wizard) promptProfile(editing bool) int {
+	if !editing {
+		return w.promptChoice("Step 1: Deployment profile", profileLabels, 0)
+	}
+
+	opts := append([]string{"Keep current settings — only change what you edit below"}, profileLabels...)
+	choice := w.promptChoice("Step 1: Deployment profile", opts, 0)
+	if choice == 0 {
+		return -1
+	}
+	w.printf("  Applying the %s profile will overwrite your current cache size,\n", profiles[choice-1].name)
+	w.printf("  rate limits, mDNS, fleet, and metrics settings.\n")
+	if !w.promptYesNo("  Apply it?", false) {
+		return -1
+	}
+	return choice - 1
 }
 
 // applyProfile sets config values from the chosen profile.
@@ -263,8 +321,19 @@ func (w *wizard) promptRepositories() {
 	)
 	w.cfg.Proxy.TrustKnownRepos = &trust
 
-	w.printf("  Any other repository hosts to allow? (comma-separated, blank for none)\n")
-	hosts := w.promptString("Step 5b: Additional repository hosts? []", "")
+	// Default to the hosts already configured, so pressing Enter keeps them rather
+	// than silently clearing the list. "none" is the escape hatch for clearing it.
+	current := strings.Join(w.cfg.Proxy.AllowedHosts, ", ")
+	if current == "" {
+		w.printf("  Any other repository hosts to allow? (comma-separated, blank for none)\n")
+	} else {
+		w.printf("  Any other repository hosts to allow? (comma-separated, blank keeps current,\n")
+		w.printf("  \"none\" clears the list)\n")
+	}
+	hosts := w.promptString(
+		fmt.Sprintf("Step 5b: Additional repository hosts? [%s]", displayHosts(current)),
+		current,
+	)
 	w.cfg.Proxy.AllowedHosts = parseHostList(hosts)
 
 	// HTTPS-only repos need an http:// source plus an entry in https_upstream_hosts.
@@ -278,8 +347,13 @@ func (w *wizard) promptRepositories() {
 }
 
 // parseHostList splits a comma-separated host list, trimming blanks.
+// The literal "none" clears the list, so an existing list can be emptied from the
+// prompt (where a blank answer means "keep current").
 // Returns nil (not an empty slice) when no hosts are given.
 func parseHostList(s string) []string {
+	if strings.EqualFold(strings.TrimSpace(s), "none") {
+		return nil
+	}
 	var hosts []string
 	for h := range strings.SplitSeq(s, ",") {
 		if h = strings.TrimSpace(h); h != "" {
@@ -287,6 +361,14 @@ func parseHostList(s string) []string {
 		}
 	}
 	return hosts
+}
+
+// displayHosts renders a host list for a prompt default, showing "none" when empty.
+func displayHosts(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 func (w *wizard) promptPrivacy(profileIdx int) {
