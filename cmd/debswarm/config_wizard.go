@@ -20,11 +20,17 @@ type wizard struct {
 	cfg     *config.Config
 	out     *os.File // output writer (os.Stdout in production)
 
-	// existingPath is the config file the wizard loaded its starting values from,
-	// or "" when starting from defaults. When set, the wizard is editing rather
-	// than creating: prompts default to the current values, the profile step
-	// offers to keep them, and the result is saved back to this path.
+	// existingPath is the config file that was found on disk, or "" if there is
+	// none. The wizard always saves back to it, so a config that exists but fails
+	// to parse gets replaced rather than shadowed by a new file at a lower-priority
+	// path (which the daemon would never read).
 	existingPath string
+
+	// editing is true only when existingPath was parsed successfully and its values
+	// seeded w.cfg. Then prompts default to the current values and the profile step
+	// offers to keep them. A found-but-unparseable config leaves this false: there
+	// are no current values to keep, so the flow is a normal create.
+	editing bool
 }
 
 // profile presets applied after the user picks a deployment mode.
@@ -93,11 +99,12 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 			// Start from the existing config when there is one, so re-running the
 			// wizard edits the current settings instead of silently resetting them.
 			if path, ok := existingConfigPath(); ok {
+				w.existingPath = path // save back here either way
 				if loaded, err := config.Load(path); err == nil {
 					w.cfg = loaded
-					w.existingPath = path
+					w.editing = true
 				} else {
-					w.printf("Warning: could not read %s (%v).\nStarting from defaults.\n", path, err)
+					w.printf("Warning: could not parse %s (%v).\nStarting from defaults; this file will be replaced.\n", path, err)
 				}
 			}
 			return w.run(outputPath)
@@ -109,7 +116,7 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 
 // run executes the full wizard flow.
 func (w *wizard) run(outputPath string) error {
-	editing := w.existingPath != ""
+	editing := w.editing
 
 	w.printf("\n")
 	w.printf("╔══════════════════════════════════════════╗\n")

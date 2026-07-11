@@ -30,7 +30,7 @@ The wizard finds an existing config using the same precedence as the daemon: `--
 
 The repositories step asks whether to trust the curated set of common third-party repositories (`trust_known_repos`) and lets you list any additional hosts (`allowed_hosts`). Both are written explicitly to the generated config. When editing, a blank answer keeps your current host list; answer `none` to clear it. If you have an HTTPS-only repository, the wizard points you at [`https_upstream_hosts`](#https-only-repositories) — `pkgs.k8s.io` is enabled by default.
 
-> **Note:** the wizard rewrites the config file from its parsed values, so hand-written comments in an existing config are not preserved. Keep a copy if you rely on them.
+> **Note:** the wizard rewrites the config file from its parsed values. Your settings are preserved, but hand-written comments are not, and every field is written out explicitly (so a short hand-written config comes back fully expanded, with unset options shown as their empty/default values). Keep a copy if you rely on the comments. Answering `n` at the final confirmation leaves the existing file untouched.
 
 ## Environment Variables
 

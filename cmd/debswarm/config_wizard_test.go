@@ -64,8 +64,56 @@ func newEditingWizard(t *testing.T, lines ...string) (*wizard, string, *os.File)
 		cfg:          cfg,
 		out:          devNull,
 		existingPath: path,
+		editing:      true,
 	}
 	return w, path, devNull
+}
+
+// A config file that exists but does not parse must still be the save target:
+// writing a fresh config to a lower-priority path would leave the daemon reading
+// the broken file. There are no current values to keep, so this is a create flow.
+func TestWizard_UnparseableExistingConfigIsReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("this is not = valid toml [[[\n"), 0o600); err != nil {
+		t.Fatalf("write broken config: %v", err)
+	}
+
+	devNull, _ := os.Open(os.DevNull)
+	defer devNull.Close()
+	w := &wizard{
+		scanner: bufio.NewScanner(strings.NewReader(strings.Join([]string{
+			"1", // profile: home (create flow — no "keep current" option)
+			"",  // cache size
+			"",  // upload rate
+			"",  // download rate
+			"",  // proxy port
+			"",  // p2p port
+			"",  // metrics port
+			"",  // trust known repos
+			"",  // additional repo hosts
+			"",  // mdns
+			"",  // fleet
+			"",  // log level
+			"y", // confirm save
+		}, "\n") + "\n")),
+		cfg:          config.DefaultConfig(),
+		out:          devNull,
+		existingPath: path, // found, but not loaded
+		editing:      false,
+	}
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	// The broken file must have been overwritten in place, and now parse.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("broken config was not replaced: %v", err)
+	}
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want %q", cfg.Cache.MaxSize, "10GB")
+	}
 }
 
 // editKeepAllInputs answers "keep current settings" at step 1 and presses Enter
