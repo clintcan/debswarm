@@ -158,6 +158,7 @@ Settings for the HTTP proxy behavior.
 |-------|------|---------|-------------|
 | `trust_known_repos` | bool | `true` | Trust the curated set of common third-party repositories (see below) in addition to the built-in Debian/Ubuntu/Mint mirrors. Set to `false` for a strict, mirrors-only posture. |
 | `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy, on top of the built-ins and (when enabled) the trusted set. Requests must still look like APT traffic (`/dists/`+`/pool/` layout, or a recognized APT file such as `Release`/`Packages`/`*.deb`); flat-layout repos are supported. |
+| `https_upstream_hosts` | string[] | `[]` | Hosts to fetch over HTTPS even when APT requests them via plain HTTP, so HTTPS-only repositories can be cached and shared over P2P. Merged with the known HTTPS-only defaults (`pkgs.k8s.io`) when `trust_known_repos` is enabled. See [HTTPS-only repositories](#https-only-repositories) below. |
 
 **Example:**
 ```toml
@@ -183,6 +184,32 @@ Always allowed (no configuration needed):
 - `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`
 - `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org`
 - `pkgs.k8s.io` (Kubernetes — flat-layout repository)
+
+#### HTTPS-only repositories
+
+Some repositories serve packages only over HTTPS (for example `pkgs.k8s.io`). debswarm can still cache and P2P-share them without decrypting anyone's TLS: point the repository's `sources.list` entry at `http://` and let debswarm open its own HTTPS connection to the mirror on your behalf. APT talks plain HTTP to the local proxy; debswarm fetches over HTTPS, verifies the SHA256 from the signed index, caches the package, and announces it to the swarm.
+
+This is different from an HTTPS **CONNECT tunnel** (used when APT itself requests `https://`): a tunnel is opaque, so tunnelled packages cannot be cached, verified, or shared over P2P. Upstream HTTPS fetch avoids that limitation.
+
+```toml
+[proxy]
+https_upstream_hosts = [
+  "pkgs.k8s.io",              # trusted automatically when trust_known_repos = true
+  "apt.internal.example.com",
+]
+```
+
+Then use a plain-HTTP source, e.g.:
+
+```
+# /etc/apt/sources.list.d/kubernetes.list
+deb [signed-by=...] http://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
+```
+
+Notes:
+- The host must also be permitted (built-in, trusted via `trust_known_repos`, or listed in `allowed_hosts`). `pkgs.k8s.io` satisfies this by default.
+- Only `http://` requests are upgraded; matching is case-insensitive and covers subdomains of a listed host.
+- APT's package signature verification is unaffected — it validates the GPG-signed `Release`/`InRelease` regardless of transport.
 
 **Security Notes:**
 - Requests must look like APT traffic: either the standard `/dists/` + `/pool/` layout, or a recognized APT file (`Release`, `InRelease`, `Packages*`, `Sources*`, `by-hash/`, `*.deb`). This supports flat-layout repositories (e.g. Kubernetes) while still blocking arbitrary non-repository files on an allowed host.

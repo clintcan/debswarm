@@ -1338,3 +1338,58 @@ func TestProxyConfig_EffectiveAllowedHosts(t *testing.T) {
 		}
 	})
 }
+
+func TestProxyConfig_EffectiveHTTPSUpstreamHosts(t *testing.T) {
+	t.Run("default includes known HTTPS-only repos", func(t *testing.T) {
+		p := ProxyConfig{}
+		got := p.EffectiveHTTPSUpstreamHosts()
+		if !slices.Contains(got, "pkgs.k8s.io") {
+			t.Errorf("expected curated default pkgs.k8s.io, got %v", got)
+		}
+	})
+
+	t.Run("merges user hosts before curated defaults", func(t *testing.T) {
+		p := ProxyConfig{HTTPSUpstreamHosts: []string{"apt.example.com"}}
+		got := p.EffectiveHTTPSUpstreamHosts()
+		if len(got) == 0 || got[0] != "apt.example.com" {
+			t.Errorf("user hosts should come first, got %v", got)
+		}
+		if !slices.Contains(got, "pkgs.k8s.io") {
+			t.Errorf("curated default pkgs.k8s.io should still be present, got %v", got)
+		}
+	})
+
+	t.Run("toggle off drops curated defaults but keeps user hosts", func(t *testing.T) {
+		off := false
+		p := ProxyConfig{HTTPSUpstreamHosts: []string{"apt.example.com"}, TrustKnownRepos: &off}
+		got := p.EffectiveHTTPSUpstreamHosts()
+		if slices.Contains(got, "pkgs.k8s.io") {
+			t.Error("curated defaults must not be included when trust_known_repos is false")
+		}
+		if len(got) != 1 || got[0] != "apt.example.com" {
+			t.Errorf("expected only the user host, got %v", got)
+		}
+	})
+
+	t.Run("de-duplicates case-insensitively", func(t *testing.T) {
+		p := ProxyConfig{HTTPSUpstreamHosts: []string{"Pkgs.K8s.IO"}}
+		got := p.EffectiveHTTPSUpstreamHosts()
+		count := 0
+		for _, h := range got {
+			if strings.EqualFold(h, "pkgs.k8s.io") {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Errorf("expected pkgs.k8s.io once, got %d in %v", count, got)
+		}
+	})
+
+	t.Run("empty when disabled and no user hosts", func(t *testing.T) {
+		off := false
+		p := ProxyConfig{TrustKnownRepos: &off}
+		if got := p.EffectiveHTTPSUpstreamHosts(); len(got) != 0 {
+			t.Errorf("expected no hosts, got %v", got)
+		}
+	})
+}
