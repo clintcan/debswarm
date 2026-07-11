@@ -97,7 +97,7 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 					w.cfg = loaded
 					w.existingPath = path
 				} else {
-					fmt.Fprintf(os.Stdout, "Warning: could not read %s (%v).\nStarting from defaults.\n", path, err)
+					w.printf("Warning: could not read %s (%v).\nStarting from defaults.\n", path, err)
 				}
 			}
 			return w.run(outputPath)
