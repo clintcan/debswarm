@@ -41,6 +41,28 @@ sudo systemctl start debswarm
 
 ## Version-Specific Notes
 
+### Upgrading to v1.30.x
+
+**From v1.29.x:**
+
+v1.30.x broadens which repositories work through the proxy and fixes the download retry worker. No breaking changes; existing configurations keep working.
+
+1. **Trusted third-party repositories by default**: common repositories (Launchpad PPAs, Docker, PostgreSQL, NodeSource, Microsoft, HashiCorp, kernel.org, Kubernetes) now work through the proxy with no configuration, via the new `[proxy] trust_known_repos` option (default `true`).
+
+   **Action**: None required. If you want the previous strict Debian/Ubuntu/Mint-only posture, set `trust_known_repos = false`. Hosts you already listed in `allowed_hosts` continue to work either way. SSRF protection and SHA256 verification are unchanged.
+
+2. **Flat-layout repository support**: repositories without a `dists/pool` tree (e.g. Kubernetes) are now recognized and proxied.
+
+   **Action**: None required.
+
+3. **Upstream HTTPS fetch** (new `[proxy] https_upstream_hosts`): debswarm can now open its own HTTPS connection to a mirror while APT talks plain HTTP to the local proxy, so **HTTPS-only repositories can finally be cached, verified, and shared over P2P**. An HTTPS `CONNECT` tunnel is opaque and can do none of that.
+
+   **Action**: Optional. If you have an HTTPS-only repo you want in the swarm, change its `sources.list` entry from `https://` to `http://` and add its host to `https_upstream_hosts`. `pkgs.k8s.io` is included by default, so the Kubernetes repo needs only the `sources.list` change. See [HTTPS-only repositories](configuration.md#https-only-repositories).
+
+4. **Download retry worker now actually retries** (behavior change): the retry worker has been enabled by default since it was introduced (`retry_max_attempts = 3`, `retry_interval = "5m"`), but resume state was persisted without a URL, so it silently skipped every failed download and never retried anything. It now works as documented.
+
+   **Action**: None required, but be aware this activates real background behavior you were not previously getting: failed chunked downloads (large files) are now retried, up to `retry_max_attempts` times within the `retry_max_age` window. To keep the old effective behavior, set `retry_max_attempts = 0` to disable retries.
+
 ### Upgrading to v1.29.x
 
 **From v1.28.x:**
