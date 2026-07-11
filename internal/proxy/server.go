@@ -104,7 +104,8 @@ type Server struct {
 	retryDone        chan struct{}
 
 	// Security configuration
-	allowedHosts []string // Additional allowed repository hosts
+	allowedHosts       []string // Additional allowed repository hosts
+	httpsUpstreamHosts []string // Hosts to fetch over HTTPS even when APT requests HTTP
 }
 
 // Config holds proxy server configuration
@@ -131,6 +132,11 @@ type Config struct {
 
 	// Security settings
 	AllowedHosts []string // Additional allowed repository hosts (beyond built-in Debian/Ubuntu/Mint)
+
+	// HTTPSUpstreamHosts lists hosts for which the proxy upgrades an incoming
+	// plain-HTTP APT request to an HTTPS upstream fetch (MITM-free), enabling
+	// caching and P2P sharing of HTTPS-only repositories.
+	HTTPSUpstreamHosts []string
 }
 
 // DefaultConfig returns default configuration
@@ -184,32 +190,33 @@ func NewServer(
 	}
 
 	s := &Server{
-		addr:             cfg.Addr,
-		cache:            pkgCache,
-		index:            idx,
-		p2pNode:          node,
-		fetcher:          fetcher,
-		logger:           logger,
-		metrics:          m,
-		timeouts:         tm,
-		scorer:           scorer,
-		audit:            auditLogger,
-		connectivity:     cfg.Connectivity,
-		scheduler:        cfg.Scheduler,
-		fleet:            cfg.Fleet,
-		verifier:         cfg.Verifier,
-		p2pTimeout:       cfg.P2PTimeout,
-		dhtLookupLimit:   cfg.DHTLookupLimit,
-		metricsPort:      cfg.MetricsPort,
-		metricsBind:      metricsBind,
-		cacheMaxSize:     cfg.CacheMaxSize,
-		announceChan:     make(chan string, 100), // Bounded buffer
-		announceDone:     make(chan struct{}),
-		retryMaxAttempts: cfg.RetryMaxAttempts,
-		retryInterval:    cfg.RetryInterval,
-		retryMaxAge:      cfg.RetryMaxAge,
-		retryDone:        make(chan struct{}),
-		allowedHosts:     cfg.AllowedHosts,
+		addr:               cfg.Addr,
+		cache:              pkgCache,
+		index:              idx,
+		p2pNode:            node,
+		fetcher:            fetcher,
+		logger:             logger,
+		metrics:            m,
+		timeouts:           tm,
+		scorer:             scorer,
+		audit:              auditLogger,
+		connectivity:       cfg.Connectivity,
+		scheduler:          cfg.Scheduler,
+		fleet:              cfg.Fleet,
+		verifier:           cfg.Verifier,
+		p2pTimeout:         cfg.P2PTimeout,
+		dhtLookupLimit:     cfg.DHTLookupLimit,
+		metricsPort:        cfg.MetricsPort,
+		metricsBind:        metricsBind,
+		cacheMaxSize:       cfg.CacheMaxSize,
+		announceChan:       make(chan string, 100), // Bounded buffer
+		announceDone:       make(chan struct{}),
+		retryMaxAttempts:   cfg.RetryMaxAttempts,
+		retryInterval:      cfg.RetryInterval,
+		retryMaxAge:        cfg.RetryMaxAge,
+		retryDone:          make(chan struct{}),
+		allowedHosts:       cfg.AllowedHosts,
+		httpsUpstreamHosts: cfg.HTTPSUpstreamHosts,
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -789,6 +796,49 @@ func (s *Server) isAllowedMirrorURL(url string) bool {
 	return security.IsAllowedMirrorURLWithHosts(url, s.allowedHosts)
 }
 
+// upstreamFetchURL upgrades a plain-HTTP mirror URL to HTTPS when its host is
+// configured for upstream HTTPS fetching. Non-HTTP schemes and unlisted hosts
+// are returned unchanged. This affects only the connection debswarm makes to the
+// upstream mirror; cache keys, index lookups, and P2P content addressing use the
+// request path and SHA256 and are therefore unaffected by the scheme change.
+func (s *Server) upstreamFetchURL(rawURL string) string {
+	if len(s.httpsUpstreamHosts) == 0 {
+		return rawURL
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "http" {
+		return rawURL
+	}
+	if !s.isHTTPSUpstreamHost(parsed.Hostname()) {
+		return rawURL
+	}
+	parsed.Scheme = "https"
+	// Drop an explicit :80 so the HTTPS request uses the default 443.
+	if parsed.Port() == "80" {
+		parsed.Host = parsed.Hostname()
+	}
+	return parsed.String()
+}
+
+// isHTTPSUpstreamHost reports whether host matches a configured HTTPS-upstream
+// host, either exactly or as a subdomain (case-insensitive).
+func (s *Server) isHTTPSUpstreamHost(host string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return false
+	}
+	for _, h := range s.httpsUpstreamHosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if h == "" {
+			continue
+		}
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
@@ -993,9 +1043,12 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		}
 	}
 
-	// Add mirror source with range request support
+	// Add mirror source with range request support.
+	// For HTTPS-upstream hosts, fetch over HTTPS even though APT requested HTTP;
+	// the cache/index/P2P layers keep using the original (unmodified) URL/hash.
+	mirrorURL := s.upstreamFetchURL(url)
 	mirrorSource = &downloader.MirrorSource{
-		URL: url,
+		URL: mirrorURL,
 		Fetcher: func(ctx context.Context, url string, start, end int64) ([]byte, error) {
 			// Convert from exclusive end (used by downloader chunks) to inclusive end
 			// (used by HTTP Range headers). end=-1 means full file, pass through as-is.
@@ -1073,10 +1126,10 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	}
 
 	// Final fallback: mirror
-	log.Debug("Falling back to mirror", zap.String("url", sanitize.URL(url)))
+	log.Debug("Falling back to mirror", zap.String("url", sanitize.URL(mirrorURL)))
 	atomic.AddInt64(&s.requestsMirror, 1)
 
-	data, err := s.fetcher.Fetch(ctx, url)
+	data, err := s.fetcher.Fetch(ctx, mirrorURL)
 	if err != nil {
 		log.Error("Mirror fetch failed", zap.Error(err))
 		// Audit log download failure
@@ -1428,7 +1481,7 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 
 	log.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
 
-	data, err := s.fetcher.Fetch(ctx, url)
+	data, err := s.fetcher.Fetch(ctx, s.upstreamFetchURL(url))
 	if err != nil {
 		log.Error("Failed to fetch index", zap.Error(err))
 		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
@@ -1468,7 +1521,7 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url s
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
-	data, err := s.fetcher.Fetch(ctx, url)
+	data, err := s.fetcher.Fetch(ctx, s.upstreamFetchURL(url))
 	if err != nil {
 		log.Error("Passthrough fetch failed", zap.Error(err))
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)

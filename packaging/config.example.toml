@@ -69,6 +69,19 @@ allowed_hosts = [
   # "my-mirror.example.com",
 ]
 
+# Hosts to fetch over HTTPS even when APT requests them via plain HTTP. This lets
+# APT talk plain HTTP to the local debswarm proxy while debswarm makes its own
+# HTTPS connection to the mirror — so HTTPS-only repositories can still be cached,
+# verified, and shared over P2P (an opaque HTTPS CONNECT tunnel cannot do any of
+# that). Point the repo's sources.list entry at http:// and list its host here.
+# The host must also be allowed (built-in, trusted, or in allowed_hosts above).
+# When trust_known_repos is enabled, known HTTPS-only repos (pkgs.k8s.io) are
+# included automatically.
+https_upstream_hosts = [
+  # "pkgs.k8s.io",             # Kubernetes (HTTPS-only) — trusted automatically
+  # "apt.internal.example.com",
+]
+
 #─────────────────────────────────────────────────────────────────────────────
 # [cache] - Package cache settings
 #─────────────────────────────────────────────────────────────────────────────

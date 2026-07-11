@@ -41,6 +41,14 @@ type ProxyConfig struct {
 	// merged into the effective allowed-hosts list. Defaults to true when unset;
 	// set to false for a strict Debian/Ubuntu/Mint-only posture.
 	TrustKnownRepos *bool `toml:"trust_known_repos"`
+
+	// HTTPSUpstreamHosts lists repository hostnames for which the proxy should
+	// upgrade an incoming plain-HTTP request to an HTTPS connection when fetching
+	// from the upstream mirror. This lets APT talk plain HTTP to the local proxy
+	// while debswarm caches and P2P-shares packages from HTTPS-only repositories.
+	// When TrustKnownRepos is enabled, the curated DefaultHTTPSUpstreamHosts set
+	// (known HTTPS-only repos such as pkgs.k8s.io) is merged in automatically.
+	HTTPSUpstreamHosts []string `toml:"https_upstream_hosts"`
 }
 
 // DefaultTrustedRepos is a curated set of well-known public APT repositories that
@@ -62,6 +70,18 @@ var DefaultTrustedRepos = []string{
 	"apt.releases.hashicorp.com", // HashiCorp
 	"mirrors.kernel.org",         // kernel.org Debian/Ubuntu mirror
 	"pkgs.k8s.io",                // Kubernetes (flat-layout repository)
+}
+
+// DefaultHTTPSUpstreamHosts is a curated set of known HTTPS-only public APT
+// repositories. For these hosts the proxy fetches upstream over HTTPS even when
+// APT requests them via plain HTTP, so their packages can be cached, verified,
+// and shared over P2P (which an opaque HTTPS CONNECT tunnel cannot do).
+//
+// Every host here must also be reachable through the allowlist (e.g. present in
+// DefaultTrustedRepos); this list only controls the http->https scheme upgrade,
+// not whether the host is permitted.
+var DefaultHTTPSUpstreamHosts = []string{
+	"pkgs.k8s.io", // Kubernetes (HTTPS-only, flat-layout repository)
 }
 
 // TrustsKnownRepos reports whether the curated DefaultTrustedRepos set is trusted.
@@ -96,6 +116,34 @@ func (p *ProxyConfig) EffectiveAllowedHosts() []string {
 	}
 	add(p.AllowedHosts)
 	add(DefaultTrustedRepos)
+	return result
+}
+
+// EffectiveHTTPSUpstreamHosts returns the full set of hosts for which the proxy
+// should upgrade upstream fetches to HTTPS: the user-configured
+// HTTPSUpstreamHosts, plus DefaultHTTPSUpstreamHosts when TrustKnownRepos is
+// enabled. The result is de-duplicated (case-insensitively), preserving user
+// entries first.
+func (p *ProxyConfig) EffectiveHTTPSUpstreamHosts() []string {
+	seen := make(map[string]struct{}, len(p.HTTPSUpstreamHosts)+len(DefaultHTTPSUpstreamHosts))
+	result := make([]string, 0, len(p.HTTPSUpstreamHosts)+len(DefaultHTTPSUpstreamHosts))
+	add := func(hosts []string) {
+		for _, h := range hosts {
+			key := strings.ToLower(strings.TrimSpace(h))
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			result = append(result, h)
+		}
+	}
+	add(p.HTTPSUpstreamHosts)
+	if p.TrustsKnownRepos() {
+		add(DefaultHTTPSUpstreamHosts)
+	}
 	return result
 }
 

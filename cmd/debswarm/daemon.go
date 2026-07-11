@@ -437,6 +437,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		RetryInterval:              cfg.Transfer.RetryIntervalDuration(),
 		RetryMaxAge:                cfg.Transfer.RetryMaxAgeDuration(),
 		AllowedHosts:               cfg.Proxy.EffectiveAllowedHosts(),
+		HTTPSUpstreamHosts:         cfg.Proxy.EffectiveHTTPSUpstreamHosts(),
 	}
 
 	proxyServer := proxy.NewServer(proxyCfg, pkgCache, idx, p2pNode, fetcher, logger)

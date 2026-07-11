@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Upstream HTTPS fetch**: the proxy can now open its own HTTPS connection to a mirror while APT talks plain HTTP to the local proxy, so HTTPS-only repositories (e.g. `pkgs.k8s.io`) can be cached, SHA256-verified, and shared over P2P — none of which an opaque HTTPS `CONNECT` tunnel can do. Enabled per-host via the new `[proxy] https_upstream_hosts` option; known HTTPS-only repos (`pkgs.k8s.io`) are included automatically when `trust_known_repos` is enabled. Only `http://` requests to listed hosts are upgraded; cache keys, index lookups, and P2P content addressing are unaffected.
 - **Trusted third-party repositories by default**: common repositories now work through the proxy without configuration — Launchpad PPAs (`ppa.launchpad.net`, `ppa.launchpadcontent.net`, `launchpadlibrarian.net`), `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`, `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org`, and `pkgs.k8s.io`. Controlled by the new `[proxy] trust_known_repos` option (default `true`; set to `false` for a strict Debian/Ubuntu/Mint-only posture). SSRF protection and SHA256 verification are unchanged.
 - **Flat-layout repository support**: repositories that serve metadata and packages directly, without a `dists/pool` tree (e.g. Kubernetes `pkgs.k8s.io`), are now recognized by APT request shape (`Release`, `InRelease`, `Packages*`, `Sources*`, `by-hash/`, `*.deb`) and proxied. Arbitrary non-repository files on an allowed host remain blocked.
 
@@ -21,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - Added tests for mirror redirect safety (including hex-encoded loopback) and loopback API enforcement (IPv4/IPv6)
+- Added tests for upstream HTTPS fetch (scheme upgrade, subdomain/case handling, explicit `:80` stripping) and `EffectiveHTTPSUpstreamHosts` merging
 
 ### Dependencies
 - Bumped `modernc.org/sqlite` from 1.44.3 to 1.53.0
