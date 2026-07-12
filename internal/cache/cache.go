@@ -460,13 +460,15 @@ func (c *Cache) flushAccess() {
 		_ = tx.Rollback()
 		return
 	}
+	defer func() {
+		if closeErr := stmt.Close(); closeErr != nil {
+			c.logger.Warn("Failed to close access-time statement", zap.Error(closeErr))
+		}
+	}()
 	for hash, rec := range pending {
 		if _, err := stmt.Exec(rec.last, rec.count, hash); err != nil {
 			c.logger.Warn("Failed to flush access time", zap.Error(err))
 		}
-	}
-	if err := stmt.Close(); err != nil {
-		c.logger.Warn("Failed to close access-time statement", zap.Error(err))
 	}
 	if err := tx.Commit(); err != nil {
 		c.logger.Warn("Failed to commit access-time flush", zap.Error(err))
