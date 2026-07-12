@@ -175,3 +175,44 @@ jobs:
         with:
           name: debswarm-deb-amd64
           path: dist/*.deb
+
+      # Smoke-test the package we just built: install it, then confirm the binary,
+      # conffiles, dependency, and maintainer-script actions are all correct and
+      # that the daemon comes up with the packaged config and serves a request.
+      - name: Install the built package
+        run: sudo apt-get install -y ./dist/*.deb
+
+      - name: Verify installed package
+        run: |
+          # "version" is a subcommand, not a --version flag
+          debswarm version | grep -qi 'debswarm version'
+          # dpkg-managed conffiles are in place
+          test -f /etc/debswarm/config.toml
+          test -f /etc/apt/apt.conf.d/90debswarm.conf
+          # the declared runtime dependency is satisfied
+          dpkg -s ca-certificates >/dev/null
+          # the systemd unit and system user were created by the maintainer scripts
+          test -f /lib/systemd/system/debswarm.service
+          getent passwd debswarm >/dev/null
+
+      - name: Daemon starts with the packaged config
+        run: |
+          # Run as root so it can write the system cache dir (/var/cache/debswarm,
+          # owned by the debswarm user) and bind the proxy/metrics ports.
+          sudo debswarm daemon --log-level info >/tmp/debswarm.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if grep -q 'Starting HTTP proxy' /tmp/debswarm.log 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat /tmp/debswarm.log
+          # LAN fleet sharing is on by default
+          grep -q 'Fleet coordination enabled' /tmp/debswarm.log
+          # the metrics/stats endpoint responds
+          curl -fsS http://127.0.0.1:9978/stats | grep -q requests_total
+
+      - name: Proxy serves a real repository index
+        run: |
+          # A local mirror can't be used (SSRF protection blocks private hosts),
+          # so fetch through the proxy from a default-allowed public mirror.
+          curl -fsS --retry 3 --retry-delay 2 -x http://127.0.0.1:9977 \
+            http://deb.debian.org/debian/dists/bookworm/InRelease | grep -q '^Origin: Debian'
