@@ -116,19 +116,26 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 
 // run executes the full wizard flow.
 func (w *wizard) run(outputPath string) error {
-	editing := w.editing
-
 	w.printf("\n")
 	w.printf("╔══════════════════════════════════════════╗\n")
 	w.printf("║   debswarm configuration wizard          ║\n")
-	if editing {
-		w.printf("║   Press Enter to keep [current] values    ║\n")
-	} else {
-		w.printf("║   Press Enter to accept [defaults]       ║\n")
-	}
 	w.printf("╚══════════════════════════════════════════╝\n")
+
+	// When a config already exists, let the user choose up front between editing it
+	// and starting clean. Without this the only way to reset was to pick a profile,
+	// which resets some fields (cache size, rates, mDNS, fleet, metrics bind) but
+	// silently keeps others (ports, bootstrap peers, PSK path, allowed hosts) —
+	// not a reset at all, and not obvious which is which.
+	if w.editing && w.promptStartFresh() {
+		w.cfg = config.DefaultConfig()
+		w.editing = false
+	}
+	editing := w.editing
+
 	if editing {
-		w.printf("\nEditing existing configuration: %s\n", w.existingPath)
+		w.printf("\nEditing %s — press Enter to keep each [current] value.\n", w.existingPath)
+	} else {
+		w.printf("\nPress Enter to accept each [default].\n")
 	}
 	w.printf("\n")
 
@@ -201,6 +208,34 @@ func (w *wizard) run(outputPath string) error {
 	w.printf("  debswarm config show               # review configuration\n")
 	w.printf("  sudo systemctl enable --now debswarm  # enable on boot (Linux)\n")
 	return nil
+}
+
+// promptStartFresh asks whether to edit the existing config or discard it and
+// start from the defaults. Returns true to start fresh.
+//
+// Either way the result is saved back to the same file; "start fresh" only
+// controls the values the wizard begins from, and nothing is written until the
+// final confirmation.
+func (w *wizard) promptStartFresh() bool {
+	w.printf("\nFound an existing configuration: %s\n", w.existingPath)
+	idx := w.promptChoice(
+		"Start from it, or start over?",
+		[]string{
+			"Edit it — every prompt starts from your current value",
+			"Start from scratch — discard it and begin from the defaults",
+		},
+		0,
+	)
+	if idx == 0 {
+		return false
+	}
+	w.printf("  This discards every current setting, including ones the wizard does not\n")
+	w.printf("  ask about (bootstrap peers, PSK path, DHT intervals, allowed hosts).\n")
+	if !w.promptYesNo("  Start from scratch?", false) {
+		return false
+	}
+	w.printf("  Starting from defaults. %s is rewritten when you confirm at the end.\n", w.existingPath)
+	return true
 }
 
 // profileLabels are the deployment profiles offered in step 1, in the same order

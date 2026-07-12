@@ -116,10 +116,12 @@ func TestWizard_UnparseableExistingConfigIsReplaced(t *testing.T) {
 	}
 }
 
-// editKeepAllInputs answers "keep current settings" at step 1 and presses Enter
-// through every remaining prompt. Nothing should change.
+// editKeepAllInputs chooses "edit it" when an existing config is found, then
+// "keep current settings" at step 1, then presses Enter through every remaining
+// prompt. Nothing should change.
 func editKeepAllInputs() []string {
 	return []string{
+		"",  // found existing config: edit it (default)
 		"",  // step 1: keep current settings
 		"",  // cache size
 		"",  // upload rate
@@ -175,9 +177,10 @@ func TestWizard_EditExisting_KeepsAllSettings(t *testing.T) {
 
 func TestWizard_EditExisting_ApplyProfileOverwrites(t *testing.T) {
 	lines := append([]string{
+		"",  // found existing config: edit it
 		"2", // step 1: Home user profile (option 1 is "keep current")
 		"y", // yes, apply it (overwrites cache size, rates, etc.)
-	}, editKeepAllInputs()[1:]...)
+	}, editKeepAllInputs()[2:]...)
 
 	w, path, f := newEditingWizard(t, lines...)
 	defer f.Close()
@@ -206,9 +209,10 @@ func TestWizard_EditExisting_ApplyProfileOverwrites(t *testing.T) {
 
 func TestWizard_EditExisting_DeclineProfileKeepsSettings(t *testing.T) {
 	lines := append([]string{
+		"",  // found existing config: edit it
 		"2", // step 1: pick Home user profile...
 		"n", // ...then decline to apply it
-	}, editKeepAllInputs()[1:]...)
+	}, editKeepAllInputs()[2:]...)
 
 	w, path, f := newEditingWizard(t, lines...)
 	defer f.Close()
@@ -234,7 +238,7 @@ func TestWizard_EditExisting_DeclineProfileKeepsSettings(t *testing.T) {
 
 func TestWizard_EditExisting_ClearHostsWithNone(t *testing.T) {
 	lines := editKeepAllInputs()
-	lines[8] = "none" // additional repo hosts: clear the list
+	lines[9] = "none" // additional repo hosts: clear the list
 
 	w, path, f := newEditingWizard(t, lines...)
 	defer f.Close()
@@ -250,6 +254,87 @@ func TestWizard_EditExisting_ClearHostsWithNone(t *testing.T) {
 
 	if len(cfg.Proxy.AllowedHosts) != 0 {
 		t.Errorf(`allowed_hosts = %v, want empty — "none" should clear the list`, cfg.Proxy.AllowedHosts)
+	}
+}
+
+// Choosing "start from scratch" must discard everything — including settings the
+// wizard never asks about — and rewrite the same file from the defaults.
+func TestWizard_EditExisting_StartFromScratch(t *testing.T) {
+	w, path, f := newEditingWizard(t,
+		"2", // found existing config: start from scratch
+		"y", // confirm: yes, discard current settings
+		"1", // step 1: Home user profile (create flow — no "keep current" option)
+		"",  // cache size
+		"",  // upload rate
+		"",  // download rate
+		"",  // proxy port
+		"",  // p2p port
+		"",  // metrics port
+		"",  // trust known repos
+		"",  // additional repo hosts
+		"",  // mdns
+		"",  // fleet
+		"",  // log level
+		"y", // confirm save
+	)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	// Every custom value from customConfigTOML must be gone.
+	if cfg.Network.ProxyPort != 9977 {
+		t.Errorf("proxy_port = %d, want default 9977 — start-from-scratch must discard 8888", cfg.Network.ProxyPort)
+	}
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want default %q — must discard 99GB", cfg.Cache.MaxSize, "10GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "0" {
+		t.Errorf("max_upload_rate = %q, want default %q — must discard 25MB/s", cfg.Transfer.MaxUploadRate, "0")
+	}
+	if cfg.Logging.Level != "info" {
+		t.Errorf("logging.level = %q, want default %q — must discard debug", cfg.Logging.Level, "info")
+	}
+	if !cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos = false, want default true — must discard the old value")
+	}
+	if len(cfg.Proxy.AllowedHosts) != 0 {
+		t.Errorf("allowed_hosts = %v, want empty — must discard my-mirror.example.com", cfg.Proxy.AllowedHosts)
+	}
+}
+
+// Declining the start-from-scratch confirmation must fall back to editing, not
+// silently discard the config.
+func TestWizard_EditExisting_DeclineStartFromScratch(t *testing.T) {
+	lines := append([]string{
+		"2", // found existing config: start from scratch...
+		"n", // ...then think better of it
+	}, editKeepAllInputs()[1:]...) // continues as a normal edit
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q — declining must keep the current settings",
+			cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 — declining must keep the current settings", cfg.Network.ProxyPort)
 	}
 }
 

@@ -24,7 +24,20 @@ debswarm config wizard --config /etc/debswarm/config.toml  # edit a specific fil
 
 The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, repositories, mDNS, fleet coordination, and log level with inline validation.
 
-**Editing an existing configuration (v1.30+):** if a config file already exists, the wizard loads it and edits it in place rather than starting from defaults. Every prompt defaults to your current value, so pressing Enter through the wizard changes nothing, and the result is written back to the file it was read from. Step 1 defaults to **"Keep current settings"**; picking a deployment profile instead will overwrite your cache size, rate limits, mDNS, fleet, and metrics settings, so the wizard asks for confirmation before applying one.
+**Editing an existing configuration (v1.30+):** if a config file already exists, the wizard says so and asks what you want to do:
+
+```
+Found an existing configuration: /etc/debswarm/config.toml
+Start from it, or start over?
+  > [1] Edit it — every prompt starts from your current value
+    [2] Start from scratch — discard it and begin from the defaults
+```
+
+**Edit it** (the default) loads your config and edits it in place. Every prompt defaults to your current value, so pressing Enter through the wizard changes nothing. Within the edit flow, Step 1 defaults to **"Keep current settings"**; picking a deployment profile instead overwrites your cache size, rate limits, mDNS, fleet, and metrics settings, so the wizard confirms before applying one.
+
+**Start from scratch** discards everything and begins from the defaults — including settings the wizard never asks about, such as bootstrap peers, PSK path, DHT intervals, and allowed hosts. It asks for confirmation first (defaulting to *no*).
+
+Either way the result is written back to the config file that was found, and nothing is written until you confirm at the final summary.
 
 The wizard finds an existing config using the same precedence as the daemon: `--config`, then `/etc/debswarm/config.toml`, then `~/.config/debswarm/config.toml`.
 
