@@ -14,6 +14,7 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -476,8 +477,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.retryCancel()
 	}
 
-	// Stop accepting new announcements and wait for pending ones
-	close(s.announceChan)
+	// Wait for the announcement worker to drain in-flight announcements. It stops
+	// on announceCtx cancellation (above); the channel is intentionally NOT closed,
+	// because in-flight request/retry goroutines may still call announceAsync during
+	// shutdown, and a send on a closed channel would panic.
 	select {
 	case <-s.announceDone:
 	case <-ctx.Done():
@@ -716,7 +719,9 @@ const (
 func (s *Server) classifyRequest(url string) requestType {
 	lower := strings.ToLower(url)
 
-	if strings.HasSuffix(lower, ".deb") {
+	if strings.HasSuffix(lower, ".deb") ||
+		strings.HasSuffix(lower, ".udeb") ||
+		strings.HasSuffix(lower, ".ddeb") {
 		return requestTypePackage
 	}
 
@@ -1238,6 +1243,12 @@ func (s *Server) processDownloadSuccess(ctx context.Context, result *downloader.
 
 	// Handle file-based result (chunked download - streaming)
 	if result.FilePath != "" {
+		// The assembly file lives in a per-download directory (the resumable
+		// partial/{hash} dir, or a temp dir when resume is disabled). Once we're
+		// done with it, remove that directory so it does not leak as an empty dir
+		// after PutFile renames the file away.
+		assemblyDir := filepath.Dir(result.FilePath)
+
 		// Move verified file directly to cache (no memory copy)
 		if err := s.cache.PutFile(result.FilePath, expectedHash, path, result.Size); err != nil {
 			// Caching failed (e.g. cache full). The package is fully downloaded and
@@ -1247,7 +1258,7 @@ func (s *Server) processDownloadSuccess(ctx context.Context, result *downloader.
 			// rename on a full cache, so the source file is still present here.
 			log.Warn("Failed to cache file, serving directly without caching", zap.Error(err))
 			data, readErr := os.ReadFile(result.FilePath) // #nosec G304 -- path is our own assembled download file
-			_ = os.Remove(result.FilePath)
+			_ = os.RemoveAll(assemblyDir)
 			if readErr == nil {
 				return &packageDownloadResult{
 					data:        data,
@@ -1262,6 +1273,7 @@ func (s *Server) processDownloadSuccess(ctx context.Context, result *downloader.
 			log.Error("Failed to read downloaded file after cache failure", zap.Error(readErr))
 		} else {
 			s.announceAsync(expectedHash)
+			_ = os.RemoveAll(assemblyDir)
 		}
 
 		return &packageDownloadResult{
@@ -1351,36 +1363,36 @@ func (s *Server) announcementWorker() {
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
 
-	for hash := range s.announceChan {
-		// Check if we're shutting down before processing
+	// Loop until the announce context is canceled (shutdown). We select on the
+	// context rather than ranging s.announceChan, because the channel is never
+	// closed — closing it would race with in-flight announceAsync sends and panic.
+	for {
 		select {
 		case <-s.announceCtx.Done():
-			continue
-		default:
-		}
-
-		sem <- struct{}{} // Acquire semaphore
-		wg.Add(1)
-		go func(h string) {
-			defer func() {
-				<-sem // Release semaphore
-				wg.Done()
-			}()
-			// Use server's announce context as parent so announcements stop on shutdown
-			ctx, cancel := context.WithTimeout(s.announceCtx, announceTimeout)
-			defer cancel()
-			if err := s.p2pNode.Provide(ctx, h); err != nil {
-				// Don't log context canceled errors during shutdown
-				if s.announceCtx.Err() == nil {
-					s.logger.Debug("Failed to announce", zap.Error(err))
+			// Wait for all in-flight announcements to complete, then signal done.
+			wg.Wait()
+			close(s.announceDone)
+			return
+		case hash := <-s.announceChan:
+			sem <- struct{}{} // Acquire semaphore
+			wg.Add(1)
+			go func(h string) {
+				defer func() {
+					<-sem // Release semaphore
+					wg.Done()
+				}()
+				// Use server's announce context as parent so announcements stop on shutdown
+				ctx, cancel := context.WithTimeout(s.announceCtx, announceTimeout)
+				defer cancel()
+				if err := s.p2pNode.Provide(ctx, h); err != nil {
+					// Don't log context canceled errors during shutdown
+					if s.announceCtx.Err() == nil {
+						s.logger.Debug("Failed to announce", zap.Error(err))
+					}
 				}
-			}
-		}(hash)
+			}(hash)
+		}
 	}
-
-	// Wait for all in-flight announcements to complete
-	wg.Wait()
-	close(s.announceDone)
 }
 
 // retryWorker periodically checks for failed downloads and retries them
