@@ -35,6 +35,13 @@ connectivity_check_interval = "30s"
 # Used for HEAD requests to verify internet access
 # connectivity_check_url = "https://deb.debian.org"
 
+# NAT traversal (both default to true)
+# enable_relay: use circuit relays to reach peers behind NAT
+# enable_hole_punching: attempt direct connections through NAT (DCUtR)
+# Disable only if your network policy forbids relayed or hole-punched connections.
+# enable_relay = true
+# enable_hole_punching = true
+
 # Bootstrap peers for DHT initialization
 # These are libp2p public bootstrap nodes; add your own for private networks
 bootstrap_peers = [

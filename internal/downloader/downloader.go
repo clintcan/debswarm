@@ -263,8 +263,14 @@ func (d *Downloader) downloadChunked(
 		}
 
 		if existingState == nil {
-			// Create new download state
-			if err := d.stateManager.CreateDownload(expectedHash, "", expectedSize, d.chunkSize); err != nil {
+			// Create new download state. The mirror URL must be persisted: the proxy's
+			// retry worker skips any failed download whose stored URL is empty, so
+			// omitting it here silently disables retries for this download.
+			mirrorURL := ""
+			if ms, ok := mirrorSource.(*MirrorSource); ok && ms != nil {
+				mirrorURL = ms.URL
+			}
+			if err := d.stateManager.CreateDownload(expectedHash, mirrorURL, expectedSize, d.chunkSize); err != nil {
 				// Continue without persistence
 				resumeEnabled = false
 			}

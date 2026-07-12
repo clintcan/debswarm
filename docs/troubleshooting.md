@@ -311,13 +311,13 @@ sudo apt-get update -o Debug::Acquire::http=true
 
 #### HTTPS repositories not working
 
-**Symptom**: HTTPS repos fail through proxy or don't use P2P.
+**Symptom**: HTTPS repos fail through the proxy, or work but never use the cache or P2P.
 
-**Cause**: HTTPS repositories require the HTTP CONNECT method for tunneling.
+There are two ways to handle an HTTPS repository, and they behave very differently. Pick based on whether you need caching and P2P for that repo.
 
-**Solution** (v1.20+):
+##### Option A — CONNECT tunnel (v1.20+): works everywhere, but no caching or P2P
 
-debswarm now supports HTTP CONNECT tunneling for HTTPS repositories. Configure APT to use the proxy for HTTPS:
+APT keeps its `https://` source and debswarm tunnels the encrypted connection through untouched.
 
 ```bash
 # Configure APT to use proxy for HTTPS (in addition to HTTP)
@@ -327,22 +327,42 @@ echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
 
 **How it works:**
 1. APT sends `CONNECT deb.debian.org:443` to the proxy
-2. debswarm validates the target is a known Debian/Ubuntu mirror
+2. debswarm validates the target is an allowed mirror
 3. A TCP tunnel is established for the encrypted traffic
 4. APT communicates directly with the mirror over TLS through the tunnel
 
-**Security notes:**
-- CONNECT tunnels only allow ports 443 and 80
-- Only known Debian/Ubuntu mirrors are allowed (deb.debian.org, archive.ubuntu.com, security.*, mirrors.*, etc.)
-- Private/internal hosts (localhost, RFC1918 addresses) are blocked
-- The encrypted content passes through unchanged (no caching for HTTPS)
+**The catch:** the tunnel is *opaque*. debswarm sees only encrypted bytes, so packages fetched this way **cannot be cached, hash-verified, or shared over P2P**. If a repo's packages are going over a CONNECT tunnel, they are not in the swarm.
 
-**P2P benefits for HTTPS repos:**
-While HTTPS traffic itself isn't cached, debswarm can still provide P2P benefits:
-- APT's package lists are updated through the proxy and indexed
-- When APT later requests a `.deb` file, the hash is known from the index
-- The actual package can be fetched from P2P peers if available
-- Only the index/metadata goes through HTTPS; packages can come from P2P
+You still get partial benefit when a repo's *index* is fetched over plain HTTP: the package hashes become known, so a later `.deb` request can be served from P2P. But if the `.deb` itself is tunnelled, it isn't.
+
+##### Option B — upstream HTTPS fetch (v1.30+): full caching and P2P
+
+Point APT at the repo over **plain HTTP** and let debswarm open its own HTTPS connection to the mirror on your behalf. APT talks HTTP to your local proxy; debswarm talks HTTPS to the internet. Packages are cached, SHA256-verified against the signed index, and shared over P2P like any other repo.
+
+This is **not** a MITM — no certificate is forged, and APT's GPG verification of the signed `Release`/`InRelease` is untouched and still authoritative.
+
+```toml
+# /etc/debswarm/config.toml
+[proxy]
+https_upstream_hosts = ["pkgs.k8s.io"]   # included by default
+```
+
+```
+# /etc/apt/sources.list.d/kubernetes.list — note http://, not https://
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] http://pkgs.k8s.io/core:/stable:/v1.30/deb/ /
+```
+
+Notes:
+- The host must also be allowed (built-in, trusted via `trust_known_repos`, or listed in `allowed_hosts`). `pkgs.k8s.io` satisfies this by default.
+- Only `http://` requests to listed hosts are upgraded. Matching is case-insensitive and covers subdomains.
+- This is the right option for HTTPS-only repos (such as `pkgs.k8s.io`), which cannot serve plain HTTP at all.
+
+See [Configuration: HTTPS-only repositories](configuration.md#https-only-repositories) for details.
+
+**Security notes (both options):**
+- CONNECT tunnels only allow ports 443 and 80
+- Only allowed mirrors are permitted; private/internal hosts (localhost, RFC1918 addresses) are blocked
+- Every cached package is verified against the SHA256 in the signed repository index
 
 **Pre-v1.20 behavior:**
 In older versions, HTTPS repositories bypass the proxy entirely. For P2P benefits with older versions, use HTTP mirrors or configure mixed sources.

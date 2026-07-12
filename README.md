@@ -13,7 +13,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **Transparent APT Integration** - Just use `apt install` as usual
 - **P2P Package Sharing** - Download from and upload to other debswarm users
 - **Multi-Repository Support** - Works with Debian, Ubuntu, and third-party repositories simultaneously
-- **HTTPS Repository Support** - HTTP CONNECT tunneling for HTTPS sources (v1.20+)
+- **HTTPS Repository Support** - CONNECT tunneling for HTTPS sources (v1.20+), plus upstream HTTPS fetch (v1.30+) so HTTPS-only repos are cached, verified, and P2P-shared
 - **Hash Verification** - All packages verified against signed repository metadata
 - **Fleet Coordination** - LAN download deduplication: only one node fetches from WAN, others get it via P2P
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
@@ -72,6 +72,8 @@ sudo apt install vim
 echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
   sudo tee -a /etc/apt/apt.conf.d/90debswarm
 ```
+
+> **Note:** the HTTPS line above sets up a CONNECT tunnel, which is opaque — those packages are **not** cached or P2P-shared. To get caching and P2P for an HTTPS-only repo (e.g. `pkgs.k8s.io`), point its `sources.list` entry at `http://` and list its host in `[proxy] https_upstream_hosts`; debswarm then makes its own HTTPS connection to the mirror. See [HTTPS-only repositories](docs/configuration.md#https-only-repositories).
 
 ## How It Works
 
@@ -522,6 +524,9 @@ cat /etc/apt/apt.conf.d/90debswarm.conf
 
 # For HTTPS repositories (v1.20+), also add:
 # Acquire::https::Proxy "http://127.0.0.1:9977";
+#
+# Note: this tunnels HTTPS opaquely (no caching/P2P). For caching and P2P on an
+# HTTPS-only repo, use http:// in sources.list + [proxy] https_upstream_hosts.
 ```
 
 **No peers found:**
