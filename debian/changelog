@@ -1,3 +1,13 @@
+debswarm (1.30.1-1) stable; urgency=low
+
+  * Fix: declare a dependency on ca-certificates. The proxy opens its own HTTPS
+    connection for upstream-HTTPS fetch (e.g. pkgs.k8s.io) and for the
+    connectivity check, both of which use the system CA trust store. On minimal
+    images without ca-certificates (cloud/container installs) these failed TLS
+    verification; the package now pulls in the CA bundle.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 13 Jul 2026 00:00:00 +0000
+
 debswarm (1.30.0-1) stable; urgency=low
 
   * LAN peer-to-peer sharing (fleet) is now enabled by default; nearby nodes

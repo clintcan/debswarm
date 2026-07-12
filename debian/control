@@ -14,7 +14,7 @@ Rules-Requires-Root: no
 
 Package: debswarm
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, ca-certificates
 Recommends: apt-transport-https
 Description: Peer-to-peer package distribution for APT
  debswarm accelerates APT package downloads by fetching packages from
