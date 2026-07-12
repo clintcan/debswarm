@@ -17,7 +17,14 @@ type Config struct {
 	MaxWaitTime     time.Duration // Max time to wait for peer download
 	AllowConcurrent int           // Max concurrent WAN fetchers
 	RefreshInterval time.Duration // Progress broadcast interval
+	StaleTimeout    time.Duration // Reap a peer's in-flight entry after this long with no progress
 }
+
+// defaultStaleTimeout bounds how long a peer may be recorded as fetching a
+// package without any progress update before the reaper drops the entry. A live
+// fetcher broadcasts progress every RefreshInterval (1s by default), so a much
+// larger window reliably distinguishes a dead/silent fetcher from a slow one.
+const defaultStaleTimeout = 60 * time.Second
 
 // DefaultConfig returns default configuration
 func DefaultConfig() *Config {
@@ -26,6 +33,7 @@ func DefaultConfig() *Config {
 		MaxWaitTime:     5 * time.Minute,
 		AllowConcurrent: 1,
 		RefreshInterval: time.Second,
+		StaleTimeout:    defaultStaleTimeout,
 	}
 }
 
@@ -114,6 +122,12 @@ func New(cfg *Config, peers PeerProvider, cache CacheChecker, logger *zap.Logger
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
+	// Callers may build a Config literal without StaleTimeout (the daemon does);
+	// a zero value would make IsStale always true and reap every entry, so clamp
+	// it to a sane default here.
+	if cfg.StaleTimeout <= 0 {
+		cfg.StaleTimeout = defaultStaleTimeout
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -133,6 +147,10 @@ func New(cfg *Config, peers PeerProvider, cache CacheChecker, logger *zap.Logger
 	// Start message handler
 	c.wg.Add(1)
 	go c.messageHandler()
+
+	// Start the stale-entry reaper
+	c.wg.Add(1)
+	go c.reaper()
 
 	return c
 }
@@ -499,6 +517,60 @@ func (c *Coordinator) messageHandler() {
 		case pm := <-c.msgChan:
 			c.handleMessage(pm)
 		}
+	}
+}
+
+// reaper periodically drops in-flight entries for peers that were recorded as
+// fetching a package but have gone silent (no progress within StaleTimeout) —
+// e.g. the fetcher crashed, or it won the election but satisfied the request
+// from its own cache/LAN without announcing completion. Without this, such an
+// entry lingers: any local caller still waiting on it only recovers via its own
+// MaxWaitTime, and a later WantPackage for the same hash would attach to the
+// dead fetcher instead of fetching. Only peer-fetcher entries are reaped; our
+// own downloads (Fetcher == "") are managed by the download lifecycle.
+func (c *Coordinator) reaper() {
+	defer c.wg.Done()
+
+	interval := max(c.config.StaleTimeout/2, time.Second)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-ticker.C:
+			c.reapStale()
+		}
+	}
+}
+
+// reapStale drops stale peer-fetcher entries and releases their waiters so the
+// waiters fall back to their own download instead of waiting the full wait cap.
+func (c *Coordinator) reapStale() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	for hash, state := range c.inFlight {
+		// Never reap our own in-flight downloads (Fetcher == ""): their progress
+		// may legitimately be quiet and they are cleaned up by Notify*.
+		if state.Fetcher == "" || !state.IsStale(c.config.StaleTimeout) {
+			continue
+		}
+
+		for _, ch := range state.Waiters {
+			select {
+			case ch <- ErrPeerFetchFailed:
+			default:
+			}
+			close(ch)
+		}
+		delete(c.inFlight, hash)
+
+		c.logger.Debug("Reaped stale fleet fetch state",
+			zap.String("hash", hash[:min(16, len(hash))]+"..."),
+			zap.String("fetcher", state.Fetcher.String()[:min(12, len(state.Fetcher.String()))]),
+			zap.Int("waiters", len(state.Waiters)))
 	}
 }
 
