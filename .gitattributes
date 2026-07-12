@@ -1,0 +1,45 @@
+# Enforce LF line endings across the repository.
+#
+# CRLF endings — introduced when a file is checked out on Windows (git's
+# core.autocrlf) or written by an editor that rewrites line endings — break Linux
+# build tooling. A carriage return in debian/rules or the Makefile makes GNU make
+# and dpkg-buildpackage fail with cryptic errors:
+#     make: : No such file or directory
+#     cc      -o .o
+#     cc: fatal error: no input files
+# and a CR in a shell script's shebang breaks debian/postinst and scripts/*.sh.
+#
+# `text=auto` lets git detect text vs. binary; `eol=lf` normalizes every text file
+# to LF in the repository and in the working tree on all platforms.
+* text=auto eol=lf
+
+# Build- and runtime-critical files that MUST be LF (explicit; documents intent).
+Makefile     text eol=lf
+*.mk         text eol=lf
+*.sh         text eol=lf
+debian/**    text eol=lf
+
+# Preserve exact bytes of Go fuzz corpus (a text format where byte values, and any
+# embedded CR/LF inside string literals, are part of the test input).
+**/testdata/fuzz/** -text
+
+# Binary assets: never normalize. None are tracked today; this is a safety net for
+# future additions (images, archives, keys, certificates, compiled artifacts).
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.pdf    binary
+*.gz     binary
+*.tgz    binary
+*.zip    binary
+*.xz     binary
+*.zst    binary
+*.deb    binary
+*.key    binary
+*.pem    binary
+*.crt    binary
+*.der    binary
+*.bin    binary
+*.wasm   binary
