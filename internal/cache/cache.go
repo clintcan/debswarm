@@ -110,10 +110,19 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 	return c, nil
 }
 
+// cacheDBParams configures the modernc.org/sqlite driver. The pragmas MUST use
+// the driver's `_pragma=name(value)` DSN syntax: modernc silently ignores
+// unknown query parameters, so the mattn-style `_journal_mode=WAL` used here
+// previously never enabled WAL — the database ran in DELETE-journal mode with
+// synchronous=FULL, paying rollback-journal fsync costs on every commit.
+// Guarded by TestOpenDatabase_WALEnabled. busy_timeout protects the
+// downloader's state manager, which shares this *sql.DB via GetDB.
+const cacheDBParams = "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)"
+
 // openDatabaseWithRecovery opens the SQLite database with corruption detection and recovery.
 // If the database is corrupted, it attempts to back it up and create a fresh database.
 func openDatabaseWithRecovery(dbPath string, logger *zap.Logger) (*sql.DB, error) {
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", dbPath+cacheDBParams)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -186,7 +195,7 @@ func recoverDatabase(dbPath string, logger *zap.Logger) (*sql.DB, error) {
 	}
 
 	// Create fresh database
-	db, err := sql.Open("sqlite", dbPath+"?_journal_mode=WAL")
+	db, err := sql.Open("sqlite", dbPath+cacheDBParams)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new database: %w", err)
 	}
