@@ -37,7 +37,10 @@ const (
 	maxPackagesPerRepo = 500_000
 )
 
-// PackageInfo holds information about a single package
+// PackageInfo holds information about a single package.
+// Only fields the proxy actually consumes are retained: parsing and storing
+// unused Packages-file fields (Description, SHA512) cost tens of MB of
+// resident strings across a full Debian index.
 type PackageInfo struct {
 	Package      string
 	Version      string
@@ -45,8 +48,6 @@ type PackageInfo struct {
 	Filename     string
 	Size         int64
 	SHA256       string
-	SHA512       string
-	Description  string
 	Repo         string // Repository base URL this package belongs to
 }
 
@@ -215,10 +216,9 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Ensure repo map exists
-	if idx.byRepo[repo] == nil {
-		idx.byRepo[repo] = make(map[string]*PackageInfo)
-	}
+	// Drop the previous generation of this repo's entries first, then rebuild.
+	idx.clearRepoLocked(repo)
+	idx.byRepo[repo] = make(map[string]*PackageInfo)
 
 	scanner := bufio.NewScanner(reader)
 	// Increase buffer size for long lines (descriptions can be long)
@@ -285,10 +285,6 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 			}
 		case "SHA256":
 			pkg.SHA256 = value
-		case "SHA512":
-			pkg.SHA512 = value
-		case "Description":
-			pkg.Description = value
 		}
 	}
 
@@ -463,11 +459,23 @@ func (idx *Index) Clear() {
 func (idx *Index) ClearRepo(repo string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.clearRepoLocked(repo)
+}
 
-	// Remove packages from this repo from the global packages map and basename index
+// clearRepoLocked removes a repo's packages from all lookup maps. The caller
+// must hold idx.mu. parseForRepo runs this before inserting a fresh parse:
+// without it, byBasename appended a new generation of entries on every
+// re-parse while keeping the old one reachable — unbounded memory growth in a
+// long-running daemon (roughly 20-30MB per apt-get update against Debian main).
+func (idx *Index) clearRepoLocked(repo string) {
 	if repoMap := idx.byRepo[repo]; repoMap != nil {
 		for _, pkg := range repoMap {
-			delete(idx.packages, pkg.SHA256)
+			// Only drop the global entry if this repo's parse still owns it — a
+			// later parse of another repo listing the same package (same SHA256)
+			// overwrites packages[sha], and that entry must survive.
+			if cur, ok := idx.packages[pkg.SHA256]; ok && cur == pkg {
+				delete(idx.packages, pkg.SHA256)
+			}
 			// Remove from basename index
 			if pkg.Filename != "" {
 				basename := filepath.Base(pkg.Filename)
