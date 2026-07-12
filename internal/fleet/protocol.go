@@ -13,6 +13,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// peerStream is a cached outbound stream plus a mutex that serializes writes to
+// it. Message.Encode issues several sequential Writes, and the same stream is
+// shared across goroutines (per-request broadcasts, the progress-broadcaster
+// ticker, and inbound-message responses), so without serialization two senders
+// could interleave their writes and corrupt the length-prefixed framing.
+type peerStream struct {
+	s     network.Stream
+	sendM sync.Mutex
+}
+
+// send serializes a single message onto the stream.
+func (ps *peerStream) send(msg *Message) error {
+	ps.sendM.Lock()
+	defer ps.sendM.Unlock()
+	return msg.Encode(ps.s)
+}
+
 // Protocol handles the fleet coordination protocol over libp2p streams
 type Protocol struct {
 	host        host.Host
@@ -20,7 +37,7 @@ type Protocol struct {
 	logger      *zap.Logger
 
 	// Stream management
-	streams   map[peer.ID]network.Stream
+	streams   map[peer.ID]*peerStream
 	streamsMu sync.RWMutex
 }
 
@@ -30,7 +47,7 @@ func NewProtocol(h host.Host, coord *Coordinator, logger *zap.Logger) *Protocol 
 		host:        h,
 		coordinator: coord,
 		logger:      logger,
-		streams:     make(map[peer.ID]network.Stream),
+		streams:     make(map[peer.ID]*peerStream),
 	}
 
 	// Register stream handler
@@ -49,10 +66,10 @@ func (p *Protocol) Close() error {
 	p.streamsMu.Lock()
 	defer p.streamsMu.Unlock()
 
-	for _, s := range p.streams {
-		_ = s.Close()
+	for _, ps := range p.streams {
+		_ = ps.s.Close()
 	}
-	p.streams = make(map[peer.ID]network.Stream)
+	p.streams = make(map[peer.ID]*peerStream)
 
 	return nil
 }
@@ -83,14 +100,14 @@ func (p *Protocol) handleStream(s network.Stream) {
 	}
 }
 
-// getOrCreateStream gets an existing stream or creates a new one
-func (p *Protocol) getOrCreateStream(ctx context.Context, peerID peer.ID) (network.Stream, error) {
+// getOrCreateStream gets an existing cached stream or creates a new one.
+func (p *Protocol) getOrCreateStream(ctx context.Context, peerID peer.ID) (*peerStream, error) {
 	p.streamsMu.RLock()
-	s, ok := p.streams[peerID]
+	ps, ok := p.streams[peerID]
 	p.streamsMu.RUnlock()
 
 	if ok {
-		return s, nil
+		return ps, nil
 	}
 
 	// Create new stream
@@ -100,20 +117,26 @@ func (p *Protocol) getOrCreateStream(ctx context.Context, peerID peer.ID) (netwo
 	}
 
 	p.streamsMu.Lock()
-	p.streams[peerID] = s
-	p.streamsMu.Unlock()
-
-	return s, nil
+	defer p.streamsMu.Unlock()
+	// Another goroutine may have created and cached one while we were dialing;
+	// keep the existing entry and discard the extra stream to avoid a leak.
+	if existing, ok := p.streams[peerID]; ok {
+		_ = s.Reset()
+		return existing, nil
+	}
+	ps = &peerStream{s: s}
+	p.streams[peerID] = ps
+	return ps, nil
 }
 
 // SendMessage sends a message to a specific peer
 func (p *Protocol) SendMessage(ctx context.Context, peerID peer.ID, msg *Message) error {
-	s, err := p.getOrCreateStream(ctx, peerID)
+	ps, err := p.getOrCreateStream(ctx, peerID)
 	if err != nil {
 		return err
 	}
 
-	return msg.Encode(s)
+	return ps.send(msg)
 }
 
 // BroadcastMessage sends a message to all mDNS peers
