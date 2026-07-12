@@ -175,3 +175,45 @@ jobs:
         with:
           name: debswarm-deb-amd64
           path: dist/*.deb
+
+      # Smoke-test the package we just built: install it, then confirm the binary,
+      # conffiles, dependency, and maintainer-script actions are all correct and
+      # that the daemon comes up with the packaged config and serves a request.
+      - name: Install the built package
+        run: sudo apt-get install -y ./dist/*.deb
+
+      - name: Verify installed package
+        run: |
+          # "version" is a subcommand, not a --version flag
+          debswarm version | grep -qi 'debswarm version'
+          # dpkg-managed conffiles are in place
+          test -f /etc/debswarm/config.toml
+          test -f /etc/apt/apt.conf.d/90debswarm.conf
+          # the declared runtime dependency is satisfied
+          dpkg -s ca-certificates >/dev/null
+          # the systemd unit and system user were created by the maintainer scripts
+          test -f /lib/systemd/system/debswarm.service
+          getent passwd debswarm >/dev/null
+
+      - name: Daemon runs from the installed systemd service
+        run: |
+          # Installing the package starts the debswarm systemd service (the runner
+          # has systemd), so verify that instance — the real install path — rather
+          # than launching a second daemon (which would collide on the P2P port).
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9978/stats >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          sudo systemctl is-active --quiet debswarm
+          sudo journalctl -u debswarm --no-pager | tail -n 40
+          # metrics/stats endpoint responds
+          curl -fsS http://127.0.0.1:9978/stats | grep -q requests_total
+          # LAN fleet sharing is on by default
+          sudo journalctl -u debswarm --no-pager | grep -q 'Fleet coordination enabled'
+
+      - name: Proxy serves a real repository index
+        run: |
+          # A local mirror can't be used (SSRF protection blocks private hosts),
+          # so fetch through the proxy from a default-allowed public mirror.
+          curl -fsS --retry 3 --retry-delay 2 -x http://127.0.0.1:9977 \
+            http://deb.debian.org/debian/dists/bookworm/InRelease | grep -q '^Origin: Debian'
