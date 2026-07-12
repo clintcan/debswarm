@@ -89,6 +89,10 @@ type Node struct {
 	// Private swarm mode (when peer allowlist is active)
 	// Skips DHT announcements to prevent information leakage
 	privateSwarm bool
+
+	// Whether a pre-shared key isolates this swarm: every connected peer is
+	// then a trusted swarm member (see GetMDNSPeers)
+	pskEnabled bool
 }
 
 // ContentGetter is a function that retrieves content by hash
@@ -353,6 +357,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		uploadLimiter:        ratelimit.New(cfg.MaxUploadRate),
 		downloadLimiter:      ratelimit.New(cfg.MaxDownloadRate),
 		privateSwarm:         privateSwarmMode,
+		pskEnabled:           len(cfg.PSK) > 0,
 	}
 
 	// Apply default for max concurrent uploads if not set
@@ -769,6 +774,33 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	}
 	defer stream.Close()
 
+	// Reset the stream if ctx is canceled mid-transfer — e.g. this source lost
+	// a download race. The blocking reads below don't observe ctx (only the
+	// optional rate limiters do), so without this a canceled loser keeps
+	// receiving the entire file, wasting bandwidth and holding one of the remote
+	// peer's limited upload slots until its deadline. Reset unblocks the local
+	// read immediately and signals the remote to stop sending.
+	transferDone := make(chan struct{})
+	defer close(transferDone)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = stream.Reset()
+		case <-transferDone:
+		}
+	}()
+
+	// transferFailure records a peer failure unless the transfer was canceled
+	// by our own ctx (a lost race or shutdown is not the peer's fault and must
+	// not hurt its score) and returns the error to surface.
+	transferFailure := func(reason string, err error) error {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		n.scorer.RecordFailure(peerInfo.ID, reason)
+		return err
+	}
+
 	// Set initial stream deadline for the request/response header phase.
 	// This prevents io.ReadFull from blocking forever on unresponsive peers.
 	// Will be extended after reading the actual transfer size.
@@ -793,15 +825,13 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	}
 
 	if _, err := stream.Write(request); err != nil {
-		n.scorer.RecordFailure(peerInfo.ID, "write failed")
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, transferFailure("write failed", fmt.Errorf("failed to send request: %w", err))
 	}
 
 	// Read response size (8 bytes)
 	sizeBuf := make([]byte, 8)
 	if _, err := io.ReadFull(stream, sizeBuf); err != nil {
-		n.scorer.RecordFailure(peerInfo.ID, "read size failed")
-		return nil, fmt.Errorf("failed to read size: %w", err)
+		return nil, transferFailure("read size failed", fmt.Errorf("failed to read size: %w", err))
 	}
 
 	sizeU64 := binary.BigEndian.Uint64(sizeBuf)
@@ -828,10 +858,7 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	// Cap initial allocation to prevent OOM from peer-controlled size values.
 	// For sizes above the cap, grow incrementally via ReadFull into a pre-sized buffer.
 	const maxInitialAlloc = 10 * 1024 * 1024 // 10MB
-	allocSize := size
-	if allocSize > maxInitialAlloc {
-		allocSize = maxInitialAlloc
-	}
+	allocSize := min(size, maxInitialAlloc)
 	data := make([]byte, allocSize)
 	var reader io.Reader = stream
 	if n.peerDownloadLimiter != nil && n.peerDownloadLimiter.Enabled() {
@@ -844,21 +871,18 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	if size <= maxInitialAlloc {
 		// Small transfer: single allocation already sized correctly
 		if _, err := io.ReadFull(reader, data); err != nil {
-			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
-			return nil, fmt.Errorf("failed to read content: %w", err)
+			return nil, transferFailure("read data failed", fmt.Errorf("failed to read content: %w", err))
 		}
 	} else {
 		// Large transfer: read first chunk, then grow buffer incrementally
 		if _, err := io.ReadFull(reader, data); err != nil {
-			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
-			return nil, fmt.Errorf("failed to read content: %w", err)
+			return nil, transferFailure("read data failed", fmt.Errorf("failed to read content: %w", err))
 		}
 		// Peer is sending real data — now safe to grow to full size
 		remaining := size - maxInitialAlloc
 		tail := make([]byte, remaining)
 		if _, err := io.ReadFull(reader, tail); err != nil {
-			n.scorer.RecordFailure(peerInfo.ID, "read data failed")
-			return nil, fmt.Errorf("failed to read content: %w", err)
+			return nil, transferFailure("read data failed", fmt.Errorf("failed to read content: %w", err))
 		}
 		data = append(data, tail...)
 	}
@@ -1160,13 +1184,24 @@ func (n *Node) GetPeerStats() []*peers.PeerScore {
 	return n.scorer.GetAllStats()
 }
 
-// GetMDNSPeers returns all connected peers discovered via mDNS.
-// For fleet coordination, this returns all connected peers since mDNS
-// discovery happens for LAN peers.
+// GetMDNSPeers returns connected peers that were discovered via mDNS, i.e.
+// genuine LAN peers. Fleet coordination must only address these: a
+// DHT-bootstrapped node is connected to many unrelated public peers, and
+// broadcasting fleet messages to all of them dials pointless streams and makes
+// every cold download's claim window wait on peers that will never answer.
+//
+// In a PSK private swarm with mDNS disabled there is no mDNS discovery to
+// filter on, but the pre-shared key guarantees every connected peer is a
+// trusted swarm member, so all of them count as fleet peers.
 func (n *Node) GetMDNSPeers() []peer.AddrInfo {
+	includeAll := n.pskEnabled && n.mdnsService == nil
+
 	peerIDs := n.host.Network().Peers()
 	result := make([]peer.AddrInfo, 0, len(peerIDs))
 	for _, pid := range peerIDs {
+		if !includeAll && !n.scorer.IsMDNSPeer(pid) {
+			continue
+		}
 		// Get peer addresses from peerstore
 		addrs := n.host.Peerstore().Addrs(pid)
 		if len(addrs) > 0 {

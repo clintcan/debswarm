@@ -22,6 +22,17 @@ const (
 	MsgFetchProgress uint8 = 4 // "Download progress update"
 	MsgFetched       uint8 = 5 // "I finished downloading X"
 	MsgFetchFailed   uint8 = 6 // "I failed to download X"
+
+	// MsgDontHave is the NACK to a WantPackage: "I neither have X nor am
+	// fetching it." Once a requester has received it from every peer it
+	// reached, it can resolve the claim window immediately instead of waiting
+	// out the full claim timeout. If the responder is itself racing for the
+	// same cold package, Offset is 1 and Nonce carries its election nonce so
+	// the requester can fold it into the lowest-nonce-wins election. Peers
+	// running versions without this type ignore it (unknown message types are
+	// skipped), and requesters simply fall back to the claim timer for peers
+	// that never answer — both directions stay compatible.
+	MsgDontHave uint8 = 7
 )
 
 // Message represents a fleet coordination message

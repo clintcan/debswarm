@@ -184,6 +184,15 @@ func (s *Scorer) MarkAsMDNSPeer(peerID peer.ID) {
 	ps.scoreCachedAt = time.Time{}
 }
 
+// IsMDNSPeer reports whether the peer was discovered via mDNS (local LAN peer).
+func (s *Scorer) IsMDNSPeer(peerID peer.ID) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ps, ok := s.peers[peerID]
+	return ok && ps.IsMDNSPeer
+}
+
 // IsBlacklisted checks if a peer is currently blacklisted
 func (s *Scorer) IsBlacklisted(peerID peer.ID) bool {
 	s.mu.RLock()
