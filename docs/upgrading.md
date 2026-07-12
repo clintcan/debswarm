@@ -63,6 +63,10 @@ v1.30.x broadens which repositories work through the proxy and fixes the downloa
 
    **Action**: None required, but be aware this activates real background behavior you were not previously getting: failed chunked downloads (large files) are now retried, up to `retry_max_attempts` times within the `retry_max_age` window. To keep the old effective behavior, set `retry_max_attempts = 0` to disable retries.
 
+5. **LAN fleet sharing is now on by default** (behavior change): `[fleet] enabled` now defaults to `true`. mDNS discovery was already on by default, so nearby nodes found each other but did not share; now they do — nodes on the same LAN share cached packages over P2P and coordinate to avoid redundant WAN downloads. This is what makes debswarm's peer-to-peer sharing work out of the box.
+
+   **Action**: None required to opt in. On a multi-node LAN, nodes will start sharing cached packages with each other after upgrade (packages are still SHA256-verified against the signed index, so a peer cannot serve a tampered package). For an isolated node that should not discover peers or share on the LAN, set `[fleet] enabled = false` (and optionally `[privacy] enable_mdns = false`).
+
 ### Upgrading to v1.29.x
 
 **From v1.28.x:**

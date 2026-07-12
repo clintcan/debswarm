@@ -356,7 +356,7 @@ func TestWizard_HomeProfile(t *testing.T) {
 		"",  // trust known repos: accept default (Y)
 		"",  // additional repo hosts: none
 		"",  // mdns: accept default (Y)
-		"",  // fleet: accept default (N)
+		"",  // fleet: accept default (Y — on by default)
 		"",  // log level: accept default (info)
 		"y", // confirm save
 	)
@@ -378,8 +378,8 @@ func TestWizard_HomeProfile(t *testing.T) {
 	if cfg.Transfer.MaxUploadRate != "0" {
 		t.Errorf("transfer.max_upload_rate = %q, want %q", cfg.Transfer.MaxUploadRate, "0")
 	}
-	if cfg.Fleet.Enabled {
-		t.Errorf("fleet.enabled = true, want false for home profile")
+	if !cfg.Fleet.Enabled {
+		t.Errorf("fleet.enabled = false, want true for home profile (fleet is on by default)")
 	}
 	if cfg.Metrics.Bind != "127.0.0.1" {
 		t.Errorf("metrics.bind = %q, want %q", cfg.Metrics.Bind, "127.0.0.1")
@@ -449,7 +449,7 @@ func TestWizard_PrivateSwarmProfile(t *testing.T) {
 		"",  // additional repo hosts: none
 		"",  // mdns: accept default (Y)
 		"n", // PSK generation: no (skip actual file write in test)
-		"",  // fleet: accept default (N)
+		"",  // fleet: accept default (Y — on by default)
 		"",  // log level: accept default
 		"y", // confirm save
 	)
@@ -511,10 +511,11 @@ func TestWizard_CustomPorts(t *testing.T) {
 	if cfg.Metrics.Port != 0 {
 		t.Errorf("metrics.port = %d, want %d", cfg.Metrics.Port, 0)
 	}
-	// Guards against input misalignment: the home profile leaves fleet off, so a
-	// shifted answer sequence would show up here as fleet being unexpectedly on.
-	if cfg.Fleet.Enabled {
-		t.Error("fleet.enabled = true, want false — wizard input sequence is misaligned")
+	// Guards against input misalignment: the home profile enables fleet, and this
+	// test accepts the fleet prompt's default, so a shifted answer sequence would
+	// show up here as fleet being unexpectedly off.
+	if !cfg.Fleet.Enabled {
+		t.Error("fleet.enabled = false, want true — wizard input sequence is misaligned")
 	}
 }
 
