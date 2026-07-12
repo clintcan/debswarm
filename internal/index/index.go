@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -357,21 +359,66 @@ func (idx *Index) GetByPath(path string) *PackageInfo {
 }
 
 // GetByURLPath extracts repo and path from a URL and looks up the package
-func (idx *Index) GetByURLPath(url string) *PackageInfo {
-	repo := ExtractRepoFromURL(url)
-	path := ExtractPathFromURL(url)
+func (idx *Index) GetByURLPath(rawURL string) *PackageInfo {
+	repo := ExtractRepoFromURL(rawURL)
+	if repo == "" {
+		return nil
+	}
 
-	if repo == "" || path == "" {
+	pathKey := ExtractPathFromURL(rawURL)
+	if pathKey == "" {
+		// Flat-layout repositories (e.g. pkgs.k8s.io) serve packages directly with
+		// no dists/pool tree, so ExtractPathFromURL yields no path. Match on the
+		// package basename instead, preferring the same repo to avoid cross-repo
+		// basename collisions.
+		if base := basenameFromURL(rawURL); base != "" {
+			return idx.GetByBasename(base, repo)
+		}
 		return nil
 	}
 
 	// Try specific repo first
-	if pkg := idx.GetByRepoAndPath(repo, path); pkg != nil {
+	if pkg := idx.GetByRepoAndPath(repo, pathKey); pkg != nil {
 		return pkg
 	}
 
 	// Fall back to any repo with this path
-	return idx.GetByPath(path)
+	return idx.GetByPath(pathKey)
+}
+
+// GetByBasename returns package info by file basename, preferring a match from
+// preferRepo when several repositories share the basename. Used for flat-layout
+// repositories whose URLs carry no dists/pool path.
+func (idx *Index) GetByBasename(basename, preferRepo string) *PackageInfo {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	packages := idx.byBasename[basename]
+	if len(packages) == 0 {
+		return nil
+	}
+	if preferRepo != "" {
+		for _, pkg := range packages {
+			if pkg.Repo == preferRepo {
+				return pkg
+			}
+		}
+	}
+	return packages[0]
+}
+
+// basenameFromURL returns the final path segment of a URL (its filename),
+// ignoring any query string. Returns "" if the URL cannot be parsed.
+func basenameFromURL(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	base := path.Base(u.Path)
+	if base == "." || base == "/" {
+		return ""
+	}
+	return base
 }
 
 // GetByPathSuffix returns package info by path suffix (for URL matching)
