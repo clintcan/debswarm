@@ -691,6 +691,48 @@ func (n *Node) Download(ctx context.Context, peerInfo peer.AddrInfo, sha256Hash 
 	return n.DownloadRange(ctx, peerInfo, sha256Hash, 0, -1)
 }
 
+// rangeRequestLen is the fixed wire size of a range-transfer request:
+// hash(64) + start(8, big-endian) + end(8, big-endian) + newline terminator.
+const rangeRequestLen = 64 + 16 + 1
+
+// encodeRangeRequest builds the fixed-size range-transfer request frame. start
+// must be non-negative; end < 0 (to-EOF) is encoded as 0, which the server reads
+// as "to end of file". The frame is a fixed binary layout and must be decoded by
+// length (see decodeRangeRequest), never scanned for the trailing newline — the
+// big-endian offsets can legitimately contain the newline byte (0x0A).
+func encodeRangeRequest(sha256Hash string, start, end int64) []byte {
+	req := make([]byte, rangeRequestLen)
+	copy(req, sha256Hash)
+	if start < 0 {
+		start = 0
+	}
+	binary.BigEndian.PutUint64(req[64:72], uint64(start)) // #nosec G115 -- start >= 0 above
+	if end < 0 {
+		end = 0
+	}
+	binary.BigEndian.PutUint64(req[72:80], uint64(end)) // #nosec G115 -- end >= 0 above
+	req[rangeRequestLen-1] = '\n'
+	return req
+}
+
+// decodeRangeRequest reads a fixed-size range-transfer request frame written by
+// encodeRangeRequest. It reads exactly rangeRequestLen bytes rather than scanning
+// for a newline, so offsets containing 0x0A are handled correctly. The returned
+// end is 0 for a to-EOF request (the caller treats end<=0 as "to end of file").
+func decodeRangeRequest(r io.Reader) (sha256Hash string, start, end int64, err error) {
+	buf := make([]byte, rangeRequestLen)
+	if _, err = io.ReadFull(r, buf); err != nil {
+		return "", 0, 0, err
+	}
+	startU64 := binary.BigEndian.Uint64(buf[64:72])
+	endU64 := binary.BigEndian.Uint64(buf[72:80])
+	// Validate values fit in int64 to prevent overflow.
+	if startU64 > math.MaxInt64 || endU64 > math.MaxInt64 {
+		return "", 0, 0, fmt.Errorf("range values overflow int64: start=%d end=%d", startU64, endU64)
+	}
+	return string(buf[:64]), int64(startU64), int64(endU64), nil
+}
+
 // DownloadRange downloads a range of bytes from a peer
 // If end is -1, downloads from start to end of file
 func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256Hash string, start, end int64) ([]byte, error) {
@@ -744,17 +786,7 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		if end < -1 {
 			return nil, fmt.Errorf("invalid range: end=%d (must be >= -1)", end)
 		}
-		// Range request: hash + start (8 bytes) + end (8 bytes) + newline
-		// end=-1 (to-EOF) is encoded as 0 in the protocol; the server treats end<=0 as "to end of file"
-		request = make([]byte, 64+16+1)
-		copy(request, sha256Hash)
-		binary.BigEndian.PutUint64(request[64:72], uint64(start)) // #nosec G115 -- validated non-negative above
-		encodedEnd := end
-		if encodedEnd < 0 {
-			encodedEnd = 0
-		}
-		binary.BigEndian.PutUint64(request[72:80], uint64(encodedEnd)) // #nosec G115 -- validated non-negative above
-		request[80] = '\n'
+		request = encodeRangeRequest(sha256Hash, start, end)
 	} else {
 		// Simple request: hash + newline
 		request = []byte(sha256Hash + "\n")
@@ -891,31 +923,16 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	var start, end int64 = 0, -1
 
 	if rangeSupport {
-		// Range request: hash (64) + start (8) + end (8) + newline
-		line, err := bufReader.ReadBytes('\n')
-		if err != nil {
-			return
-		}
-		// Remove newline
-		if len(line) > 0 && line[len(line)-1] == '\n' {
-			line = line[:len(line)-1]
-		}
-
-		if len(line) >= 80 {
-			sha256Hash = string(line[:64])
-			startU64 := binary.BigEndian.Uint64(line[64:72])
-			endU64 := binary.BigEndian.Uint64(line[72:80])
-			// Validate values fit in int64 to prevent overflow
-			if startU64 > math.MaxInt64 || endU64 > math.MaxInt64 {
-				n.logger.Warn("Invalid range values in request (overflow)",
-					zap.Uint64("start", startU64),
-					zap.Uint64("end", endU64))
-				return
+		// Range request is a fixed-size binary frame; it must be read by length,
+		// not scanned for a newline, because the binary offsets can contain the
+		// newline byte (0x0A) and truncate a newline-delimited read.
+		var derr error
+		sha256Hash, start, end, derr = decodeRangeRequest(bufReader)
+		if derr != nil {
+			if derr != io.EOF {
+				n.logger.Debug("Failed to decode range request", zap.Error(derr))
 			}
-			start = int64(startU64) // #nosec G115 -- validated above
-			end = int64(endU64)     // #nosec G115 -- validated above
-		} else {
-			sha256Hash = string(line)
+			return
 		}
 	} else {
 		// Simple request: hash + newline
