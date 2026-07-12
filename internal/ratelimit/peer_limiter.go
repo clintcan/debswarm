@@ -418,16 +418,11 @@ type ComposedLimitedReader struct {
 func (cr *ComposedLimitedReader) Read(p []byte) (n int, err error) {
 	n, err = cr.r.Read(p)
 	if n > 0 {
-		// Wait for BOTH limiters (the stricter one dominates)
-		if cr.globalLim != nil {
-			if waitErr := cr.globalLim.WaitN(cr.ctx, n); waitErr != nil {
-				return n, waitErr
-			}
-		}
-		if cr.peerLim != nil {
-			if waitErr := cr.peerLim.WaitN(cr.ctx, n); waitErr != nil {
-				return n, waitErr
-			}
+		// Wait for BOTH limiters (the stricter one dominates), splitting into
+		// burst-sized waits so neither limiter is asked for more than its burst
+		// (rate.WaitN errors when n exceeds a finite limiter's burst).
+		if waitErr := composedWaitN(cr.ctx, n, cr.globalLim, cr.peerLim); waitErr != nil {
+			return n, waitErr
 		}
 	}
 	return n, err
@@ -441,20 +436,66 @@ type ComposedLimitedWriter struct {
 	ctx       context.Context
 }
 
-// Write implements io.Writer with composed rate limiting
+// Write implements io.Writer with composed rate limiting.
+// Splits into burst-sized chunks (waiting on both limiters before each) so
+// neither limiter is asked for more than its burst — rate.WaitN errors when
+// len(p) exceeds a finite limiter's burst.
 func (cw *ComposedLimitedWriter) Write(p []byte) (n int, err error) {
-	// Wait for BOTH limiters before writing (the stricter one dominates)
-	if cw.globalLim != nil {
-		if err := cw.globalLim.WaitN(cw.ctx, len(p)); err != nil {
-			return 0, err
+	burst := composedBurst(cw.globalLim, cw.peerLim)
+	for n < len(p) {
+		end := len(p)
+		if burst > 0 && n+burst < end {
+			end = n + burst
+		}
+		chunk := p[n:end]
+		if waitErr := composedWaitN(cw.ctx, len(chunk), cw.globalLim, cw.peerLim); waitErr != nil {
+			return n, waitErr
+		}
+		written, werr := cw.w.Write(chunk)
+		n += written
+		if werr != nil {
+			return n, werr
 		}
 	}
-	if cw.peerLim != nil {
-		if err := cw.peerLim.WaitN(cw.ctx, len(p)); err != nil {
-			return 0, err
+	return n, nil
+}
+
+// composedBurst returns the smallest burst among the given non-nil limiters, so
+// a wait sized to it never exceeds any limiter's burst. Returns 0 if none apply.
+func composedBurst(limiters ...*rate.Limiter) int {
+	burst := 0
+	for _, l := range limiters {
+		if l == nil {
+			continue
+		}
+		if b := l.Burst(); burst == 0 || b < burst {
+			burst = b
 		}
 	}
-	return cw.w.Write(p)
+	return burst
+}
+
+// composedWaitN waits for n bytes across all non-nil limiters, splitting into
+// burst-sized pieces so no single WaitN exceeds a limiter's burst.
+func composedWaitN(ctx context.Context, n int, limiters ...*rate.Limiter) error {
+	burst := composedBurst(limiters...)
+	remaining := n
+	for remaining > 0 {
+		wait := remaining
+		if burst > 0 && wait > burst {
+			wait = burst
+		}
+		for _, l := range limiters {
+			if l == nil {
+				continue
+			}
+			if err := l.WaitN(ctx, wait); err != nil {
+				return err
+			}
+		}
+		remaining -= wait
+	}
+	return nil
 }
 
 // calculateBurst determines the burst size for a rate limiter

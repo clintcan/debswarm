@@ -10,6 +10,7 @@ import (
 
 	"github.com/libp2p/go-libp2p/core/peer"
 	"go.uber.org/zap"
+	"golang.org/x/time/rate"
 
 	"github.com/debswarm/debswarm/internal/peers"
 )
@@ -363,6 +364,67 @@ func TestComposedLimitedWriter_Write(t *testing.T) {
 	if buf.String() != data {
 		t.Errorf("Buffer contains %q, want %q", buf.String(), data)
 	}
+}
+
+// A single Read/Write larger than the smaller limiter's burst must still
+// succeed. rate.WaitN errors when n exceeds a finite limiter's burst, so the
+// composed limiter must split into burst-sized waits. Regression for the bug
+// where it passed the full byte count and aborted P2P transfers (wrongly marking
+// the peer failed) whenever a stream read/write exceeded the per-peer burst.
+func TestComposedLimited_ExceedingBurst(t *testing.T) {
+	const size = 256 * 1024
+	// High limits so the test is fast; bursts deliberately smaller than the payload,
+	// and the two limiters have different bursts so the smaller must be chosen.
+	newGlobal := func() *rate.Limiter { return rate.NewLimiter(rate.Limit(50*1024*1024), 64*1024) }
+	newPeer := func() *rate.Limiter { return rate.NewLimiter(rate.Limit(40*1024*1024), 32*1024) }
+	payload := bytes.Repeat([]byte("x"), size)
+
+	t.Run("reader", func(t *testing.T) {
+		cr := &ComposedLimitedReader{
+			r:         bytes.NewReader(payload),
+			globalLim: newGlobal(),
+			peerLim:   newPeer(),
+			ctx:       context.Background(),
+		}
+		buf := make([]byte, size)
+		n, err := io.ReadFull(cr, buf)
+		if err != nil {
+			t.Fatalf("Read errored on a %d-byte read (burst 32KB): %v", size, err)
+		}
+		if n != size || !bytes.Equal(buf, payload) {
+			t.Fatalf("read %d bytes / content mismatch", n)
+		}
+	})
+
+	t.Run("writer", func(t *testing.T) {
+		var buf bytes.Buffer
+		cw := &ComposedLimitedWriter{
+			w:         &buf,
+			globalLim: newGlobal(),
+			peerLim:   newPeer(),
+			ctx:       context.Background(),
+		}
+		n, err := cw.Write(payload)
+		if err != nil {
+			t.Fatalf("Write errored on a %d-byte write (burst 32KB): %v", size, err)
+		}
+		if n != size || !bytes.Equal(buf.Bytes(), payload) {
+			t.Fatalf("wrote %d bytes / content mismatch", n)
+		}
+	})
+
+	// Only one limiter active (global nil) must also chunk to that limiter's burst.
+	t.Run("peer-only", func(t *testing.T) {
+		cr := &ComposedLimitedReader{
+			r:       bytes.NewReader(payload),
+			peerLim: newPeer(),
+			ctx:     context.Background(),
+		}
+		buf := make([]byte, size)
+		if _, err := io.ReadFull(cr, buf); err != nil {
+			t.Fatalf("peer-only Read errored: %v", err)
+		}
+	})
 }
 
 func TestComposedLimitedReader_ContextCanceled(t *testing.T) {
