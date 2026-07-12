@@ -520,11 +520,21 @@ func ExtractRepoFromURL(url string) string {
 
 // ExtractPathFromURL extracts the package path from a full URL
 // e.g., "http://deb.debian.org/debian/pool/main/v/vim/vim_9.0.deb" -> "pool/main/v/vim/vim_9.0.deb"
-func ExtractPathFromURL(url string) string {
+func ExtractPathFromURL(rawURL string) string {
 	// Find the pool/ or dists/ part
 	for _, marker := range []string{"/pool/", "/dists/"} {
-		if idx := strings.Index(url, marker); idx != -1 {
-			return url[idx+1:] // Include the leading part after /
+		if idx := strings.Index(rawURL, marker); idx != -1 {
+			p := rawURL[idx+1:] // Include the leading part after /
+			// APT percent-encodes characters in package URLs — notably '+' as
+			// %2B, which is extremely common in Debian versions (e.g. the
+			// "+deb12u2" / "+dfsg" / "+b1" suffixes). The index is keyed by the
+			// Packages "Filename:" field, which is not encoded, so decode here or
+			// the lookup silently misses and the package skips verification,
+			// caching, and P2P. Fall back to the raw slice if decoding fails.
+			if decoded, err := url.PathUnescape(p); err == nil {
+				return decoded
+			}
+			return p
 		}
 	}
 	return ""

@@ -241,6 +241,54 @@ func TestGetByURLPath_FlatRepo(t *testing.T) {
 	}
 }
 
+// APT percent-encodes '+' as %2B in package URLs, and '+' is extremely common in
+// Debian versions (the "+deb12u2" / "+dfsg" / "+b1" suffixes). The index is keyed
+// by the unescaped Packages "Filename:", so GetByURLPath must decode the URL path;
+// otherwise the lookup misses and the proxy computes an empty expected hash,
+// skipping verification, caching, and P2P for a large fraction of real packages.
+func TestGetByURLPath_PercentEncodedPlus(t *testing.T) {
+	const pkgData = "Package: vim-runtime\n" +
+		"Version: 2:9.0.1378-2+deb12u2\n" +
+		"Architecture: all\n" +
+		"Filename: pool/main/v/vim/vim-runtime_9.0.1378-2+deb12u2_all.deb\n" +
+		"Size: 7026844\n" +
+		"SHA256: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2\n\n"
+
+	idx := New("/tmp/test", testLogger())
+	if err := idx.LoadFromData([]byte(pkgData), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages"); err != nil {
+		t.Fatalf("LoadFromData: %v", err)
+	}
+
+	// The URL exactly as APT sends it, with '+' encoded as %2b.
+	encodedURL := "http://deb.debian.org/debian/pool/main/v/vim/vim-runtime_9.0.1378-2%2bdeb12u2_all.deb"
+	pkg := idx.GetByURLPath(encodedURL)
+	if pkg == nil {
+		t.Fatal("GetByURLPath returned nil for a %2b-encoded .deb URL (hash unreachable -> uncached/unverified/no P2P)")
+	}
+	if pkg.Package != "vim-runtime" {
+		t.Errorf("expected package 'vim-runtime', got %q", pkg.Package)
+	}
+	if pkg.SHA256 == "" {
+		t.Error("resolved package has no SHA256")
+	}
+}
+
+// ExtractPathFromURL must decode percent-encoding so the extracted path matches
+// the unescaped index key, in either %2b or %2B case, while leaving unencoded
+// paths untouched.
+func TestExtractPathFromURL_DecodesPercentEncoding(t *testing.T) {
+	const want = "pool/main/v/vim/vim-runtime_9.0.1378-2+deb12u2_all.deb"
+	for _, enc := range []string{"%2b", "%2B"} {
+		got := ExtractPathFromURL("http://deb.debian.org/debian/pool/main/v/vim/vim-runtime_9.0.1378-2" + enc + "deb12u2_all.deb")
+		if got != want {
+			t.Errorf("ExtractPathFromURL with %s = %q, want %q", enc, got, want)
+		}
+	}
+	if got := ExtractPathFromURL("http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-2_amd64.deb"); got != "pool/main/h/hello/hello_2.10-2_amd64.deb" {
+		t.Errorf("ExtractPathFromURL (plain) = %q", got)
+	}
+}
+
 // GetByBasename prefers a package from the requested repo when the same basename
 // exists in more than one repo.
 func TestGetByBasename_PrefersRepo(t *testing.T) {
