@@ -71,6 +71,7 @@ type FleetSender interface {
 type pendingWant struct {
 	haveChan     chan peer.ID          // fed by handleHavePackage
 	fetchingChan chan fetchingResponse // fed by handleFetching
+	wantChan     chan fetchingResponse // fed by handleWantPackage (competing wanters, for election)
 	done         chan struct{}         // closed when WantPackage returns
 }
 
@@ -98,6 +99,10 @@ type Coordinator struct {
 	// Message handlers
 	msgChan chan PeerMessage
 
+	// nonceFn generates election nonces. Overridable in tests for determinism;
+	// defaults to generateNonce (crypto/rand).
+	nonceFn func() uint32
+
 	// Shutdown
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -123,6 +128,7 @@ func New(cfg *Config, peers PeerProvider, cache CacheChecker, logger *zap.Logger
 		ctx:          ctx,
 		cancel:       cancel,
 	}
+	c.nonceFn = c.generateNonce
 
 	// Start message handler
 	c.wg.Add(1)
@@ -178,7 +184,7 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 	}
 
 	// Generate nonce for election
-	nonce := c.generateNonce()
+	nonce := c.nonceFn()
 
 	// Broadcast WantPackage to fleet peers
 	fleetPeers := c.peers.GetMDNSPeers()
@@ -191,6 +197,7 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 	pw := &pendingWant{
 		haveChan:     make(chan peer.ID, len(fleetPeers)),
 		fetchingChan: make(chan fetchingResponse, len(fleetPeers)),
+		wantChan:     make(chan fetchingResponse, len(fleetPeers)),
 		done:         make(chan struct{}),
 	}
 	c.pendingWantsMu.Lock()
@@ -219,6 +226,17 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 		}
 	}
 
+	// Track the lowest-nonce peer that is also racing us for this same cold
+	// package (learned from their WantPackage broadcasts, which arrive quickly).
+	// If by the claim timeout no peer already has it cached (HavePackage) and no
+	// peer is already fetching it (Fetching), the lowest nonce in the fleet wins
+	// the right to fetch from WAN and everyone else waits directly on that winner.
+	// Waiting on the global-minimum winner (rather than an intermediate) avoids
+	// chained waits when three or more nodes want the same package at once.
+	var electedPeer peer.ID
+	var electedNonce uint32
+	var haveElected bool
+
 	// Wait for responses with timeout
 	timer := time.NewTimer(c.config.ClaimTimeout)
 	defer timer.Stop()
@@ -231,6 +249,17 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 				Action:   ActionFetchLAN,
 				Provider: provider,
 			}, nil
+
+		case competitor := <-pw.wantChan:
+			// A peer is racing us for the same cold package. The lowest nonce
+			// wins; remember the lowest competitor that beats ours. We only act
+			// on this if we reach the timeout without a HavePackage or Fetching.
+			if competitor.nonce < nonce && (!haveElected || competitor.nonce < electedNonce) {
+				electedPeer = competitor.peer
+				electedNonce = competitor.nonce
+				haveElected = true
+			}
+			continue
 
 		case fetching := <-pw.fetchingChan:
 			if fetching.nonce < nonce {
@@ -262,7 +291,38 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 			continue
 
 		case <-timer.C:
-			// Timeout, no one claimed it — we fetch from WAN
+			if haveElected {
+				// We lost the election: a peer with a lower nonce is the fleet's
+				// designated fetcher. Wait for that peer directly instead of
+				// fetching from WAN ourselves, so only one node hits the mirror.
+				// Its Fetching (announced when it starts) will not overwrite this
+				// state, and its Fetched/FetchFailed will release our waiter; the
+				// MaxWaitTime backstop covers a winner that never reports.
+				waitChan := make(chan error, 1)
+				c.mu.Lock()
+				if state, ok := c.inFlight[hash]; ok {
+					state.Waiters = append(state.Waiters, waitChan)
+				} else {
+					c.inFlight[hash] = &FetchState{
+						Hash:       hash,
+						Size:       size,
+						Fetcher:    electedPeer,
+						Nonce:      electedNonce,
+						StartTime:  time.Now(),
+						LastUpdate: time.Now(),
+						Waiters:    []chan error{waitChan},
+					}
+				}
+				c.mu.Unlock()
+
+				return &WantResult{
+					Action:   ActionWaitPeer,
+					Provider: electedPeer,
+					WaitChan: waitChan,
+				}, nil
+			}
+
+			// Timeout, no one claimed it and we hold the lowest nonce — we fetch from WAN
 			c.mu.Lock()
 			c.inFlight[hash] = &FetchState{
 				Hash:       hash,
@@ -290,14 +350,26 @@ func (c *Coordinator) GetMaxWaitTime() time.Duration {
 // NotifyFetching announces that this node is fetching a package from WAN
 func (c *Coordinator) NotifyFetching(hash string, size int64) {
 	c.mu.Lock()
-	nonce := c.generateNonce()
-	c.inFlight[hash] = &FetchState{
-		Hash:       hash,
-		Size:       size,
-		Fetcher:    peer.ID(""), // self
-		Nonce:      nonce,
-		StartTime:  time.Now(),
-		LastUpdate: time.Now(),
+	nonce := c.nonceFn()
+	if state, ok := c.inFlight[hash]; ok {
+		// An entry already exists (e.g. WantPackage's timeout branch recorded us
+		// as fetcher, and local callers may have queued as waiters since). Update
+		// it in place so those waiters are not discarded — overwriting the whole
+		// state here would strand them until the MaxWaitTime backstop fires.
+		state.Size = size
+		state.Fetcher = peer.ID("") // self
+		state.Nonce = nonce
+		state.StartTime = time.Now()
+		state.LastUpdate = time.Now()
+	} else {
+		c.inFlight[hash] = &FetchState{
+			Hash:       hash,
+			Size:       size,
+			Fetcher:    peer.ID(""), // self
+			Nonce:      nonce,
+			StartTime:  time.Now(),
+			LastUpdate: time.Now(),
+		}
 	}
 	c.mu.Unlock()
 
@@ -498,6 +570,21 @@ func (c *Coordinator) handleWantPackage(from peer.ID, msg Message) {
 					zap.Error(err),
 					zap.String("peer", from.String()[:min(12, len(from.String()))]))
 			}
+		}
+		return
+	}
+
+	// We neither have it nor are fetching it. If we have our own in-flight
+	// WantPackage election for this hash, this peer is racing us for the same
+	// cold package: route their nonce into our election so the lowest nonce
+	// wins and only one of us fetches from WAN (see WantPackage's wantChan case).
+	c.pendingWantsMu.Lock()
+	pw, ok := c.pendingWants[msg.Hash]
+	c.pendingWantsMu.Unlock()
+	if ok {
+		select {
+		case pw.wantChan <- fetchingResponse{peer: from, nonce: msg.Nonce}:
+		case <-pw.done:
 		}
 	}
 }
