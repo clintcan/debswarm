@@ -774,9 +774,9 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	}
 	defer stream.Close()
 
-	// Reset the stream if ctx is cancelled mid-transfer — e.g. this source lost
+	// Reset the stream if ctx is canceled mid-transfer — e.g. this source lost
 	// a download race. The blocking reads below don't observe ctx (only the
-	// optional rate limiters do), so without this a cancelled loser keeps
+	// optional rate limiters do), so without this a canceled loser keeps
 	// receiving the entire file, wasting bandwidth and holding one of the remote
 	// peer's limited upload slots until its deadline. Reset unblocks the local
 	// read immediately and signals the remote to stop sending.
@@ -790,7 +790,7 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		}
 	}()
 
-	// transferFailure records a peer failure unless the transfer was cancelled
+	// transferFailure records a peer failure unless the transfer was canceled
 	// by our own ctx (a lost race or shutdown is not the peer's fault and must
 	// not hurt its score) and returns the error to surface.
 	transferFailure := func(reason string, err error) error {

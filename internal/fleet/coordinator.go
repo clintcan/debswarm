@@ -285,7 +285,7 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 	// decide resolves the claim window — either because the timer expired or
 	// because every peer that received our want answered DontHave (nothing more
 	// can arrive, so waiting longer is pure latency).
-	decide := func() (*WantResult, error) {
+	decide := func() *WantResult {
 		if haveElected {
 			// We lost the election: a peer with a lower nonce is the fleet's
 			// designated fetcher. Wait for that peer directly instead of
@@ -314,7 +314,7 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 				Action:   ActionWaitPeer,
 				Provider: electedPeer,
 				WaitChan: waitChan,
-			}, nil
+			}
 		}
 
 		// No one claimed it and we hold the lowest nonce — we fetch from WAN
@@ -329,7 +329,7 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 		}
 		c.mu.Unlock()
 
-		return &WantResult{Action: ActionFetchWAN}, nil
+		return &WantResult{Action: ActionFetchWAN}
 	}
 
 	// Wait for responses with timeout
@@ -402,12 +402,12 @@ func (c *Coordinator) WantPackage(ctx context.Context, hash string, size int64) 
 			}
 			// Every peer that received our want has now answered: decide
 			// immediately instead of waiting out the rest of the claim timeout.
-			return decide()
+			return decide(), nil
 
 		case <-timer.C:
 			// Some peers never answered (older version, or gone): the timer is
 			// the backstop that keeps mixed fleets working.
-			return decide()
+			return decide(), nil
 
 		case <-ctx.Done():
 			return &WantResult{Action: ActionFetchWAN}, ctx.Err()

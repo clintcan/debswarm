@@ -30,7 +30,7 @@ func (r *stallingReader) Read(p []byte) (int, error) {
 
 func (r *stallingReader) Close() error { return nil }
 
-// TestNode_Download_CancelResetsStream verifies that cancelling a download's
+// TestNode_Download_CancelResetsStream verifies that canceling a download's
 // context unblocks the transfer immediately (via stream reset) instead of the
 // read continuing until the size-based deadline. This is what stops racing
 // losers from downloading the entire file after another source has won.
@@ -92,12 +92,12 @@ func TestNode_Download_CancelResetsStream(t *testing.T) {
 	// Let the transfer get in flight (size header + first KB over localhost),
 	// then cancel — as the racing path does when another source wins.
 	time.Sleep(500 * time.Millisecond)
-	cancelled := time.Now()
+	canceled := time.Now()
 	dlCancel()
 
 	select {
 	case res := <-done:
-		if elapsed := time.Since(cancelled); elapsed > 3*time.Second {
+		if elapsed := time.Since(canceled); elapsed > 3*time.Second {
 			t.Errorf("Download returned %v after cancel; want prompt return", elapsed)
 		}
 		if res.err == nil {
@@ -107,6 +107,6 @@ func TestNode_Download_CancelResetsStream(t *testing.T) {
 			t.Errorf("Download error = %v, want context.Canceled", res.err)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("Download did not return within 10s of cancellation — cancelled loser kept transferring")
+		t.Fatal("Download did not return within 10s of cancellation — canceled loser kept transferring")
 	}
 }
