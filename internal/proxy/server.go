@@ -253,12 +253,18 @@ func NewServer(
 	mux.HandleFunc("/", s.handleRequest)
 
 	s.server = &http.Server{
-		Addr:           cfg.Addr,
-		Handler:        mux,
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   5 * time.Minute,
-		IdleTimeout:    120 * time.Second,
-		MaxHeaderBytes: 1 << 20, // 1MB
+		Addr:    cfg.Addr,
+		Handler: mux,
+		// ReadHeaderTimeout (not a blanket ReadTimeout) guards against slow-loris
+		// header sends. A full ReadTimeout is a deadline on the whole request
+		// lifecycle of a connection; on a keep-alive/pipelined connection — which
+		// APT uses by default — it fires mid-handler once a large index response
+		// (e.g. an 8 MB Packages file) plus APT's pipelining pushes the cycle past
+		// the limit, canceling the request context and stalling `apt-get update`.
+		ReadHeaderTimeout: 30 * time.Second,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1MB
 	}
 
 	return s
