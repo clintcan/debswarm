@@ -186,10 +186,17 @@ func (c *NetworkConfig) GetConnectivityCheckInterval() time.Duration {
 }
 
 // GetConnectivityCheckURL returns the URL for connectivity checks.
-// Returns default Debian mirror if not configured.
+// Returns the default Debian mirror if not configured.
+//
+// The default probes over plain HTTP (the transport debswarm actually uses to
+// fetch packages), so the check reflects mirror reachability rather than TLS
+// trust. An HTTPS probe fails on hosts without a CA bundle even when the mirror
+// is perfectly reachable, which would mis-report an online node as offline. The
+// path must not redirect to HTTPS (deb.debian.org/debian/ does not) or the TLS
+// dependency would return through the redirect.
 func (c *NetworkConfig) GetConnectivityCheckURL() string {
 	if c.ConnectivityCheckURL == "" {
-		return "https://deb.debian.org"
+		return "http://deb.debian.org/debian/"
 	}
 	return c.ConnectivityCheckURL
 }

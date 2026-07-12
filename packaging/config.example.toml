@@ -31,9 +31,11 @@ connectivity_mode = "auto"
 # Go duration format: "30s", "1m", "5m"
 connectivity_check_interval = "30s"
 
-# URL to check for connectivity (typically a Debian/Ubuntu mirror)
-# Used for HEAD requests to verify internet access
-# connectivity_check_url = "https://deb.debian.org"
+# URL to check for connectivity (typically a Debian/Ubuntu mirror).
+# Used for HEAD requests to verify internet access. Defaults to plain HTTP so
+# the check reflects mirror reachability rather than TLS trust; the URL must not
+# redirect to HTTPS.
+# connectivity_check_url = "http://deb.debian.org/debian/"
 
 # NAT traversal (both default to true)
 # enable_relay: use circuit relays to reach peers behind NAT

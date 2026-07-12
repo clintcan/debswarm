@@ -598,7 +598,7 @@ func TestNetworkConfig_GetConnectivityCheckURL(t *testing.T) {
 		url      string
 		expected string
 	}{
-		{"empty defaults to debian", "", "https://deb.debian.org"},
+		{"empty defaults to debian over http", "", "http://deb.debian.org/debian/"},
 		{"custom url", "https://example.com", "https://example.com"},
 	}
 
