@@ -1,3 +1,20 @@
+debswarm (1.30.0-1) stable; urgency=low
+
+  * LAN peer-to-peer sharing (fleet) is now enabled by default; nearby nodes
+    share cached packages and dedup WAN downloads, all SHA256-verified
+  * Fix: packages with '+' in the version (e.g. +deb12u2) were silently not
+    cached, verified, or P2P-shared due to a URL-decoding gap in the index lookup
+  * Fix: apt-get update hung on large indices under default APT pipelining
+    (ReadHeaderTimeout instead of a blanket ReadTimeout)
+  * Upstream HTTPS fetch: HTTPS-only repos (e.g. pkgs.k8s.io) can be cached,
+    verified, and P2P-shared; common third-party repos trusted by default
+  * Flat-layout repository support (e.g. pkgs.k8s.io)
+  * Fleet: nonce-based dedup election, stale-fetcher reaper, and per-stream
+    write serialization; plus numerous cache/proxy/downloader correctness fixes
+  * Packaged default config now documents the [proxy] options and fleet-on-by-default
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sun, 12 Jul 2026 00:00:00 +0000
+
 debswarm (1.29.0-1) stable; urgency=low
 
   * Configuration wizard: interactive setup via `debswarm config wizard`
