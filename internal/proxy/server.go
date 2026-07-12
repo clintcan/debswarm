@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -889,8 +890,20 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 		}
 	}
 
+	// No signed index entry: the package cannot be verified, cached, or shared
+	// over P2P. Stream it straight from the mirror to the client instead of
+	// buffering the whole file in memory (it can be hundreds of MB). This path
+	// skips singleflight — a stream cannot be shared between coalesced waiters.
+	if expectedHash == "" {
+		s.metrics.CacheMisses.Inc()
+		s.metrics.PackagesServedUncached.Inc()
+		s.noteUncachedServe(log, url)
+		s.streamUncachedPackage(w, r, url, path)
+		return
+	}
+
 	// Check local cache first
-	if expectedHash != "" && s.cache.Has(expectedHash) {
+	if s.cache.Has(expectedHash) {
 		log.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
 		atomic.AddInt64(&s.cacheHits, 1)
 		s.metrics.CacheHits.Inc()
@@ -906,10 +919,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	// Use singleflight to coalesce concurrent requests for the same package
 	// This prevents duplicate downloads when multiple clients request the same package
-	coalescingKey := url
-	if expectedHash != "" {
-		coalescingKey = expectedHash // Use hash if known for better deduplication
-	}
+	coalescingKey := expectedHash
 
 	result, err, shared := s.downloadGroup.Do(coalescingKey, func() (interface{}, error) {
 		return s.downloadPackage(ctx, url, expectedHash, expectedSize, path)
@@ -962,7 +972,8 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 			switch fleetResult.Action {
 			case fleet.ActionFetchLAN:
 				// A peer already has this package cached — download from LAN
-				data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash)
+				// (downloadFromFleetPeer verifies and caches in one pass)
+				data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash, path)
 				if dlErr == nil {
 					log.Debug("Downloaded from fleet peer (LAN cache hit)",
 						zap.String("hash", expectedHash[:16]+"..."),
@@ -973,7 +984,6 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 					atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
 					s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
 					s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
-					s.cacheAndAnnounce(data, expectedHash, path)
 
 					return &packageDownloadResult{
 						data:        data,
@@ -991,7 +1001,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				case waitErr := <-fleetResult.WaitChan:
 					waitCancel()
 					if waitErr == nil {
-						data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash)
+						data, dlErr := s.downloadFromFleetPeer(ctx, fleetResult.Provider, expectedHash, path)
 						if dlErr == nil {
 							log.Debug("Downloaded from fleet peer after wait",
 								zap.String("hash", expectedHash[:16]+"..."),
@@ -1002,7 +1012,6 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 							atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
 							s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
 							s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
-							s.cacheAndAnnounce(data, expectedHash, path)
 
 							return &packageDownloadResult{
 								data:        data,
@@ -1098,57 +1107,57 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				continue
 			}
 
-			// Verify hash
-			actualHash := sha256.Sum256(data)
-			actualHashHex := hex.EncodeToString(actualHash[:])
-
-			if actualHashHex == expectedHash {
-				log.Debug("Downloaded from P2P",
-					zap.String("hash", expectedHash[:16]+"..."),
-					zap.Int("size", len(data)))
-
-				atomic.AddInt64(&s.requestsP2P, 1)
-				atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
-				s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
-				s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
-
-				// Cache the data
-				s.cacheAndAnnounce(data, expectedHash, path)
-
-				// Audit log download complete
-				s.audit.Log(audit.NewDownloadCompleteEvent(
-					expectedHash,
-					path,
-					int64(len(data)),
-					downloader.SourceTypePeer,
-					0, // duration not tracked for simple downloads
-					int64(len(data)),
-					0,
-				).WithRequestID(reqID))
-
-				return &packageDownloadResult{
-					data:        data,
-					hash:        expectedHash,
-					source:      downloader.SourceTypePeer,
-					contentType: "application/vnd.debian.binary-package",
-				}, nil
+			// Verify and cache in a single hashing pass (inside cache.Put)
+			if verifyErr := s.verifyAndCache(data, expectedHash, path); verifyErr != nil {
+				log.Warn("P2P hash mismatch, blacklisting peer")
+				s.metrics.VerificationFailures.Inc()
+				if ps, ok := src.(*downloader.PeerSource); ok {
+					s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
+					// Audit log verification failure
+					s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()).WithRequestID(reqID))
+				}
+				continue
 			}
 
-			log.Warn("P2P hash mismatch, blacklisting peer")
-			s.metrics.VerificationFailures.Inc()
-			if ps, ok := src.(*downloader.PeerSource); ok {
-				s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
-				// Audit log verification failure
-				s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()).WithRequestID(reqID))
-			}
+			log.Debug("Downloaded from P2P",
+				zap.String("hash", expectedHash[:16]+"..."),
+				zap.Int("size", len(data)))
+
+			atomic.AddInt64(&s.requestsP2P, 1)
+			atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
+			s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
+			s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
+
+			// Audit log download complete
+			s.audit.Log(audit.NewDownloadCompleteEvent(
+				expectedHash,
+				path,
+				int64(len(data)),
+				downloader.SourceTypePeer,
+				0, // duration not tracked for simple downloads
+				int64(len(data)),
+				0,
+			).WithRequestID(reqID))
+
+			return &packageDownloadResult{
+				data:        data,
+				hash:        expectedHash,
+				source:      downloader.SourceTypePeer,
+				contentType: "application/vnd.debian.binary-package",
+			}, nil
 		}
 	}
 
-	// Final fallback: mirror
+	// Final fallback: mirror. Stream the body straight into the cache — Put
+	// hashes and verifies while writing to disk — then serve from the cached
+	// file, so the package is never buffered in memory (it can be hundreds of
+	// MB, and this is the default path on nodes with no P2P providers).
+	// Packages with no index entry never reach here (handlePackageRequest
+	// streams those directly), so expectedHash is always set.
 	log.Debug("Falling back to mirror", zap.String("url", sanitize.URL(mirrorURL)))
 	atomic.AddInt64(&s.requestsMirror, 1)
 
-	data, err := s.fetcher.Fetch(ctx, mirrorURL)
+	body, _, err := s.fetcher.Stream(ctx, mirrorURL)
 	if err != nil {
 		log.Error("Mirror fetch failed", zap.Error(err))
 		// Audit log download failure
@@ -1156,53 +1165,97 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 		return nil, fmt.Errorf("mirror fetch failed: %w", err)
 	}
 
-	atomic.AddInt64(&s.bytesFromMirror, int64(len(data)))
-	s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypeMirror).Inc()
-	s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypeMirror).Add(int64(len(data)))
+	counted := &countingReader{r: body}
+	putErr := s.cache.Put(counted, expectedHash, path)
+	if closeErr := body.Close(); closeErr != nil {
+		log.Debug("Failed to close mirror response body", zap.Error(closeErr))
+	}
 
-	// Verify and cache if we have expected hash
-	if expectedHash != "" {
-		actualHash := sha256.Sum256(data)
-		actualHashHex := hex.EncodeToString(actualHash[:])
-		if actualHashHex != expectedHash {
+	if putErr != nil {
+		if errors.Is(putErr, cache.ErrHashMismatch) {
 			log.Warn("Mirror hash mismatch",
 				zap.String("expected", expectedHash),
-				zap.String("actual", actualHashHex))
+				zap.Error(putErr))
 			s.metrics.VerificationFailures.Inc()
 			s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, "mirror").WithRequestID(reqID))
-			return nil, fmt.Errorf("mirror data failed hash verification: expected %s, got %s", expectedHash, actualHashHex)
+			return nil, fmt.Errorf("mirror data failed hash verification: %w", putErr)
 		}
-		s.cacheAndAnnounce(data, expectedHash, path)
-	} else {
-		// No signed index entry for this package, so it was served straight from
-		// the mirror: not verified, not cached, not shared over P2P. Record it so
-		// operators can tell why the cache/P2P is not engaging (usually the
-		// Packages index has not been fetched through the proxy yet).
-		s.metrics.PackagesServedUncached.Inc()
-		s.noteUncachedServe(log, url)
+
+		// The cache could not store the package (cache full, disk error). The
+		// stream is already partially consumed, so re-fetch buffered — the old
+		// behavior — and serve this one download from memory without caching.
+		log.Warn("Failed to cache streamed mirror download, refetching into memory", zap.Error(putErr))
+		data, fetchErr := s.fetcher.Fetch(ctx, mirrorURL)
+		if fetchErr != nil {
+			s.audit.Log(audit.NewDownloadFailedEvent(expectedHash, path, fetchErr.Error()).WithRequestID(reqID))
+			return nil, fmt.Errorf("mirror fetch failed: %w", fetchErr)
+		}
+		actualHash := sha256.Sum256(data)
+		if hex.EncodeToString(actualHash[:]) != expectedHash {
+			s.metrics.VerificationFailures.Inc()
+			s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, "mirror").WithRequestID(reqID))
+			return nil, fmt.Errorf("mirror data failed hash verification: expected %s", expectedHash)
+		}
+		atomic.AddInt64(&s.bytesFromMirror, int64(len(data)))
+		s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypeMirror).Inc()
+		s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypeMirror).Add(int64(len(data)))
+		s.audit.Log(audit.NewDownloadCompleteEvent(
+			expectedHash, path, int64(len(data)), downloader.SourceTypeMirror,
+			0, 0, int64(len(data))).WithRequestID(reqID))
+		return &packageDownloadResult{
+			data:        data,
+			hash:        expectedHash,
+			source:      downloader.SourceTypeMirror,
+			contentType: "application/vnd.debian.binary-package",
+		}, nil
+	}
+
+	size := counted.n
+	atomic.AddInt64(&s.bytesFromMirror, size)
+	s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypeMirror).Inc()
+	s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypeMirror).Add(size)
+
+	s.announceAsync(expectedHash)
+	if s.verifier != nil {
+		s.verifier.VerifyAsync(expectedHash, path)
 	}
 
 	// Audit log mirror download complete
 	s.audit.Log(audit.NewDownloadCompleteEvent(
 		expectedHash,
 		path,
-		int64(len(data)),
+		size,
 		downloader.SourceTypeMirror,
 		0, // duration not tracked for mirror fallback
 		0,
-		int64(len(data)),
+		size,
 	).WithRequestID(reqID))
 
 	return &packageDownloadResult{
-		data:        data,
-		hash:        expectedHash,
-		source:      downloader.SourceTypeMirror,
-		contentType: "application/vnd.debian.binary-package",
+		hash:           expectedHash,
+		size:           size,
+		source:         downloader.SourceTypeMirror,
+		contentType:    "application/vnd.debian.binary-package",
+		serveFromCache: true,
 	}, nil
 }
 
-// downloadFromFleetPeer downloads a package from a fleet peer that has it cached
-func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, expectedHash string) ([]byte, error) {
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (cr *countingReader) Read(p []byte) (int, error) {
+	n, err := cr.r.Read(p)
+	cr.n += int64(n)
+	return n, err
+}
+
+// downloadFromFleetPeer downloads a package from a fleet peer that has it
+// cached, then verifies and caches it in a single hashing pass. A peer that
+// serves corrupt data is blacklisted.
+func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, expectedHash, path string) ([]byte, error) {
 	addrs := s.p2pNode.Host().Peerstore().Addrs(providerID)
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("no addresses for fleet peer %s", providerID.String()[:min(12, len(providerID.String()))])
@@ -1216,9 +1269,7 @@ func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, 
 		return nil, fmt.Errorf("fleet peer download: %w", err)
 	}
 
-	// Verify hash
-	actualHash := sha256.Sum256(data)
-	if hex.EncodeToString(actualHash[:]) != expectedHash {
+	if err := s.verifyAndCache(data, expectedHash, path); err != nil {
 		s.scorer.Blacklist(providerID, "fleet hash mismatch", 24*time.Hour)
 		return nil, fmt.Errorf("fleet peer hash mismatch")
 	}
@@ -1359,6 +1410,34 @@ func (s *Server) cacheAndAnnounce(data []byte, hash, path string) {
 	if s.verifier != nil {
 		s.verifier.VerifyAsync(hash, path)
 	}
+}
+
+// verifyAndCache verifies data against hash and stores it in the cache,
+// hashing the data only once (cache.Put verifies while writing — callers must
+// not pre-hash, that was a redundant full pass over every download). If the
+// cache cannot store it for storage reasons, the data is verified directly so
+// the caller may still serve it uncached. A cache.ErrHashMismatch return means
+// the data is corrupt and must not be served.
+func (s *Server) verifyAndCache(data []byte, hash, path string) error {
+	err := s.cache.Put(bytes.NewReader(data), hash, path)
+	if err == nil {
+		s.announceAsync(hash)
+		if s.verifier != nil {
+			s.verifier.VerifyAsync(hash, path)
+		}
+		return nil
+	}
+	if errors.Is(err, cache.ErrHashMismatch) {
+		return err
+	}
+	// Storage failure (cache full, disk error): verify manually so unverified
+	// bytes are never served, then let the caller serve without caching.
+	actual := sha256.Sum256(data)
+	if hex.EncodeToString(actual[:]) != hash {
+		return fmt.Errorf("%w: expected %s", cache.ErrHashMismatch, hash)
+	}
+	s.logger.Warn("Failed to cache verified package", zap.Error(err))
+	return nil
 }
 
 func (s *Server) announceAsync(hash string) {
@@ -1598,6 +1677,45 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url s
 		// the client will see a short read. Log it for diagnosis.
 		log.Warn("Passthrough stream interrupted", zap.Int64("written", n), zap.Error(err))
 	}
+}
+
+// streamUncachedPackage serves a package that has no signed index entry by
+// streaming it straight from the mirror to the client. There is no trusted
+// hash, so it is never verified, cached, or shared — and therefore nothing is
+// held in memory regardless of package size.
+func (s *Server) streamUncachedPackage(w http.ResponseWriter, r *http.Request, url, path string) {
+	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	reqID := requestid.FromContext(ctx)
+
+	body, size, err := s.fetcher.Stream(ctx, s.upstreamFetchURL(url))
+	if err != nil {
+		log.Error("Mirror fetch failed", zap.Error(err))
+		s.audit.Log(audit.NewDownloadFailedEvent("", path, err.Error()).WithRequestID(reqID))
+		http.Error(w, "Failed to fetch package", http.StatusBadGateway)
+		return
+	}
+	defer func() { _ = body.Close() }()
+
+	atomic.AddInt64(&s.requestsMirror, 1)
+	s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypeMirror).Inc()
+
+	w.Header().Set("Content-Type", "application/vnd.debian.binary-package")
+	if size >= 0 {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	}
+	w.Header().Set("X-Debswarm-Source", downloader.SourceTypeMirror)
+	w.WriteHeader(http.StatusOK)
+
+	n, copyErr := io.Copy(w, body)
+	atomic.AddInt64(&s.bytesFromMirror, n)
+	s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypeMirror).Add(n)
+	if copyErr != nil {
+		// The 200 header is already on the wire; the client sees a short read.
+		log.Warn("Uncached package stream interrupted", zap.Int64("written", n), zap.Error(copyErr))
+		return
+	}
+	s.audit.Log(audit.NewDownloadCompleteEvent("", path, n, downloader.SourceTypeMirror, 0, 0, n).WithRequestID(reqID))
 }
 
 // noteUncachedServe logs, at most once per repository host, that packages from
