@@ -40,6 +40,12 @@ type Package struct {
 	Pinned         bool
 }
 
+// accessRecord accumulates access-time updates for one package between flushes.
+type accessRecord struct {
+	last  int64 // most recent access (unix seconds)
+	count int64 // accesses since the last flush
+}
+
 // Cache manages local package storage
 type Cache struct {
 	basePath     string
@@ -53,6 +59,15 @@ type Cache struct {
 	// Track active readers to prevent deletion during read
 	activeReaders   map[string]int
 	activeReadersMu sync.Mutex
+
+	// Batched access-time updates: Get records hits here instead of issuing a
+	// synchronous UPDATE on the hot read path; a background flusher persists
+	// them (and ensureSpace flushes before ranking eviction candidates).
+	pendingAccess   map[string]accessRecord
+	pendingAccessMu sync.Mutex
+	flushStop       chan struct{}
+	flushDone       chan struct{}
+	closeOnce       sync.Once
 }
 
 // New creates a new cache instance
@@ -95,12 +110,17 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 		db:            db,
 		logger:        logger,
 		activeReaders: make(map[string]int),
+		pendingAccess: make(map[string]accessRecord),
+		flushStop:     make(chan struct{}),
+		flushDone:     make(chan struct{}),
 	}
 
 	// Calculate current size
 	if err := c.calculateSize(); err != nil {
 		logger.Warn("Failed to calculate cache size", zap.Error(err))
 	}
+
+	go c.accessFlusher()
 
 	if minFreeSpace > 0 {
 		logger.Info("Cache minimum free space enforcement enabled",
@@ -354,10 +374,15 @@ func (tr *trackedReader) Close() error {
 	return tr.closeErr
 }
 
-// Get retrieves a package from the cache
+// Get retrieves a package from the cache.
+//
+// It holds only the read lock: cache hits (and P2P uploads, which serve
+// through this path) must not serialize behind each other or behind a large
+// Put. Deletion safety is provided by the activeReaders count — Delete and
+// eviction take the write lock and skip any package with active readers.
 func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 
 	path := c.packagePath(sha256Hash)
 
@@ -376,16 +401,10 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	c.activeReaders[sha256Hash]++
 	c.activeReadersMu.Unlock()
 
-	// Update access time and count
-	now := time.Now().Unix()
-	_, err = c.db.Exec(`
-		UPDATE packages
-		SET last_accessed = ?, access_count = access_count + 1
-		WHERE sha256 = ?`,
-		now, sha256Hash)
-	if err != nil {
-		c.logger.Warn("Failed to update access time", zap.Error(err))
-	}
+	// Record the access in memory; the flusher persists it in a batch. A
+	// synchronous UPDATE here put an fsync on every cache hit and, combined
+	// with the exclusive lock this method used to take, serialized all reads.
+	c.recordAccess(sha256Hash)
 
 	// Get package info
 	pkg, err := c.getPackageInfo(sha256Hash)
@@ -405,18 +424,84 @@ func (c *Cache) Get(sha256Hash string) (io.ReadCloser, *Package, error) {
 	return &trackedReader{file: f, hash: sha256Hash, cache: c}, pkg, nil
 }
 
-// Put stores a package in the cache
-func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// recordAccess notes a cache hit for later batched persistence.
+func (c *Cache) recordAccess(sha256Hash string) {
+	now := time.Now().Unix()
+	c.pendingAccessMu.Lock()
+	rec := c.pendingAccess[sha256Hash]
+	rec.last = now
+	rec.count++
+	c.pendingAccess[sha256Hash] = rec
+	c.pendingAccessMu.Unlock()
+}
 
-	// Write to temporary file while computing hash
-	pendingPath := filepath.Join(c.basePath, "packages", "pending", expectedHash)
-	// #nosec G304 -- pendingPath is constructed from basePath + expected hash, not user input
-	f, err := os.Create(pendingPath)
+// flushAccess persists all pending access records in one transaction.
+func (c *Cache) flushAccess() {
+	c.pendingAccessMu.Lock()
+	if len(c.pendingAccess) == 0 {
+		c.pendingAccessMu.Unlock()
+		return
+	}
+	pending := c.pendingAccess
+	c.pendingAccess = make(map[string]accessRecord)
+	c.pendingAccessMu.Unlock()
+
+	tx, err := c.db.Begin()
+	if err != nil {
+		c.logger.Warn("Failed to begin access-time flush", zap.Error(err))
+		return
+	}
+	stmt, err := tx.Prepare(`
+		UPDATE packages
+		SET last_accessed = MAX(last_accessed, ?), access_count = access_count + ?
+		WHERE sha256 = ?`)
+	if err != nil {
+		c.logger.Warn("Failed to prepare access-time flush", zap.Error(err))
+		_ = tx.Rollback()
+		return
+	}
+	for hash, rec := range pending {
+		if _, err := stmt.Exec(rec.last, rec.count, hash); err != nil {
+			c.logger.Warn("Failed to flush access time", zap.Error(err))
+		}
+	}
+	if err := stmt.Close(); err != nil {
+		c.logger.Warn("Failed to close access-time statement", zap.Error(err))
+	}
+	if err := tx.Commit(); err != nil {
+		c.logger.Warn("Failed to commit access-time flush", zap.Error(err))
+	}
+}
+
+// accessFlusher periodically persists batched access records until Close.
+func (c *Cache) accessFlusher() {
+	defer close(c.flushDone)
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.flushStop:
+			return
+		case <-ticker.C:
+			c.flushAccess()
+		}
+	}
+}
+
+// Put stores a package in the cache.
+//
+// The data is streamed to a unique pending file and hashed WITHOUT holding the
+// cache lock — that copy is seconds of disk I/O for a large package, and
+// holding the exclusive lock across it stalled every concurrent cache
+// operation. Only the commit (eviction, rename, database row) takes the lock.
+func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error {
+	// Unique temp name so concurrent Puts of the same hash cannot collide.
+	pendingDir := filepath.Join(c.basePath, "packages", "pending")
+	f, err := os.CreateTemp(pendingDir, expectedHash+".*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
+	pendingPath := f.Name()
 
 	hw := hashutil.NewHashingWriter(f)
 
@@ -446,78 +531,28 @@ func (c *Cache) Put(data io.Reader, expectedHash string, filename string) error 
 		return fmt.Errorf("%w: expected %s, got %s", ErrHashMismatch, expectedHash, actualHash)
 	}
 
-	// Ensure we have space
-	if spaceErr := c.ensureSpace(size); spaceErr != nil {
+	if commitErr := c.commitVerifiedFile(pendingPath, expectedHash, filename, size); commitErr != nil {
 		if removeErr := os.Remove(pendingPath); removeErr != nil {
 			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
 		}
-		return spaceErr
+		return commitErr
 	}
-
-	// Move to final location
-	finalPath := c.packagePath(expectedHash)
-	if mkdirErr := os.MkdirAll(filepath.Dir(finalPath), 0750); mkdirErr != nil {
-		if removeErr := os.Remove(pendingPath); removeErr != nil {
-			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
-		}
-		return mkdirErr
-	}
-
-	if renameErr := os.Rename(pendingPath, finalPath); renameErr != nil {
-		if removeErr := os.Remove(pendingPath); removeErr != nil {
-			c.logger.Warn("Failed to remove pending file during cleanup", zap.Error(removeErr))
-		}
-		return renameErr
-	}
-
-	// Parse package metadata from filename
-	pkgName, pkgVersion, arch, _ := ParseDebFilename(filename)
-
-	// Record in database - use ON CONFLICT to preserve access_count if re-adding
-	now := time.Now().Unix()
-	// Check if entry already exists to avoid double-counting currentSize
-	var existingSize int64
-	var isUpdate bool
-	err = c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", expectedHash).Scan(&existingSize)
-	if err == nil {
-		isUpdate = true
-	}
-
-	_, err = c.db.Exec(`
-		INSERT INTO packages
-		(sha256, size, filename, added_at, last_accessed, access_count, announced, package_name, package_version, architecture)
-		VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?, ?)
-		ON CONFLICT(sha256) DO UPDATE SET
-			size = excluded.size,
-			filename = excluded.filename,
-			last_accessed = excluded.last_accessed,
-			access_count = access_count + 1,
-			package_name = CASE WHEN excluded.package_name != '' THEN excluded.package_name ELSE packages.package_name END,
-			package_version = CASE WHEN excluded.package_version != '' THEN excluded.package_version ELSE packages.package_version END,
-			architecture = CASE WHEN excluded.architecture != '' THEN excluded.architecture ELSE packages.architecture END`,
-		expectedHash, size, filename, now, now, pkgName, pkgVersion, arch)
-	if err != nil {
-		return fmt.Errorf("failed to record package: %w", err)
-	}
-
-	if isUpdate {
-		// On conflict/update: adjust by the size delta (handles size changes)
-		c.currentSize += size - existingSize
-	} else {
-		c.currentSize += size
-	}
-	c.logger.Debug("Cached package",
-		zap.String("hash", expectedHash[:16]+"..."),
-		zap.Int64("size", size),
-		zap.String("filename", sanitize.Filename(filename)))
-
 	return nil
 }
 
 // PutFile stores a pre-verified file in the cache by moving it.
 // The file at filePath must already have been verified (correct hash).
 // This is more efficient than Put() for large files as it avoids copying.
+// On failure the source file is left in place so the caller can still use it.
 func (c *Cache) PutFile(filePath string, hash string, filename string, size int64) error {
+	return c.commitVerifiedFile(filePath, hash, filename, size)
+}
+
+// commitVerifiedFile moves an already-verified file into the cache and records
+// it, under the cache lock. Shared by Put and PutFile. On failure the source
+// file is left in place (callers rely on this to serve a package that could
+// not be cached, e.g. when the cache is full).
+func (c *Cache) commitVerifiedFile(filePath string, hash string, filename string, size int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -526,13 +561,20 @@ func (c *Cache) PutFile(filePath string, hash string, filename string, size int6
 		return err
 	}
 
-	// Move to final location
+	// Move to final location. If the package is already cached (a concurrent
+	// Put won the race), the content is identical — consume the source and
+	// fall through to refresh the database row. (os.Rename onto an existing
+	// destination fails on Windows, so this cannot be left to Rename.)
 	finalPath := c.packagePath(hash)
 	if err := os.MkdirAll(filepath.Dir(finalPath), 0750); err != nil {
 		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	if err := os.Rename(filePath, finalPath); err != nil {
+	if _, statErr := os.Stat(finalPath); statErr == nil {
+		if removeErr := os.Remove(filePath); removeErr != nil {
+			c.logger.Warn("Failed to remove redundant pending file", zap.Error(removeErr))
+		}
+	} else if err := os.Rename(filePath, finalPath); err != nil {
 		return fmt.Errorf("failed to move file to cache: %w", err)
 	}
 
@@ -570,7 +612,7 @@ func (c *Cache) PutFile(filePath string, hash string, filename string, size int6
 	} else {
 		c.currentSize += size
 	}
-	c.logger.Debug("Cached package (file move)",
+	c.logger.Debug("Cached package",
 		zap.String("hash", hash[:16]+"..."),
 		zap.Int64("size", size),
 		zap.String("filename", sanitize.Filename(filename)))
@@ -628,6 +670,9 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 
 // List returns all cached packages
 func (c *Cache) List() ([]*Package, error) {
+	// Fold batched access records in first so listings show current counts.
+	c.flushAccess()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -733,8 +778,14 @@ func (c *Cache) Count() int {
 	return count
 }
 
-// Close closes the cache database
+// Close stops the access flusher, persists any pending access records, and
+// closes the cache database.
 func (c *Cache) Close() error {
+	c.closeOnce.Do(func() {
+		close(c.flushStop)
+		<-c.flushDone
+		c.flushAccess()
+	})
 	return c.db.Close()
 }
 
@@ -785,6 +836,10 @@ func (c *Cache) calculateSize() error {
 var ErrCacheFull = errors.New("cache full: unable to free enough space")
 
 func (c *Cache) ensureSpace(needed int64) error {
+	// Persist batched access records first so eviction ranks candidates on
+	// up-to-date recency instead of stale database values.
+	c.flushAccess()
+
 	// Check minimum free space constraint first
 	if c.minFreeSpace > 0 {
 		freeSpace, err := c.getDiskFreeSpace()
@@ -963,6 +1018,10 @@ type CacheStats struct {
 
 // Stats returns comprehensive cache statistics
 func (c *Cache) Stats() (*CacheStats, error) {
+	// Read-your-writes for observability: fold batched access records in
+	// before aggregating, so dashboards see current counts.
+	c.flushAccess()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
