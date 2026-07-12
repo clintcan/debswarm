@@ -1363,7 +1363,7 @@ func (s *Server) announcementWorker() {
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
 
-	// Loop until the announce context is cancelled (shutdown). We select on the
+	// Loop until the announce context is canceled (shutdown). We select on the
 	// context rather than ranging s.announceChan, because the channel is never
 	// closed — closing it would race with in-flight announceAsync sends and panic.
 	for {
