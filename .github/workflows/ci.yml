@@ -195,20 +195,21 @@ jobs:
           test -f /lib/systemd/system/debswarm.service
           getent passwd debswarm >/dev/null
 
-      - name: Daemon starts with the packaged config
+      - name: Daemon runs from the installed systemd service
         run: |
-          # Run as root so it can write the system cache dir (/var/cache/debswarm,
-          # owned by the debswarm user) and bind the proxy/metrics ports.
-          sudo debswarm daemon --log-level info >/tmp/debswarm.log 2>&1 &
+          # Installing the package starts the debswarm systemd service (the runner
+          # has systemd), so verify that instance — the real install path — rather
+          # than launching a second daemon (which would collide on the P2P port).
           for _ in $(seq 1 30); do
-            if grep -q 'Starting HTTP proxy' /tmp/debswarm.log 2>/dev/null; then break; fi
+            if curl -fsS http://127.0.0.1:9978/stats >/dev/null 2>&1; then break; fi
             sleep 1
           done
-          cat /tmp/debswarm.log
-          # LAN fleet sharing is on by default
-          grep -q 'Fleet coordination enabled' /tmp/debswarm.log
-          # the metrics/stats endpoint responds
+          sudo systemctl is-active --quiet debswarm
+          sudo journalctl -u debswarm --no-pager | tail -n 40
+          # metrics/stats endpoint responds
           curl -fsS http://127.0.0.1:9978/stats | grep -q requests_total
+          # LAN fleet sharing is on by default
+          sudo journalctl -u debswarm --no-pager | grep -q 'Fleet coordination enabled'
 
       - name: Proxy serves a real repository index
         run: |
