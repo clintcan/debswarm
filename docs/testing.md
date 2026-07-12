@@ -190,6 +190,77 @@ The proxy load test reports:
 - **Status codes**: Distribution of HTTP status codes
 - **Errors**: Breakdown by error type (timeout, connection refused, etc.)
 
+## Docker Soak Testing
+
+Run the real daemon on Linux under sustained, real APT traffic — the highest-fidelity pre-release check. A soak exercises paths unit and integration tests cannot: a real pipelining APT client, memory/goroutine stability over time, and P2P transfer between multiple nodes. (A pre-1.30 soak is what surfaced the APT-pipelining index hang fixed by switching the proxy to `ReadHeaderTimeout`.)
+
+### Build the image
+
+Reuse the cross-compiled Linux binary (`make build-all` produces `build/debswarm-linux-amd64`) in a slim image — `ca-certificates` is required for HTTPS upstream/mirror fetches, `curl` for in-container monitoring:
+
+```dockerfile
+# Dockerfile (build context: a dir containing the linux binary as ./debswarm)
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+COPY debswarm /usr/bin/debswarm
+RUN chmod +x /usr/bin/debswarm
+ENTRYPOINT ["debswarm"]
+```
+
+```bash
+cp build/debswarm-linux-amd64 ./soak/debswarm
+docker build -t debswarm:soak ./soak
+docker network create debswarm-soak
+```
+
+### Single-node soak (proxy, cache, upstream fetch)
+
+Run the daemon and drive it with a real APT client in the same container (APT reaches the proxy over `localhost`; the proxy binds `127.0.0.1`). Monitor via `docker exec` — no host-port publishing needed.
+
+```bash
+docker run -d --name node1 --network debswarm-soak debswarm:soak \
+  daemon --metrics-bind 0.0.0.0 -l info
+
+# Point APT at the local proxy, then update + download in a loop
+docker exec node1 sh -c 'echo "Acquire::http::Proxy \"http://127.0.0.1:9977\";" > /etc/apt/apt.conf.d/00proxy'
+docker exec -d node1 sh -c \
+  'for i in $(seq 1 80); do apt-get clean; \
+     apt-get install -y --download-only --reinstall hello nano wget curl >/dev/null 2>&1; \
+   done'
+
+# Sample stats + memory over time (watch for upward memory drift = leak)
+docker stats --no-stream --format '{{.MemUsage}}' node1
+docker exec node1 curl -s http://127.0.0.1:9978/stats   # requests_*, cache_hits, cache_count
+```
+
+A healthy run shows `cache_hits` climbing (cache-serve path), stable (non-growing) memory, and no error logs.
+
+### Two-node P2P/fleet soak
+
+Verifies packages actually transfer over P2P. This needs **fleet enabled** (LAN discovery + dedup; off by default — the public DHT alone is unreliable between NAT'd nodes). Bake a config into the image so the daemon auto-detects it at `/etc/debswarm/config.toml`:
+
+```bash
+printf '[fleet]\nenabled = true\n[privacy]\nenable_mdns = true\nannounce_packages = true\n' > ./soak/config.toml
+# Dockerfile.fleet: FROM debswarm:soak / COPY config.toml /etc/debswarm/config.toml
+docker build -f ./soak/Dockerfile.fleet -t debswarm:soak-fleet ./soak
+
+docker run -d --name node1 --network debswarm-soak debswarm:soak-fleet daemon --metrics-bind 0.0.0.0
+docker run -d --name node2 --network debswarm-soak debswarm:soak-fleet daemon --metrics-bind 0.0.0.0
+# The two daemons discover each other via mDNS (works on a Docker bridge network).
+
+# Populate node1's cache, then request the same packages on node2:
+# node2 should pull them from node1 over P2P — check requests_p2p / bytes_from_p2p:
+docker exec node2 curl -s http://127.0.0.1:9978/stats   # expect requests_p2p > 0, "fleet":{"PeerCount":1}
+```
+
+### Notes and gotchas
+
+- **Do not pass `--config /etc/...`**: rely on auto-detection of `/etc/debswarm/config.toml`. On Git Bash / MSYS (Windows), a leading-slash argument like `/etc/debswarm/config.toml` is silently rewritten to a Windows path (e.g. `C:/Program Files/Git/etc/...`) before Docker sees it; use `MSYS_NO_PATHCONV=1`, a `//etc/...` prefix, or auto-detection.
+- **Host-port publishing may fail on Windows** (`bind: An attempt was made to access a socket in a way forbidden`) because Docker Desktop reserves port ranges — monitor via `docker exec` + `curl` instead of `-p`.
+- APT pipelines by default; test with default settings (do **not** set `Acquire::http::Pipeline-Depth=0`) so the real client behavior is exercised.
+- Packages are only cached/P2P-shared once their SHA256 is known from a parsed index, so run `apt-get update` through the proxy before expecting cache/P2P activity.
+
 ## Interpreting Results
 
 ### Benchmark Scenarios
