@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.30.0] - 2026-07-12
 
 ### Added
 - **Upstream HTTPS fetch**: the proxy can now open its own HTTPS connection to a mirror while APT talks plain HTTP to the local proxy, so HTTPS-only repositories (e.g. `pkgs.k8s.io`) can be cached, SHA256-verified, and shared over P2P — none of which an opaque HTTPS `CONNECT` tunnel can do. Enabled per-host via the new `[proxy] https_upstream_hosts` option; known HTTPS-only repos (`pkgs.k8s.io`) are included automatically when `trust_known_repos` is enabled. Only `http://` requests to listed hosts are upgraded; cache keys, index lookups, and P2P content addressing are unaffected.
