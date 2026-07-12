@@ -211,6 +211,59 @@ func TestGetByURLPath(t *testing.T) {
 	}
 }
 
+// Flat-layout repositories (e.g. pkgs.k8s.io) have no dists/pool tree, so the
+// package URL yields no path. GetByURLPath must still resolve the package via its
+// basename; otherwise the proxy computes an empty expected hash and skips
+// caching, verification, and P2P for the whole repo.
+func TestGetByURLPath_FlatRepo(t *testing.T) {
+	const flatPackages = "Package: cri-tools\n" +
+		"Version: 1.30.0-1.1\n" +
+		"Architecture: amd64\n" +
+		"Filename: amd64/cri-tools_1.30.0-1.1_amd64.deb\n" +
+		"Size: 12345\n" +
+		"SHA256: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2\n\n"
+
+	idx := New("/tmp/test", testLogger())
+	if err := idx.LoadFromData([]byte(flatPackages), "http://pkgs.k8s.io/core:/stable:/v1.30/deb/Packages"); err != nil {
+		t.Fatalf("LoadFromData: %v", err)
+	}
+
+	debURL := "http://pkgs.k8s.io/core:/stable:/v1.30/deb/amd64/cri-tools_1.30.0-1.1_amd64.deb"
+	pkg := idx.GetByURLPath(debURL)
+	if pkg == nil {
+		t.Fatal("GetByURLPath returned nil for a flat-repo .deb URL (hash unreachable → uncached/unverified)")
+	}
+	if pkg.Package != "cri-tools" {
+		t.Errorf("expected package 'cri-tools', got %q", pkg.Package)
+	}
+	if pkg.SHA256 == "" {
+		t.Error("resolved package has no SHA256")
+	}
+}
+
+// GetByBasename prefers a package from the requested repo when the same basename
+// exists in more than one repo.
+func TestGetByBasename_PrefersRepo(t *testing.T) {
+	const pkgA = "Package: tool\nVersion: 1.0\nArchitecture: amd64\n" +
+		"Filename: amd64/tool_1.0_amd64.deb\nSize: 1\n" +
+		"SHA256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\n"
+	const pkgB = "Package: tool\nVersion: 1.0\nArchitecture: amd64\n" +
+		"Filename: amd64/tool_1.0_amd64.deb\nSize: 1\n" +
+		"SHA256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\n"
+
+	idx := New("/tmp/test", testLogger())
+	_ = idx.LoadFromData([]byte(pkgA), "http://repo-a.example.com/deb/Packages")
+	_ = idx.LoadFromData([]byte(pkgB), "http://repo-b.example.com/deb/Packages")
+
+	got := idx.GetByBasename("tool_1.0_amd64.deb", "repo-b.example.com")
+	if got == nil {
+		t.Fatal("GetByBasename returned nil")
+	}
+	if got.Repo != "repo-b.example.com" {
+		t.Errorf("expected match from repo-b, got repo %q (sha %s)", got.Repo, got.SHA256[:8])
+	}
+}
+
 func TestGetByPathSuffix(t *testing.T) {
 	idx := New("/tmp/test", testLogger())
 	_ = idx.LoadFromData([]byte(samplePackagesContent), "http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages")
