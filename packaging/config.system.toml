@@ -23,6 +23,26 @@ bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 ]
 
+[proxy]
+# Trust a curated set of common third-party repositories by default (Launchpad
+# PPAs, download.docker.com, apt.postgresql.org, deb.nodesource.com,
+# packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org,
+# pkgs.k8s.io), in addition to Debian, Ubuntu, and Linux Mint. Set to false for
+# a strict, mirrors-only posture. Private/internal hosts are always blocked
+# (SSRF protection) and every package is SHA256-verified against the signed
+# index regardless of this setting.
+trust_known_repos = true
+
+# Additional repository hosts to allow, on top of the built-ins and the trusted
+# set above. Both /dists/ + /pool/ and flat-layout repositories are supported.
+# allowed_hosts = ["my-mirror.example.com"]
+
+# Hosts to fetch over HTTPS even when APT requests them via plain HTTP, so
+# HTTPS-only repositories can still be cached, verified, and P2P-shared (an
+# opaque HTTPS CONNECT tunnel cannot). Known HTTPS-only repos (pkgs.k8s.io) are
+# included automatically when trust_known_repos is on.
+# https_upstream_hosts = ["apt.internal.example.com"]
+
 [cache]
 # System paths for systemd service
 path = "/var/cache/debswarm"
@@ -74,9 +94,13 @@ file = ""
 # timezone = "America/New_York"
 # outside_window_rate = "100KB/s"
 
-# Fleet coordination (v1.9+)
-# [fleet]
-# enabled = true
+# Fleet coordination — LAN peer-to-peer sharing.
+# On by default since v1.30: nodes on the same LAN share cached packages over
+# P2P and coordinate to avoid redundant WAN downloads of the same package.
+# Every shared package is still SHA256-verified against the signed index. Set
+# enabled = false for an isolated node that should not share on the LAN.
+[fleet]
+enabled = true
 # claim_timeout = "5s"
 # max_wait_time = "5m"
 

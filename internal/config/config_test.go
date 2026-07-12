@@ -1441,3 +1441,27 @@ func TestLoad_FleetDefaultAndExplicitOverride(t *testing.T) {
 		t.Error("explicit [fleet] enabled = false was not honored")
 	}
 }
+
+// TestPackagedSystemConfigDefaults guards the config shipped in the .deb
+// (packaging/config.system.toml, installed to /etc/debswarm/config.toml). It
+// must load cleanly and carry the recommended defaults so a default install
+// behaves as documented — in particular fleet LAN sharing and third-party repo
+// trust are on. This catches drift between the packaged config and the code.
+func TestPackagedSystemConfigDefaults(t *testing.T) {
+	cfg, err := Load("../../packaging/config.system.toml")
+	if err != nil {
+		t.Fatalf("packaged system config failed to load: %v", err)
+	}
+	if !cfg.Proxy.TrustsKnownRepos() {
+		t.Error("packaged config: trust_known_repos should be enabled")
+	}
+	if !cfg.Fleet.Enabled {
+		t.Error("packaged config: [fleet] enabled should be true (LAN sharing on by default)")
+	}
+	if !cfg.Privacy.EnableMDNS {
+		t.Error("packaged config: enable_mdns should be true")
+	}
+	if !cfg.Privacy.AnnouncePackages {
+		t.Error("packaged config: announce_packages should be true")
+	}
+}

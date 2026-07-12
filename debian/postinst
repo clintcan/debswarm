@@ -17,53 +17,11 @@ case "$1" in
         chown -R debswarm:debswarm /var/cache/debswarm /var/lib/debswarm
         chmod 750 /var/cache/debswarm /var/lib/debswarm
 
-        # Create default configuration if it doesn't exist
-        if [ ! -f /etc/debswarm/config.toml ]; then
-            mkdir -p /etc/debswarm
-            cat > /etc/debswarm/config.toml << 'EOF'
-# debswarm configuration
-# See: https://github.com/clintcan/debswarm
-
-[network]
-listen_port = 4001
-proxy_port = 9977
-max_connections = 100
-
-# Public libp2p bootstrap nodes
-bootstrap_peers = [
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmNnooDu7bfjPFoTZYxMNLWUQJyrVwtbZg5gBMjTezGAJN",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmQCU2EcMqAqQPR2i9bChDtGNJchTbq5TbXJJ16u19uLTa",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmbLHAnMoJPWSCR5Zhtx6BHJX9KiKNN6tpvbUcqanj75Nb",
-  "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
-]
-
-[cache]
-path = "/var/cache/debswarm"
-max_size = "10GB"
-min_free_space = "1GB"
-
-[transfer]
-max_upload_rate = "0"
-max_download_rate = "0"
-max_concurrent_uploads = 20
-max_concurrent_peer_downloads = 10
-
-[dht]
-provider_ttl = "24h"
-announce_interval = "12h"
-
-[privacy]
-enable_mdns = true
-announce_packages = true
-# psk_path = "/etc/debswarm/swarm.key"
-# peer_allowlist = []
-
-[logging]
-level = "info"
-file = ""
-EOF
-            chmod 644 /etc/debswarm/config.toml
-        fi
+        # The default configuration ships as a dpkg conffile
+        # (packaging/config.system.toml, installed to /etc/debswarm/config.toml
+        # by debian/rules), so dpkg places and manages it. Do not write it here:
+        # a second source of truth drifts from the packaged config and can
+        # conflict with dpkg's conffile handling on upgrade.
         ;;
 esac
 
