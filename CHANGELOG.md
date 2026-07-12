@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.31.0] - 2026-07-13
+
+### Added
+- **Uncached-serve observability**: when a package is proxied straight from the mirror without caching, verification, or P2P sharing (because no signed index entry was found for it), debswarm now increments `debswarm_packages_served_uncached_total` (also exposed in `/stats` as `packages_served_uncached`) and logs an INFO notice once per repository host explaining the cause and the fix (fetch the repository's index through the proxy via `apt-get update`). Previously this was only visible at DEBUG with no metric, so a stalled cache / no-P2P situation was undiagnosable at the default log level.
+- **Per-`.deb` checksums in releases**: each released `.deb` now ships a `<deb>.sha256` sidecar so downloads can be verified with `sha256sum -c` (goreleaser's `checksums.txt` covers only the tarballs).
+
+### Changed
+- **Connectivity probe now uses HTTP**: the auto-detect connectivity check defaults to `http://deb.debian.org/debian/` instead of `https://deb.debian.org`, so it measures mirror reachability rather than TLS trust. An HTTPS probe fails on hosts without a CA bundle even when the mirror is reachable, mis-reporting an online node as `lan_only`/`offline`. Override with `connectivity_check_url`.
+- **Proxy passthrough streams instead of buffering**: the passthrough path now streams the upstream response to the client rather than reading the whole body into memory; an upstream failure still returns `502` before any bytes are sent.
+- **Dropped `apt-transport-https`** from `Recommends`: it has been a transitional dummy package since apt 1.5 (HTTPS support is built into apt), so it installed nothing useful on supported targets.
+- **CI now smoke-tests the built `.deb`**: the packaging job installs the freshly built package and verifies the binary, dpkg conffiles, the `ca-certificates` dependency, the systemd unit/user, that the daemon starts from the packaged config with fleet on, and that it serves a request through the proxy — catching packaging regressions before release.
+
 ## [1.30.1] - 2026-07-13
 
 ### Fixed
