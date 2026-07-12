@@ -136,7 +136,27 @@ func (p *Protocol) SendMessage(ctx context.Context, peerID peer.ID, msg *Message
 		return err
 	}
 
-	return ps.send(msg)
+	if err := ps.send(msg); err != nil {
+		// The stream is likely dead (peer disconnected or reset it). Evict it so the
+		// next send dials a fresh stream instead of reusing the broken one forever —
+		// otherwise a single transient error made a peer permanently unreachable for
+		// fleet coordination.
+		p.evictStream(peerID, ps)
+		return err
+	}
+	return nil
+}
+
+// evictStream drops ps from the cache if it is still the cached stream for
+// peerID, then resets it. The identity check avoids evicting a newer stream that
+// a concurrent getOrCreateStream may have installed.
+func (p *Protocol) evictStream(peerID peer.ID, ps *peerStream) {
+	p.streamsMu.Lock()
+	if cur, ok := p.streams[peerID]; ok && cur == ps {
+		delete(p.streams, peerID)
+	}
+	p.streamsMu.Unlock()
+	_ = ps.s.Reset()
 }
 
 // BroadcastMessage sends a message to all mDNS peers
