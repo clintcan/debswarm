@@ -108,6 +108,11 @@ type Server struct {
 	// Security configuration
 	allowedHosts       []string // Additional allowed repository hosts
 	httpsUpstreamHosts []string // Hosts to fetch over HTTPS even when APT requests HTTP
+
+	// uncachedHostsSeen tracks repository hosts for which we have already logged
+	// an INFO-level "served uncached" notice, so the log is emitted once per host
+	// (the packages_served_uncached_total metric carries the full count).
+	uncachedHostsSeen sync.Map
 }
 
 // Config holds proxy server configuration
@@ -451,6 +456,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		P2PRatioPercent   float64           `json:"p2p_ratio_percent"`
 		CacheSizeBytes    int64             `json:"cache_size_bytes"`
 		CacheCount        int               `json:"cache_count"`
+		PackagesUncached  int64             `json:"packages_served_uncached"`
 		Scheduler         *scheduler.Status `json:"scheduler,omitempty"`
 		Fleet             *fleet.Status     `json:"fleet,omitempty"`
 	}{
@@ -464,6 +470,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		P2PRatioPercent:   p2pRatio,
 		CacheSizeBytes:    s.cache.Size(),
 		CacheCount:        s.cache.Count(),
+		PackagesUncached:  s.metrics.PackagesServedUncached.Value(),
 		Scheduler:         schedStatus,
 		Fleet:             fleetStatus,
 	}
@@ -1166,6 +1173,13 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 			return nil, fmt.Errorf("mirror data failed hash verification: expected %s, got %s", expectedHash, actualHashHex)
 		}
 		s.cacheAndAnnounce(data, expectedHash, path)
+	} else {
+		// No signed index entry for this package, so it was served straight from
+		// the mirror: not verified, not cached, not shared over P2P. Record it so
+		// operators can tell why the cache/P2P is not engaging (usually the
+		// Packages index has not been fetched through the proxy yet).
+		s.metrics.PackagesServedUncached.Inc()
+		s.noteUncachedServe(log, url)
 	}
 
 	// Audit log mirror download complete
@@ -1560,19 +1574,50 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url s
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
-	data, err := s.fetcher.Fetch(ctx, s.upstreamFetchURL(url))
+	// Stream the upstream body straight to the client instead of buffering the
+	// whole response in memory. Stream validates the status before returning the
+	// body, so an upstream failure still yields a 502 before any bytes are sent.
+	body, size, err := s.fetcher.Stream(ctx, s.upstreamFetchURL(url))
 	if err != nil {
 		log.Error("Passthrough fetch failed", zap.Error(err))
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)
 		return
 	}
+	defer func() { _ = body.Close() }()
 
-	atomic.AddInt64(&s.requestsMirror, 1)
-	atomic.AddInt64(&s.bytesFromMirror, int64(len(data)))
-
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	if size >= 0 {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	}
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+
+	n, err := io.Copy(w, body)
+	atomic.AddInt64(&s.requestsMirror, 1)
+	atomic.AddInt64(&s.bytesFromMirror, n)
+	if err != nil {
+		// The 200 header is already on the wire, so we cannot change the status;
+		// the client will see a short read. Log it for diagnosis.
+		log.Warn("Passthrough stream interrupted", zap.Int64("written", n), zap.Error(err))
+	}
+}
+
+// noteUncachedServe logs, at most once per repository host, that packages from
+// that host are being served directly from the mirror without caching,
+// verification, or P2P sharing because no signed index entry was found. The
+// packages_served_uncached_total metric carries the full per-package count;
+// repeat serves for an already-logged host are logged at DEBUG.
+func (s *Server) noteUncachedServe(log *zap.Logger, rawURL string) {
+	host := rawURL
+	if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	if _, seen := s.uncachedHostsSeen.LoadOrStore(host, struct{}{}); seen {
+		log.Debug("Served package uncached (no signed index entry)", zap.String("host", host))
+		return
+	}
+	log.Info("Serving packages from this repository uncached: no signed index entry was found, "+
+		"so they are not verified, cached, or shared over P2P. Run 'apt-get update' through the "+
+		"debswarm proxy so it can read the repository's signed Packages index.",
+		zap.String("host", host))
 }
 
 func (s *Server) serveFromCache(w http.ResponseWriter, hash string) {

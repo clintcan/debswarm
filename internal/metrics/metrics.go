@@ -19,6 +19,11 @@ type Metrics struct {
 	CacheMisses          *Counter
 	VerificationFailures *Counter
 
+	// PackagesServedUncached counts packages proxied straight from the mirror
+	// without caching, verification, or P2P sharing because no signed index
+	// entry (SHA256) was found for them.
+	PackagesServedUncached *Counter
+
 	// Resume metrics
 	DownloadsResumed *Counter
 	ChunksRecovered  *Counter
@@ -304,14 +309,15 @@ var (
 // New creates a new Metrics instance
 func New() *Metrics {
 	return &Metrics{
-		DownloadsTotal:       NewCounterVec(),
-		BytesDownloaded:      NewCounterVec(),
-		BytesUploaded:        NewCounterVec(),
-		PeerConnections:      NewCounterVec(),
-		DHTQueries:           NewCounterVec(),
-		CacheHits:            &Counter{},
-		CacheMisses:          &Counter{},
-		VerificationFailures: &Counter{},
+		DownloadsTotal:         NewCounterVec(),
+		BytesDownloaded:        NewCounterVec(),
+		BytesUploaded:          NewCounterVec(),
+		PeerConnections:        NewCounterVec(),
+		DHTQueries:             NewCounterVec(),
+		CacheHits:              &Counter{},
+		CacheMisses:            &Counter{},
+		VerificationFailures:   &Counter{},
+		PackagesServedUncached: &Counter{},
 
 		// Resume metrics
 		DownloadsResumed: &Counter{},
@@ -381,6 +387,7 @@ func (m *Metrics) Handler() http.Handler {
 		writeCounter(w, "debswarm_cache_hits_total", m.CacheHits.Value())
 		writeCounter(w, "debswarm_cache_misses_total", m.CacheMisses.Value())
 		writeCounter(w, "debswarm_verification_failures_total", m.VerificationFailures.Value())
+		writeCounter(w, "debswarm_packages_served_uncached_total", m.PackagesServedUncached.Value())
 
 		// Resume metrics
 		writeCounter(w, "debswarm_downloads_resumed_total", m.DownloadsResumed.Value())
