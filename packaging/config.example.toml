@@ -320,10 +320,11 @@ urgent_always_full_speed = true
 # [fleet] - LAN fleet coordination (v1.9+)
 #─────────────────────────────────────────────────────────────────────────────
 [fleet]
-# Enable fleet coordination for LAN-aware downloads
-# When multiple debswarm nodes are on the same LAN, they coordinate
-# to avoid redundant WAN downloads of the same package
-enabled = false
+# Enable fleet coordination for LAN-aware downloads (ON by default).
+# When multiple debswarm nodes are on the same LAN, they discover each other via
+# mDNS and coordinate to share cached packages and avoid redundant WAN downloads.
+# Set to false for an isolated node that should not share on the LAN.
+enabled = true
 
 # How long to wait for another node to claim a WAN download
 # If no one claims within this time, this node will download

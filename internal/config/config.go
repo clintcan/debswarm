@@ -662,6 +662,14 @@ func DefaultConfig() *Config {
 			EnableMDNS:       true,
 			AnnouncePackages: true,
 		},
+		Fleet: FleetConfig{
+			// LAN fleet coordination (peer-to-peer download dedup) is on by default:
+			// mDNS discovery is already enabled, so nearby nodes find each other, and
+			// this lets them actually share packages instead of each fetching from the
+			// WAN. Set [fleet] enabled = false for an isolated/no-sharing posture.
+			// The remaining fields default via their *Duration() accessors when empty.
+			Enabled: true,
+		},
 		Metrics: MetricsConfig{
 			Port: 9978,
 			Bind: "127.0.0.1",

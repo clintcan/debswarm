@@ -598,11 +598,11 @@ end_time = "23:59"
 
 ### [fleet]
 
-Settings for LAN fleet coordination (v1.9+, fully wired in v1.25+). Prevents redundant WAN downloads across peers.
+Settings for LAN fleet coordination (v1.9+, fully wired in v1.25+). When multiple debswarm nodes share a LAN they discover each other via mDNS, share cached packages over P2P, and avoid redundant WAN downloads of the same package. **On by default since v1.30.0** — set `enabled = false` for an isolated node that should not share on the LAN.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `enabled` | boolean | `false` | Enable fleet coordination. |
+| `enabled` | boolean | `true` | Enable fleet coordination (LAN P2P sharing + WAN-download dedup). Set `false` to opt out. |
 | `claim_timeout` | string | `"5s"` | Time to wait for a peer to claim WAN download responsibility. |
 | `max_wait_time` | string | `"5m"` | Maximum time to wait for a peer to complete WAN download. |
 | `allow_concurrent` | integer | `1` | Number of concurrent WAN fetchers allowed per package. |

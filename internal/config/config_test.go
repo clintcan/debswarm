@@ -1405,3 +1405,39 @@ func TestProxyConfig_EffectiveHTTPSUpstreamHosts(t *testing.T) {
 		}
 	})
 }
+
+func TestDefaultConfig_FleetEnabledByDefault(t *testing.T) {
+	if !DefaultConfig().Fleet.Enabled {
+		t.Error("DefaultConfig().Fleet.Enabled = false, want true (LAN fleet sharing is on by default)")
+	}
+}
+
+func TestLoad_FleetDefaultAndExplicitOverride(t *testing.T) {
+	dir := t.TempDir()
+
+	// An absent [fleet] section keeps the on-by-default.
+	absent := filepath.Join(dir, "absent.toml")
+	if err := os.WriteFile(absent, []byte("[cache]\nmax_size = \"5GB\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(absent)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Fleet.Enabled {
+		t.Error("absent [fleet] section should leave fleet on by default")
+	}
+
+	// An explicit enabled = false must be honored over the default.
+	off := filepath.Join(dir, "off.toml")
+	if err := os.WriteFile(off, []byte("[fleet]\nenabled = false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(off)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Fleet.Enabled {
+		t.Error("explicit [fleet] enabled = false was not honored")
+	}
+}

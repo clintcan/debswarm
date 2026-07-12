@@ -55,7 +55,7 @@ var profiles = []profile{
 		downloadRate: "0",
 		enableMDNS:   true,
 		announce:     true,
-		fleetEnabled: false,
+		fleetEnabled: true,
 		metricsBind:  "127.0.0.1",
 	},
 	{
@@ -76,7 +76,7 @@ var profiles = []profile{
 		enableMDNS:      true,
 		announce:        true,
 		pskPath:         "", // resolved at runtime
-		fleetEnabled:    false,
+		fleetEnabled:    true,
 		metricsBind:     "127.0.0.1",
 		connectivityMod: "lan_only",
 	},
