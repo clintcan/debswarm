@@ -14,14 +14,36 @@ If no configuration file is found, debswarm uses sensible defaults.
 
 ### Interactive Wizard (v1.29+)
 
-For new installations, the configuration wizard provides a guided setup:
+The configuration wizard provides a guided setup:
 
 ```bash
 debswarm config wizard                      # interactive prompts
 debswarm config wizard --output /tmp/c.toml # custom output path
+debswarm config wizard --config /etc/debswarm/config.toml  # edit a specific file
 ```
 
-The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, mDNS, fleet coordination, and log level with inline validation.
+The wizard offers 3 deployment profiles (Home, Seeding server, Private swarm), then walks through cache size, bandwidth limits, ports, repositories, mDNS, fleet coordination, and log level with inline validation.
+
+**Editing an existing configuration (v1.30+):** if a config file already exists, the wizard says so and asks what you want to do:
+
+```
+Found an existing configuration: /etc/debswarm/config.toml
+Start from it, or start over?
+  > [1] Edit it — every prompt starts from your current value
+    [2] Start from scratch — discard it and begin from the defaults
+```
+
+**Edit it** (the default) loads your config and edits it in place. Every prompt defaults to your current value, so pressing Enter through the wizard changes nothing. Within the edit flow, Step 1 defaults to **"Keep current settings"**; picking a deployment profile instead overwrites your cache size, rate limits, mDNS, fleet, and metrics settings, so the wizard confirms before applying one.
+
+**Start from scratch** discards everything and begins from the defaults — including settings the wizard never asks about, such as bootstrap peers, PSK path, DHT intervals, and allowed hosts. It asks for confirmation first (defaulting to *no*).
+
+Either way the result is written back to the config file that was found, and nothing is written until you confirm at the final summary.
+
+The wizard finds an existing config using the same precedence as the daemon: `--config`, then `/etc/debswarm/config.toml`, then `~/.config/debswarm/config.toml`.
+
+The repositories step asks whether to trust the curated set of common third-party repositories (`trust_known_repos`) and lets you list any additional hosts (`allowed_hosts`). Both are written explicitly to the generated config. When editing, a blank answer keeps your current host list; answer `none` to clear it. If you have an HTTPS-only repository, the wizard points you at [`https_upstream_hosts`](#https-only-repositories) — `pkgs.k8s.io` is enabled by default.
+
+> **Note:** the wizard rewrites the config file from its parsed values. Your settings are preserved, but hand-written comments are not, and every field is written out explicitly (so a short hand-written config comes back fully expanded, with unset options shown as their empty/default values). Keep a copy if you rely on the comments. Answering `n` at the final confirmation leaves the existing file untouched.
 
 ## Environment Variables
 

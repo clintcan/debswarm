@@ -19,6 +19,18 @@ type wizard struct {
 	scanner *bufio.Scanner
 	cfg     *config.Config
 	out     *os.File // output writer (os.Stdout in production)
+
+	// existingPath is the config file that was found on disk, or "" if there is
+	// none. The wizard always saves back to it, so a config that exists but fails
+	// to parse gets replaced rather than shadowed by a new file at a lower-priority
+	// path (which the daemon would never read).
+	existingPath string
+
+	// editing is true only when existingPath was parsed successfully and its values
+	// seeded w.cfg. Then prompts default to the current values and the profile step
+	// offers to keep them. A found-but-unparseable config leaves this false: there
+	// are no current values to keep, so the flow is a normal create.
+	editing bool
 }
 
 // profile presets applied after the user picks a deployment mode.
@@ -83,6 +95,18 @@ applies a deployment profile, validates inputs, and saves a ready-to-use config.
 				cfg:     config.DefaultConfig(),
 				out:     os.Stdout,
 			}
+
+			// Start from the existing config when there is one, so re-running the
+			// wizard edits the current settings instead of silently resetting them.
+			if path, ok := existingConfigPath(); ok {
+				w.existingPath = path // save back here either way
+				if loaded, err := config.Load(path); err == nil {
+					w.cfg = loaded
+					w.editing = true
+				} else {
+					w.printf("Warning: could not parse %s (%v).\nStarting from defaults; this file will be replaced.\n", path, err)
+				}
+			}
 			return w.run(outputPath)
 		},
 	}
@@ -95,19 +119,34 @@ func (w *wizard) run(outputPath string) error {
 	w.printf("\n")
 	w.printf("╔══════════════════════════════════════════╗\n")
 	w.printf("║   debswarm configuration wizard          ║\n")
-	w.printf("║   Press Enter to accept [defaults]       ║\n")
 	w.printf("╚══════════════════════════════════════════╝\n")
+
+	// When a config already exists, let the user choose up front between editing it
+	// and starting clean. Without this the only way to reset was to pick a profile,
+	// which resets some fields (cache size, rates, mDNS, fleet, metrics bind) but
+	// silently keeps others (ports, bootstrap peers, PSK path, allowed hosts) —
+	// not a reset at all, and not obvious which is which.
+	if w.editing && w.promptStartFresh() {
+		w.cfg = config.DefaultConfig()
+		w.editing = false
+	}
+	editing := w.editing
+
+	if editing {
+		w.printf("\nEditing %s — press Enter to keep each [current] value.\n", w.existingPath)
+	} else {
+		w.printf("\nPress Enter to accept each [default].\n")
+	}
 	w.printf("\n")
 
-	// Step 1: Deployment profile
-	profileIdx := w.promptChoice(
-		"Step 1: Deployment profile",
-		[]string{"Home user — small cache, public DHT",
-			"Seeding server — large cache, rate-limited, fleet enabled",
-			"Private swarm — PSK, mDNS only, no public DHT"},
-		0,
-	)
-	w.applyProfile(profileIdx)
+	// Step 1: Deployment profile.
+	// profileIdx is -1 when keeping the current settings (no profile applied).
+	// Applying a profile overwrites cache size, rates, mDNS, fleet, metrics bind,
+	// and connectivity mode, so when editing we must not do it unless asked.
+	profileIdx := w.promptProfile(editing)
+	if profileIdx >= 0 {
+		w.applyProfile(profileIdx)
+	}
 
 	// Step 2: Cache size
 	w.promptCacheSize()
@@ -118,16 +157,19 @@ func (w *wizard) run(outputPath string) error {
 	// Step 4: Ports
 	w.promptPorts()
 
-	// Step 5: Privacy (mDNS + PSK)
+	// Step 5: Repositories
+	w.promptRepositories()
+
+	// Step 6: Privacy (mDNS + PSK)
 	w.promptPrivacy(profileIdx)
 
-	// Step 6: Fleet coordination
+	// Step 7: Fleet coordination
 	w.promptFleet()
 
-	// Step 7: Log level
+	// Step 8: Log level
 	w.promptLogLevel()
 
-	// Step 8: Summary + confirm
+	// Step 9: Summary + confirm
 	w.printSummary()
 
 	if !w.promptYesNo("Save this configuration?", true) {
@@ -141,12 +183,16 @@ func (w *wizard) run(outputPath string) error {
 		return fmt.Errorf("configuration validation failed: %w", err)
 	}
 
-	// Resolve output path
+	// Resolve output path. When editing, write back to the file we read from so
+	// re-running the wizard updates that config instead of creating a second one.
 	savePath := outputPath
 	if savePath == "" {
-		if cfgFile != "" {
+		switch {
+		case cfgFile != "":
 			savePath = cfgFile
-		} else {
+		case w.existingPath != "":
+			savePath = w.existingPath
+		default:
 			homeDir, _ := os.UserHomeDir()
 			savePath = filepath.Join(homeDir, ".config", "debswarm", "config.toml")
 		}
@@ -162,6 +208,63 @@ func (w *wizard) run(outputPath string) error {
 	w.printf("  debswarm config show               # review configuration\n")
 	w.printf("  sudo systemctl enable --now debswarm  # enable on boot (Linux)\n")
 	return nil
+}
+
+// promptStartFresh asks whether to edit the existing config or discard it and
+// start from the defaults. Returns true to start fresh.
+//
+// Either way the result is saved back to the same file; "start fresh" only
+// controls the values the wizard begins from, and nothing is written until the
+// final confirmation.
+func (w *wizard) promptStartFresh() bool {
+	w.printf("\nFound an existing configuration: %s\n", w.existingPath)
+	idx := w.promptChoice(
+		"Start from it, or start over?",
+		[]string{
+			"Edit it — every prompt starts from your current value",
+			"Start from scratch — discard it and begin from the defaults",
+		},
+		0,
+	)
+	if idx == 0 {
+		return false
+	}
+	w.printf("  This discards every current setting, including ones the wizard does not\n")
+	w.printf("  ask about (bootstrap peers, PSK path, DHT intervals, allowed hosts).\n")
+	if !w.promptYesNo("  Start from scratch?", false) {
+		return false
+	}
+	w.printf("  Starting from defaults. %s is rewritten when you confirm at the end.\n", w.existingPath)
+	return true
+}
+
+// profileLabels are the deployment profiles offered in step 1, in the same order
+// as the profiles slice.
+var profileLabels = []string{
+	"Home user — small cache, public DHT",
+	"Seeding server — large cache, rate-limited, fleet enabled",
+	"Private swarm — PSK, mDNS only, no public DHT",
+}
+
+// promptProfile asks for a deployment profile. When editing an existing config it
+// offers "keep current settings" as the default, and returns -1 for that choice —
+// applying a profile would overwrite values the user already chose.
+func (w *wizard) promptProfile(editing bool) int {
+	if !editing {
+		return w.promptChoice("Step 1: Deployment profile", profileLabels, 0)
+	}
+
+	opts := append([]string{"Keep current settings — only change what you edit below"}, profileLabels...)
+	choice := w.promptChoice("Step 1: Deployment profile", opts, 0)
+	if choice == 0 {
+		return -1
+	}
+	w.printf("  Applying the %s profile will overwrite your current cache size,\n", profiles[choice-1].name)
+	w.printf("  rate limits, mDNS, fleet, and metrics settings.\n")
+	if !w.promptYesNo("  Apply it?", false) {
+		return -1
+	}
+	return choice - 1
 }
 
 // applyProfile sets config values from the chosen profile.
@@ -243,16 +346,83 @@ func (w *wizard) promptPorts() {
 	)
 }
 
+// promptRepositories configures which repository hosts the proxy will fetch from.
+//
+// Both settings are written explicitly rather than left to their defaults: an
+// absent key is invisible, and users with a private mirror or an HTTPS-only repo
+// need to discover that these knobs exist.
+func (w *wizard) promptRepositories() {
+	w.printf("\n")
+	w.printf("  Debian, Ubuntu, and Linux Mint mirrors are always allowed.\n")
+	w.printf("  Common third-party repos (Docker, Launchpad PPAs, PostgreSQL, NodeSource,\n")
+	w.printf("  Microsoft, HashiCorp, kernel.org, Kubernetes) can be trusted automatically.\n")
+
+	trust := w.promptYesNo(
+		"Step 5a: Trust common third-party repositories?",
+		w.cfg.Proxy.TrustsKnownRepos(),
+	)
+	w.cfg.Proxy.TrustKnownRepos = &trust
+
+	// Default to the hosts already configured, so pressing Enter keeps them rather
+	// than silently clearing the list. "none" is the escape hatch for clearing it.
+	current := strings.Join(w.cfg.Proxy.AllowedHosts, ", ")
+	if current == "" {
+		w.printf("  Any other repository hosts to allow? (comma-separated, blank for none)\n")
+	} else {
+		w.printf("  Any other repository hosts to allow? (comma-separated, blank keeps current,\n")
+		w.printf("  \"none\" clears the list)\n")
+	}
+	hosts := w.promptString(
+		fmt.Sprintf("Step 5b: Additional repository hosts? [%s]", displayHosts(current)),
+		current,
+	)
+	w.cfg.Proxy.AllowedHosts = parseHostList(hosts)
+
+	// HTTPS-only repos need an http:// source plus an entry in https_upstream_hosts.
+	// The curated default already covers the common case (pkgs.k8s.io), so surface
+	// this as a hint rather than another prompt.
+	if len(w.cfg.Proxy.EffectiveHTTPSUpstreamHosts()) > 0 {
+		w.printf("  Note: HTTPS-only repos are fetched over HTTPS upstream so they can still be\n")
+		w.printf("  cached and P2P-shared. Enabled for: %s\n", strings.Join(w.cfg.Proxy.EffectiveHTTPSUpstreamHosts(), ", "))
+		w.printf("  To add your own, set [proxy] https_upstream_hosts and use http:// in sources.list.\n")
+	}
+}
+
+// parseHostList splits a comma-separated host list, trimming blanks.
+// The literal "none" clears the list, so an existing list can be emptied from the
+// prompt (where a blank answer means "keep current").
+// Returns nil (not an empty slice) when no hosts are given.
+func parseHostList(s string) []string {
+	if strings.EqualFold(strings.TrimSpace(s), "none") {
+		return nil
+	}
+	var hosts []string
+	for h := range strings.SplitSeq(s, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
+// displayHosts renders a host list for a prompt default, showing "none" when empty.
+func displayHosts(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
 func (w *wizard) promptPrivacy(profileIdx int) {
 	w.printf("\n")
 	w.cfg.Privacy.EnableMDNS = w.promptYesNo(
-		fmt.Sprintf("Step 5a: Enable LAN discovery (mDNS)? [%s]", boolDefault(w.cfg.Privacy.EnableMDNS)),
+		"Step 6a: Enable LAN discovery (mDNS)?",
 		w.cfg.Privacy.EnableMDNS,
 	)
 
 	// PSK generation for private swarm profile
 	if profileIdx == 2 {
-		if w.promptYesNo("Step 5b: Generate a new PSK now?", true) {
+		if w.promptYesNo("Step 6b: Generate a new PSK now?", true) {
 			psk, err := p2p.GeneratePSK()
 			if err != nil {
 				w.printf("  Failed to generate PSK: %v\n", err)
@@ -279,7 +449,7 @@ func (w *wizard) promptPrivacy(profileIdx int) {
 func (w *wizard) promptFleet() {
 	w.printf("\n")
 	w.cfg.Fleet.Enabled = w.promptYesNo(
-		fmt.Sprintf("Step 6: Enable fleet coordination (LAN download dedup)? [%s]", boolDefault(w.cfg.Fleet.Enabled)),
+		"Step 7: Enable fleet coordination (LAN download dedup)?",
 		w.cfg.Fleet.Enabled,
 	)
 }
@@ -294,7 +464,7 @@ func (w *wizard) promptLogLevel() {
 	case "warn":
 		currentDefault = 2
 	}
-	idx := w.promptChoice("Step 7: Log level", levels, currentDefault)
+	idx := w.promptChoice("Step 8: Log level", levels, currentDefault)
 	switch idx {
 	case 0:
 		w.cfg.Logging.Level = "info"
@@ -321,6 +491,13 @@ func (w *wizard) printSummary() {
 	w.printf("  %-28s %v\n", "mDNS:", w.cfg.Privacy.EnableMDNS)
 	w.printf("  %-28s %v\n", "Fleet coordination:", w.cfg.Fleet.Enabled)
 	w.printf("  %-28s %s\n", "Log level:", w.cfg.Logging.Level)
+	w.printf("  %-28s %v\n", "Trust known repos:", w.cfg.Proxy.TrustsKnownRepos())
+	if len(w.cfg.Proxy.AllowedHosts) > 0 {
+		w.printf("  %-28s %s\n", "Additional repo hosts:", strings.Join(w.cfg.Proxy.AllowedHosts, ", "))
+	}
+	if hosts := w.cfg.Proxy.EffectiveHTTPSUpstreamHosts(); len(hosts) > 0 {
+		w.printf("  %-28s %s\n", "HTTPS upstream fetch:", strings.Join(hosts, ", "))
+	}
 	if w.cfg.Privacy.PSKPath != "" {
 		w.printf("  %-28s %s\n", "PSK path:", w.cfg.Privacy.PSKPath)
 	}
@@ -406,12 +583,4 @@ func (w *wizard) readLine() string {
 // printf writes to the wizard's output.
 func (w *wizard) printf(format string, args ...any) {
 	_, _ = fmt.Fprintf(w.out, format, args...)
-}
-
-// boolDefault returns "Y/n" or "y/N" depending on the boolean.
-func boolDefault(b bool) string {
-	if b {
-		return "Y/n"
-	}
-	return "y/N"
 }

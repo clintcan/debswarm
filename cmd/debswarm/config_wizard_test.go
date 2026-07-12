@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,6 +24,320 @@ func newTestWizard(lines ...string) (*wizard, *os.File) {
 	}, devNull
 }
 
+// customConfigTOML is an existing config with values that differ from every
+// default, so any reset shows up as a test failure.
+const customConfigTOML = `
+[network]
+proxy_port = 8888
+listen_port = 5555
+
+[cache]
+max_size = "99GB"
+
+[transfer]
+max_upload_rate = "25MB/s"
+
+[logging]
+level = "debug"
+
+[proxy]
+trust_known_repos = false
+allowed_hosts = ["my-mirror.example.com"]
+`
+
+// newEditingWizard writes customConfigTOML to a temp file and returns a wizard
+// that is editing it, mirroring what the command does when a config already exists.
+func newEditingWizard(t *testing.T, lines ...string) (*wizard, string, *os.File) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(customConfigTOML), 0o600); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("load existing config: %v", err)
+	}
+
+	devNull, _ := os.Open(os.DevNull)
+	w := &wizard{
+		scanner:      bufio.NewScanner(strings.NewReader(strings.Join(lines, "\n") + "\n")),
+		cfg:          cfg,
+		out:          devNull,
+		existingPath: path,
+		editing:      true,
+	}
+	return w, path, devNull
+}
+
+// A config file that exists but does not parse must still be the save target:
+// writing a fresh config to a lower-priority path would leave the daemon reading
+// the broken file. There are no current values to keep, so this is a create flow.
+func TestWizard_UnparseableExistingConfigIsReplaced(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte("this is not = valid toml [[[\n"), 0o600); err != nil {
+		t.Fatalf("write broken config: %v", err)
+	}
+
+	devNull, _ := os.Open(os.DevNull)
+	defer devNull.Close()
+	w := &wizard{
+		scanner: bufio.NewScanner(strings.NewReader(strings.Join([]string{
+			"1", // profile: home (create flow — no "keep current" option)
+			"",  // cache size
+			"",  // upload rate
+			"",  // download rate
+			"",  // proxy port
+			"",  // p2p port
+			"",  // metrics port
+			"",  // trust known repos
+			"",  // additional repo hosts
+			"",  // mdns
+			"",  // fleet
+			"",  // log level
+			"y", // confirm save
+		}, "\n") + "\n")),
+		cfg:          config.DefaultConfig(),
+		out:          devNull,
+		existingPath: path, // found, but not loaded
+		editing:      false,
+	}
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	// The broken file must have been overwritten in place, and now parse.
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("broken config was not replaced: %v", err)
+	}
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want %q", cfg.Cache.MaxSize, "10GB")
+	}
+}
+
+// editKeepAllInputs chooses "edit it" when an existing config is found, then
+// "keep current settings" at step 1, then presses Enter through every remaining
+// prompt. Nothing should change.
+func editKeepAllInputs() []string {
+	return []string{
+		"",  // found existing config: edit it (default)
+		"",  // step 1: keep current settings
+		"",  // cache size
+		"",  // upload rate
+		"",  // download rate
+		"",  // proxy port
+		"",  // p2p port
+		"",  // metrics port
+		"",  // trust known repos
+		"",  // additional repo hosts
+		"",  // mdns
+		"",  // fleet
+		"",  // log level
+		"y", // confirm save
+	}
+}
+
+func TestWizard_EditExisting_KeepsAllSettings(t *testing.T) {
+	w, path, f := newEditingWizard(t, editKeepAllInputs()...)
+	defer f.Close()
+
+	// Saves back to the file it was loaded from.
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 (reset!)", cfg.Network.ProxyPort)
+	}
+	if cfg.Network.ListenPort != 5555 {
+		t.Errorf("listen_port = %d, want 5555 (reset!)", cfg.Network.ListenPort)
+	}
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q (reset!)", cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "25MB/s" {
+		t.Errorf("max_upload_rate = %q, want %q (reset!)", cfg.Transfer.MaxUploadRate, "25MB/s")
+	}
+	if cfg.Logging.Level != "debug" {
+		t.Errorf("logging.level = %q, want %q (reset!)", cfg.Logging.Level, "debug")
+	}
+	if cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos = true, want false (reset!)")
+	}
+	if !slices.Equal(cfg.Proxy.AllowedHosts, []string{"my-mirror.example.com"}) {
+		t.Errorf("allowed_hosts = %v, want [my-mirror.example.com] (reset!)", cfg.Proxy.AllowedHosts)
+	}
+}
+
+func TestWizard_EditExisting_ApplyProfileOverwrites(t *testing.T) {
+	lines := append([]string{
+		"",  // found existing config: edit it
+		"2", // step 1: Home user profile (option 1 is "keep current")
+		"y", // yes, apply it (overwrites cache size, rates, etc.)
+	}, editKeepAllInputs()[2:]...)
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	// Applying a profile is opt-in, and it does overwrite.
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want %q from the home profile", cfg.Cache.MaxSize, "10GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "0" {
+		t.Errorf("max_upload_rate = %q, want %q from the home profile", cfg.Transfer.MaxUploadRate, "0")
+	}
+	// Ports are not part of a profile, so they survive.
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 (profiles must not touch ports)", cfg.Network.ProxyPort)
+	}
+}
+
+func TestWizard_EditExisting_DeclineProfileKeepsSettings(t *testing.T) {
+	lines := append([]string{
+		"",  // found existing config: edit it
+		"2", // step 1: pick Home user profile...
+		"n", // ...then decline to apply it
+	}, editKeepAllInputs()[2:]...)
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q — declining must not apply the profile",
+			cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "25MB/s" {
+		t.Errorf("max_upload_rate = %q, want %q — declining must not apply the profile",
+			cfg.Transfer.MaxUploadRate, "25MB/s")
+	}
+}
+
+func TestWizard_EditExisting_ClearHostsWithNone(t *testing.T) {
+	lines := editKeepAllInputs()
+	lines[9] = "none" // additional repo hosts: clear the list
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if len(cfg.Proxy.AllowedHosts) != 0 {
+		t.Errorf(`allowed_hosts = %v, want empty — "none" should clear the list`, cfg.Proxy.AllowedHosts)
+	}
+}
+
+// Choosing "start from scratch" must discard everything — including settings the
+// wizard never asks about — and rewrite the same file from the defaults.
+func TestWizard_EditExisting_StartFromScratch(t *testing.T) {
+	w, path, f := newEditingWizard(t,
+		"2", // found existing config: start from scratch
+		"y", // confirm: yes, discard current settings
+		"1", // step 1: Home user profile (create flow — no "keep current" option)
+		"",  // cache size
+		"",  // upload rate
+		"",  // download rate
+		"",  // proxy port
+		"",  // p2p port
+		"",  // metrics port
+		"",  // trust known repos
+		"",  // additional repo hosts
+		"",  // mdns
+		"",  // fleet
+		"",  // log level
+		"y", // confirm save
+	)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	// Every custom value from customConfigTOML must be gone.
+	if cfg.Network.ProxyPort != 9977 {
+		t.Errorf("proxy_port = %d, want default 9977 — start-from-scratch must discard 8888", cfg.Network.ProxyPort)
+	}
+	if cfg.Cache.MaxSize != "10GB" {
+		t.Errorf("cache.max_size = %q, want default %q — must discard 99GB", cfg.Cache.MaxSize, "10GB")
+	}
+	if cfg.Transfer.MaxUploadRate != "0" {
+		t.Errorf("max_upload_rate = %q, want default %q — must discard 25MB/s", cfg.Transfer.MaxUploadRate, "0")
+	}
+	if cfg.Logging.Level != "info" {
+		t.Errorf("logging.level = %q, want default %q — must discard debug", cfg.Logging.Level, "info")
+	}
+	if !cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos = false, want default true — must discard the old value")
+	}
+	if len(cfg.Proxy.AllowedHosts) != 0 {
+		t.Errorf("allowed_hosts = %v, want empty — must discard my-mirror.example.com", cfg.Proxy.AllowedHosts)
+	}
+}
+
+// Declining the start-from-scratch confirmation must fall back to editing, not
+// silently discard the config.
+func TestWizard_EditExisting_DeclineStartFromScratch(t *testing.T) {
+	lines := append([]string{
+		"2", // found existing config: start from scratch...
+		"n", // ...then think better of it
+	}, editKeepAllInputs()[1:]...) // continues as a normal edit
+
+	w, path, f := newEditingWizard(t, lines...)
+	defer f.Close()
+
+	if err := w.run(""); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("failed to reload config: %v", err)
+	}
+
+	if cfg.Cache.MaxSize != "99GB" {
+		t.Errorf("cache.max_size = %q, want %q — declining must keep the current settings",
+			cfg.Cache.MaxSize, "99GB")
+	}
+	if cfg.Network.ProxyPort != 8888 {
+		t.Errorf("proxy_port = %d, want 8888 — declining must keep the current settings", cfg.Network.ProxyPort)
+	}
+}
+
 func TestWizard_HomeProfile(t *testing.T) {
 	dir := t.TempDir()
 	outPath := filepath.Join(dir, "config.toml")
@@ -38,6 +353,8 @@ func TestWizard_HomeProfile(t *testing.T) {
 		"",  // proxy port: accept default
 		"",  // p2p port: accept default
 		"",  // metrics port: accept default
+		"",  // trust known repos: accept default (Y)
+		"",  // additional repo hosts: none
 		"",  // mdns: accept default (Y)
 		"",  // fleet: accept default (N)
 		"",  // log level: accept default (info)
@@ -84,6 +401,8 @@ func TestWizard_ServerProfile(t *testing.T) {
 		"",      // proxy port: accept default
 		"",      // p2p port: accept default
 		"",      // metrics port: accept default
+		"",      // trust known repos: accept default (Y)
+		"",      // additional repo hosts: none
 		"",      // mdns: accept default
 		"",      // fleet: accept default (Y for server)
 		"",      // log level: accept default
@@ -126,6 +445,8 @@ func TestWizard_PrivateSwarmProfile(t *testing.T) {
 		"",  // proxy port: accept default
 		"",  // p2p port: accept default
 		"",  // metrics port: accept default
+		"",  // trust known repos: accept default (Y)
+		"",  // additional repo hosts: none
 		"",  // mdns: accept default (Y)
 		"n", // PSK generation: no (skip actual file write in test)
 		"",  // fleet: accept default (N)
@@ -163,6 +484,8 @@ func TestWizard_CustomPorts(t *testing.T) {
 		"8080", // custom proxy port
 		"5001", // custom p2p port
 		"0",    // disable metrics
+		"",     // trust known repos: accept default (Y)
+		"",     // additional repo hosts: none
 		"",     // mdns: accept default
 		"",     // fleet: accept default
 		"",     // log level: accept default
@@ -188,6 +511,11 @@ func TestWizard_CustomPorts(t *testing.T) {
 	if cfg.Metrics.Port != 0 {
 		t.Errorf("metrics.port = %d, want %d", cfg.Metrics.Port, 0)
 	}
+	// Guards against input misalignment: the home profile leaves fleet off, so a
+	// shifted answer sequence would show up here as fleet being unexpectedly on.
+	if cfg.Fleet.Enabled {
+		t.Error("fleet.enabled = true, want false — wizard input sequence is misaligned")
+	}
 }
 
 func TestWizard_InvalidCacheSizeThenValid(t *testing.T) {
@@ -204,6 +532,8 @@ func TestWizard_InvalidCacheSizeThenValid(t *testing.T) {
 		"",         // proxy port
 		"",         // p2p port
 		"",         // metrics port
+		"",         // trust known repos: accept default (Y)
+		"",         // additional repo hosts: none
 		"",         // mdns
 		"",         // fleet
 		"",         // log level
@@ -237,6 +567,8 @@ func TestWizard_AbortSave(t *testing.T) {
 		"",  // proxy port
 		"",  // p2p port
 		"",  // metrics port
+		"",  // trust known repos: accept default (Y)
+		"",  // additional repo hosts: none
 		"",  // mdns
 		"",  // fleet
 		"",  // log level
@@ -266,6 +598,8 @@ func TestWizard_OutputFile(t *testing.T) {
 		"",  // proxy port
 		"",  // p2p port
 		"",  // metrics port
+		"",  // trust known repos: accept default (Y)
+		"",  // additional repo hosts: none
 		"",  // mdns
 		"",  // fleet
 		"",  // log level
@@ -294,6 +628,8 @@ func TestWizard_DebugLogLevel(t *testing.T) {
 		"",  // proxy port
 		"",  // p2p port
 		"",  // metrics port
+		"",  // trust known repos: accept default (Y)
+		"",  // additional repo hosts: none
 		"",  // mdns
 		"",  // fleet
 		"2", // log level: debug
@@ -312,5 +648,127 @@ func TestWizard_DebugLogLevel(t *testing.T) {
 
 	if cfg.Logging.Level != "debug" {
 		t.Errorf("logging.level = %q, want %q", cfg.Logging.Level, "debug")
+	}
+}
+
+// repoWizardInputs builds a default answer sequence with the repository step
+// (trust, hosts) substituted in, so the repo tests stay readable.
+func repoWizardInputs(trust, hosts string) []string {
+	return []string{
+		"1",   // profile: home
+		"",    // cache size
+		"",    // upload rate
+		"",    // download rate
+		"",    // proxy port
+		"",    // p2p port
+		"",    // metrics port
+		trust, // Step 5a: trust known repos
+		hosts, // Step 5b: additional repo hosts
+		"",    // mdns
+		"",    // fleet
+		"",    // log level
+		"y",   // confirm save
+	}
+}
+
+func TestWizard_Repositories_DefaultTrusts(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "config.toml")
+
+	w, f := newTestWizard(repoWizardInputs("", "")...) // accept defaults
+	defer f.Close()
+
+	if err := w.run(outPath); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(outPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+
+	if !cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos should default to true")
+	}
+	// The curated defaults must survive the wizard round trip.
+	if len(cfg.Proxy.EffectiveAllowedHosts()) != len(config.DefaultTrustedRepos) {
+		t.Errorf("effective allowed hosts = %d, want %d curated defaults",
+			len(cfg.Proxy.EffectiveAllowedHosts()), len(config.DefaultTrustedRepos))
+	}
+	if !slices.Contains(cfg.Proxy.EffectiveHTTPSUpstreamHosts(), "pkgs.k8s.io") {
+		t.Errorf("HTTPS-upstream defaults lost: %v", cfg.Proxy.EffectiveHTTPSUpstreamHosts())
+	}
+}
+
+func TestWizard_Repositories_DeclineTrust(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "config.toml")
+
+	w, f := newTestWizard(repoWizardInputs("n", "")...)
+	defer f.Close()
+
+	if err := w.run(outPath); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(outPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+
+	if cfg.Proxy.TrustsKnownRepos() {
+		t.Error("trust_known_repos should be false after declining")
+	}
+	if len(cfg.Proxy.EffectiveAllowedHosts()) != 0 {
+		t.Errorf("declining trust should leave no extra hosts, got %v", cfg.Proxy.EffectiveAllowedHosts())
+	}
+	// Declining also drops the curated HTTPS-upstream defaults.
+	if len(cfg.Proxy.EffectiveHTTPSUpstreamHosts()) != 0 {
+		t.Errorf("declining trust should drop HTTPS-upstream defaults, got %v",
+			cfg.Proxy.EffectiveHTTPSUpstreamHosts())
+	}
+}
+
+func TestWizard_Repositories_CustomHosts(t *testing.T) {
+	outPath := filepath.Join(t.TempDir(), "config.toml")
+
+	w, f := newTestWizard(repoWizardInputs("", " packages.gitlab.com , my-mirror.example.com ,")...)
+	defer f.Close()
+
+	if err := w.run(outPath); err != nil {
+		t.Fatalf("wizard.run() failed: %v", err)
+	}
+
+	cfg, err := config.Load(outPath)
+	if err != nil {
+		t.Fatalf("failed to load saved config: %v", err)
+	}
+
+	want := []string{"packages.gitlab.com", "my-mirror.example.com"}
+	if !slices.Equal(cfg.Proxy.AllowedHosts, want) {
+		t.Errorf("allowed_hosts = %v, want %v (trimmed, blanks dropped)", cfg.Proxy.AllowedHosts, want)
+	}
+	// User hosts come first, then the curated defaults.
+	if !slices.Contains(cfg.Proxy.EffectiveAllowedHosts(), "download.docker.com") {
+		t.Error("curated defaults should still be merged in alongside custom hosts")
+	}
+}
+
+func TestParseHostList(t *testing.T) {
+	tests := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"   ", nil},
+		{",,", nil},
+		{"none", nil},    // explicit clear
+		{"  NONE ", nil}, // case-insensitive, trimmed
+		{"a.example.com", []string{"a.example.com"}},
+		{" a.example.com , b.example.com ", []string{"a.example.com", "b.example.com"}},
+		{"a.example.com,,b.example.com,", []string{"a.example.com", "b.example.com"}},
+	}
+	for _, tc := range tests {
+		if got := parseHostList(tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("parseHostList(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

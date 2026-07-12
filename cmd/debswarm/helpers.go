@@ -51,6 +51,17 @@ func configPaths() []string {
 	}
 }
 
+// existingConfigPath returns the first config file that actually exists, using
+// the same precedence as loadConfig. Reports false when no config file is found.
+func existingConfigPath() (string, bool) {
+	for _, path := range configPaths() {
+		if _, err := os.Stat(path); err == nil {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 // loadConfig loads configuration from the first available config file.
 func loadConfig() (*config.Config, error) {
 	cfg, _, err := loadConfigWithWarnings()
