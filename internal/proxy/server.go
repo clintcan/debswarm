@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1239,9 +1240,29 @@ func (s *Server) processDownloadSuccess(ctx context.Context, result *downloader.
 	if result.FilePath != "" {
 		// Move verified file directly to cache (no memory copy)
 		if err := s.cache.PutFile(result.FilePath, expectedHash, path, result.Size); err != nil {
-			log.Warn("Failed to cache file", zap.Error(err))
+			// Caching failed (e.g. cache full). The package is fully downloaded and
+			// verified, so serve it anyway instead of returning 500 to APT. Read it
+			// into memory — consistent with the racing/mirror-fallback paths — and
+			// drop the on-disk copy so it does not leak. PutFile fails before its
+			// rename on a full cache, so the source file is still present here.
+			log.Warn("Failed to cache file, serving directly without caching", zap.Error(err))
+			data, readErr := os.ReadFile(result.FilePath) // #nosec G304 -- path is our own assembled download file
+			_ = os.Remove(result.FilePath)
+			if readErr == nil {
+				return &packageDownloadResult{
+					data:        data,
+					hash:        expectedHash,
+					size:        result.Size,
+					source:      result.Source,
+					contentType: "application/vnd.debian.binary-package",
+				}
+			}
+			// Could not re-read the file (e.g. PutFile failed after its rename);
+			// fall through to the cache-serve path, which reports the error to APT.
+			log.Error("Failed to read downloaded file after cache failure", zap.Error(readErr))
+		} else {
+			s.announceAsync(expectedHash)
 		}
-		s.announceAsync(expectedHash)
 
 		return &packageDownloadResult{
 			hash:           expectedHash,
