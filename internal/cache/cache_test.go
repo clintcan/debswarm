@@ -220,6 +220,52 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// When the on-disk file cannot be removed (e.g. locked by another process on
+// Windows), delete must not drop the DB row or decrement the tracked size —
+// otherwise the cache under-reports disk usage and lets the physical cache grow
+// past maxSize. Regression for the accounting drift in deleteUnlocked.
+func TestDelete_FileRemovalFailureKeepsAccounting(t *testing.T) {
+	c, _ := testCache(t)
+
+	data := []byte("verified package content that must stay accounted for")
+	hash := hashData(data)
+	if err := c.Put(bytes.NewReader(data), hash, "test.deb"); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	sizeBefore := c.Size()
+
+	// Force os.Remove(path) to fail cross-platform: replace the cached file with a
+	// non-empty directory, which os.Remove refuses to delete.
+	path := c.packagePath(hash)
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("setup remove: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(path, "blocker"), 0o755); err != nil {
+		t.Fatalf("setup mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "blocker", "x"), []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup write: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(path) })
+
+	if err := c.Delete(hash); err == nil {
+		t.Fatal("expected Delete to fail when the file cannot be removed")
+	}
+
+	// The DB row must survive.
+	var count int
+	if err := c.db.QueryRow("SELECT COUNT(*) FROM packages WHERE sha256 = ?", hash).Scan(&count); err != nil {
+		t.Fatalf("count query: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("DB row was dropped (count=%d) despite the file removal failing", count)
+	}
+	// And the tracked size must be unchanged.
+	if got := c.Size(); got != sizeBefore {
+		t.Errorf("tracked size changed to %d, want %d — removal failure must not adjust accounting", got, sizeBefore)
+	}
+}
+
 func TestList(t *testing.T) {
 	c, _ := testCache(t)
 
