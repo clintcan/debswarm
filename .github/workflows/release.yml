@@ -125,6 +125,11 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           for deb in ../*.deb; do
-            echo "Uploading $deb..."
-            gh release upload "$RELEASE_TAG" "$deb" --clobber
+            # goreleaser's checksums.txt covers only the tarballs, so publish a
+            # SHA256 sidecar next to each .deb. Generated in the .deb's directory
+            # so the file lists a bare filename that `sha256sum -c <deb>.sha256`
+            # can verify after both are downloaded into the same directory.
+            ( cd "$(dirname "$deb")" && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256" )
+            echo "Uploading $deb and its checksum..."
+            gh release upload "$RELEASE_TAG" "$deb" "$deb.sha256" --clobber
           done
