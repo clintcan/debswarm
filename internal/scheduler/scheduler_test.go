@@ -183,6 +183,49 @@ func TestParsedWindowContainsSpanningMidnight(t *testing.T) {
 	}
 }
 
+// A spanning window must respect day boundaries: its evening half belongs to a
+// configured start-day, and its morning half belongs to the day *after* a
+// configured start-day. Regression for the bug where the same OR test matched
+// the evening of an unconfigured day and the morning after an unconfigured day.
+func TestParsedWindowContainsSpanningMidnight_DayBoundaries(t *testing.T) {
+	pw, err := ParseWindow(Window{Days: []string{"weekday"}, StartTime: "22:00", EndTime: "06:00"})
+	if err != nil {
+		t.Fatalf("ParseWindow() error = %v", err)
+	}
+	loc := time.UTC
+
+	// 2025-01-06 is a Monday; +4 Fri, +5 Sat, +6 Sun.
+	mon := time.Date(2025, 1, 6, 0, 0, 0, 0, loc)
+	if mon.Weekday() != time.Monday {
+		t.Fatalf("date setup wrong: %v", mon.Weekday())
+	}
+	at := func(dayOffset, hour int) time.Time {
+		return mon.AddDate(0, 0, dayOffset).Add(time.Duration(hour) * time.Hour)
+	}
+
+	tests := []struct {
+		name string
+		time time.Time
+		want bool
+	}{
+		{"Fri 23:00 (Fri night, in)", at(4, 23), true},
+		{"Sat 05:00 (Fri night continuation, in)", at(5, 5), true},
+		// The two previously-buggy false positives:
+		{"Sat 23:00 (Sat night, Sat not a weekday -> out)", at(5, 23), false},
+		{"Mon 05:00 (Sun night continuation, Sun not configured -> out)", at(0, 5), false},
+		// And the symmetric weekend cases:
+		{"Sun 05:00 (Sat night continuation, Sat not configured -> out)", at(6, 5), false},
+		{"Sun 23:00 (Sun night, Sun not configured -> out)", at(6, 23), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pw.Contains(tt.time); got != tt.want {
+				t.Errorf("Contains(%s) = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSchedulerNil(t *testing.T) {
 	var s *Scheduler
 

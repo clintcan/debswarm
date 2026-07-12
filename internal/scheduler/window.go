@@ -114,36 +114,32 @@ func parseTime(s string) (hour, min int, err error) {
 
 // Contains checks if the given time falls within this window.
 func (pw *ParsedWindow) Contains(t time.Time) bool {
-	// Check day of week
-	if !pw.Days[t.Weekday()] {
-		// For windows spanning midnight, also check if we're in the "next day" portion
-		if pw.SpansDay {
-			// Check if yesterday was a valid day and we're in the early morning portion
-			yesterday := t.Add(-24 * time.Hour).Weekday()
-			if !pw.Days[yesterday] {
-				return false
-			}
-			// We're in the early morning portion, continue checking time
-		} else {
-			return false
-		}
-	}
-
-	hour := t.Hour()
-	min := t.Minute()
-	currentMins := hour*60 + min
+	currentMins := t.Hour()*60 + t.Minute()
 	startMins := pw.StartHour*60 + pw.StartMin
 	endMins := pw.EndHour*60 + pw.EndMin
 
-	if pw.SpansDay {
-		// Window spans midnight (e.g., 22:00 - 06:00)
-		// Valid if: current >= start OR current < end
-		return currentMins >= startMins || currentMins < endMins
+	today := pw.Days[t.Weekday()]
+
+	if !pw.SpansDay {
+		// Normal window (e.g., 09:00 - 17:00): must be a configured day and
+		// start <= current < end.
+		return today && currentMins >= startMins && currentMins < endMins
 	}
 
-	// Normal window (e.g., 09:00 - 17:00)
-	// Valid if: start <= current < end
-	return currentMins >= startMins && currentMins < endMins
+	// Spanning window (e.g., 22:00 - 06:00). A window opens at startMins on a
+	// configured day D and closes at endMins the next morning (D+1). So the two
+	// halves belong to *different* days and must be checked separately — using the
+	// same OR test for both (the previous bug) let a spanning window match the
+	// evening of an unconfigured day and the morning after an unconfigured day.
+	//
+	// In-window if either:
+	//   - today is configured and we're at/after the start (this evening's half), or
+	//   - yesterday was configured and we're before the end (that window's morning half).
+	if today && currentMins >= startMins {
+		return true
+	}
+	yesterday := pw.Days[t.Add(-24*time.Hour).Weekday()]
+	return yesterday && currentMins < endMins
 }
 
 // NextStart returns the next time this window opens, relative to the given time.
