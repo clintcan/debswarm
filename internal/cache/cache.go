@@ -596,22 +596,23 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 		return err
 	}
 
-	// Delete from database FIRST to avoid phantom entries.
-	// If file removal fails afterward, the orphan file is harmless;
-	// a phantom DB entry (file deleted but DB row remains) would cause errors.
-	_, err = c.db.Exec("DELETE FROM packages WHERE sha256 = ?", sha256Hash)
-	if err != nil {
-		return err
-	}
-
-	// Then delete file
+	// Remove the on-disk file first. If it can't be removed — e.g. another process
+	// holds it open on Windows — leave the DB row and size accounting untouched and
+	// report the error, so the cache's tracked size stays consistent with what is
+	// actually on disk. Previously the row was deleted and currentSize decremented
+	// even when removal failed, which let the physical cache drift past maxSize
+	// (ensureSpace gates on currentSize, not real disk usage) and never reclaimed
+	// the orphaned file. Callers (eviction) log the error and try the next
+	// candidate, so a locked file is simply skipped.
 	path := c.packagePath(sha256Hash)
 	if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
-		c.logger.Warn("Failed to remove cache file after DB deletion",
-			zap.String("hash", sha256Hash),
-			zap.Error(removeErr))
+		return fmt.Errorf("failed to remove cache file for %s: %w", sha256Hash, removeErr)
 	}
 
+	// File is gone (or was already absent) — now drop the DB row and adjust size.
+	if _, err = c.db.Exec("DELETE FROM packages WHERE sha256 = ?", sha256Hash); err != nil {
+		return err
+	}
 	c.currentSize -= size
 	return nil
 }
