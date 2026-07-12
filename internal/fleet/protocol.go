@@ -161,8 +161,17 @@ func (p *Protocol) evictStream(peerID peer.ID, ps *peerStream) {
 
 // BroadcastMessage sends a message to all mDNS peers
 func (p *Protocol) BroadcastMessage(ctx context.Context, msg *Message) error {
-	peers := p.coordinator.peers.GetMDNSPeers()
+	_, err := p.BroadcastMessageTo(ctx, p.coordinator.peers.GetMDNSPeers(), msg)
+	return err
+}
 
+// BroadcastMessageTo sends a message to the given peers and returns the IDs of
+// the peers it was successfully written to. WantPackage uses the returned set
+// to know exactly which peers may answer its claim window — once every one of
+// them has replied it can stop waiting instead of burning the full claim
+// timeout on peers that never received the question.
+func (p *Protocol) BroadcastMessageTo(ctx context.Context, peers []peer.AddrInfo, msg *Message) ([]peer.ID, error) {
+	sent := make([]peer.ID, 0, len(peers))
 	var lastErr error
 	for _, peerInfo := range peers {
 		if err := p.SendMessage(ctx, peerInfo.ID, msg); err != nil {
@@ -170,10 +179,12 @@ func (p *Protocol) BroadcastMessage(ctx context.Context, msg *Message) error {
 				zap.Error(err),
 				zap.String("peer", peerInfo.ID.String()[:min(12, len(peerInfo.ID.String()))]))
 			lastErr = err
+			continue
 		}
+		sent = append(sent, peerInfo.ID)
 	}
 
-	return lastErr
+	return sent, lastErr
 }
 
 // BroadcastWant broadcasts a WantPackage message to all fleet peers

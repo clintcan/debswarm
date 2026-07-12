@@ -211,6 +211,17 @@ func (m *mockFleetSender) BroadcastMessage(ctx context.Context, msg *Message) er
 	return nil
 }
 
+func (m *mockFleetSender) BroadcastMessageTo(ctx context.Context, peers []peer.AddrInfo, msg *Message) ([]peer.ID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcasts = append(m.broadcasts, msg)
+	sent := make([]peer.ID, 0, len(peers))
+	for _, p := range peers {
+		sent = append(sent, p.ID)
+	}
+	return sent, nil
+}
+
 func (m *mockFleetSender) getMessages() []struct {
 	peerID peer.ID
 	msg    *Message
