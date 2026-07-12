@@ -68,7 +68,7 @@ Network settings for P2P communication and the HTTP proxy.
 | `bootstrap_peers` | string[] | libp2p defaults | List of bootstrap peer multiaddrs for DHT initialization. |
 | `connectivity_mode` | string | `"auto"` | Connectivity mode: `"auto"`, `"lan_only"`, or `"online_only"`. |
 | `connectivity_check_interval` | string | `"30s"` | How often to check connectivity in auto mode. |
-| `connectivity_check_url` | string | `"https://deb.debian.org"` | URL for connectivity checks. |
+| `connectivity_check_url` | string | `"http://deb.debian.org/debian/"` | URL probed to detect internet access. Uses plain HTTP so the check reflects mirror reachability, not TLS trust. |
 | `enable_relay` | boolean | `true` | Enable circuit relay to reach NAT'd peers via relay nodes. (v1.13+) |
 | `enable_hole_punching` | boolean | `true` | Enable direct NAT hole punching for peer-to-peer connections. (v1.13+) |
 
@@ -82,7 +82,7 @@ max_connections = 100
 # Connectivity detection mode (v1.8+)
 connectivity_mode = "auto"           # "auto", "lan_only", "online_only"
 connectivity_check_interval = "30s"
-# connectivity_check_url = "https://deb.debian.org"
+# connectivity_check_url = "http://deb.debian.org/debian/"
 
 # NAT traversal (v1.13+)
 enable_relay = true         # Use circuit relays to reach NAT'd peers
