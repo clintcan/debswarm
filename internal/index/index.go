@@ -57,21 +57,41 @@ type Index struct {
 	packages   map[string]*PackageInfo            // keyed by SHA256
 	byRepo     map[string]map[string]*PackageInfo // repo → path → pkg
 	byBasename map[string][]*PackageInfo          // basename → packages (for O(1) lookup)
-	mu         sync.RWMutex
-	logger     *zap.Logger
-	client     *http.Client
+	// byIndexFile tracks which entries each logical index file (see
+	// indexFileKey) contributed, so a re-parse replaces exactly its own
+	// previous generation. A repo key is too coarse for this: multiple dists,
+	// components, and architectures of one repository share a repo key, and
+	// clearing per repo would wipe bookworm/main when bookworm-updates parses.
+	byIndexFile map[string][]*PackageInfo
+	mu          sync.RWMutex
+	logger      *zap.Logger
+	client      *http.Client
 }
 
 // New creates a new Index manager
 func New(cachePath string, logger *zap.Logger) *Index {
 	return &Index{
-		cachePath:  cachePath,
-		packages:   make(map[string]*PackageInfo),
-		byRepo:     make(map[string]map[string]*PackageInfo),
-		byBasename: make(map[string][]*PackageInfo),
-		logger:     logger,
-		client:     httpclient.Default(),
+		cachePath:   cachePath,
+		packages:    make(map[string]*PackageInfo),
+		byRepo:      make(map[string]map[string]*PackageInfo),
+		byBasename:  make(map[string][]*PackageInfo),
+		byIndexFile: make(map[string][]*PackageInfo),
+		logger:      logger,
+		client:      httpclient.Default(),
 	}
+}
+
+// indexFileKey derives a stable identity for a Packages index file from its
+// URL or filesystem path. By-hash digests change on every repository update,
+// so they collapse to the index directory; compression extensions are ignored
+// so Packages, Packages.gz, and Packages.xz of the same index share one key.
+func indexFileKey(s string) string {
+	if i := strings.Index(s, "/by-hash/"); i >= 0 {
+		return s[:i]
+	}
+	s = strings.TrimSuffix(s, ".gz")
+	s = strings.TrimSuffix(s, ".xz")
+	return s
 }
 
 // LoadFromFile loads and parses a Packages file
@@ -101,7 +121,7 @@ func (idx *Index) LoadFromFile(path string) error {
 	}
 
 	// Use filename as repo identifier for local files
-	return idx.parseForRepo(reader, path)
+	return idx.parseForRepo(reader, path, indexFileKey(path))
 }
 
 // LoadFromFileWithRepo loads and parses a Packages file with an explicit repo identifier.
@@ -131,7 +151,7 @@ func (idx *Index) LoadFromFileWithRepo(path, repo string) error {
 		reader = io.LimitReader(xzReader, maxDecompressedBytes)
 	}
 
-	return idx.parseForRepo(reader, repo)
+	return idx.parseForRepo(reader, repo, indexFileKey(path))
 }
 
 // LoadFromURL downloads and parses a Packages file from a URL
@@ -181,7 +201,7 @@ func (idx *Index) LoadFromURL(url string) error {
 
 	// Extract repo base URL
 	repo := ExtractRepoFromURL(url)
-	return idx.parseForRepo(reader, repo)
+	return idx.parseForRepo(reader, repo, indexFileKey(url))
 }
 
 // LoadFromData parses Packages data for a specific repository
@@ -208,17 +228,26 @@ func (idx *Index) LoadFromData(data []byte, url string) error {
 	// Otherwise assume uncompressed
 
 	repo := ExtractRepoFromURL(url)
-	return idx.parseForRepo(reader, repo)
+	return idx.parseForRepo(reader, repo, indexFileKey(url))
 }
 
-// parseForRepo parses an uncompressed Packages file for a specific repository
-func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
+// parseForRepo parses an uncompressed Packages file for a specific repository.
+// fileKey identifies the logical index file (see indexFileKey); a re-parse of
+// the same file replaces its previous generation of entries instead of
+// accumulating them.
+func (idx *Index) parseForRepo(reader io.Reader, repo, fileKey string) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	// Drop the previous generation of this repo's entries first, then rebuild.
-	idx.clearRepoLocked(repo)
-	idx.byRepo[repo] = make(map[string]*PackageInfo)
+	// Drop the previous generation of this index file's entries, then rebuild.
+	idx.clearIndexFileLocked(fileKey)
+
+	// Ensure repo map exists
+	if idx.byRepo[repo] == nil {
+		idx.byRepo[repo] = make(map[string]*PackageInfo)
+	}
+
+	var generation []*PackageInfo
 
 	scanner := bufio.NewScanner(reader)
 	// Increase buffer size for long lines (descriptions can be long)
@@ -236,6 +265,7 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 			if pkg != nil && pkg.SHA256 != "" {
 				pkg.Repo = repo
 				idx.packages[pkg.SHA256] = pkg
+				generation = append(generation, pkg)
 				if pkg.Filename != "" {
 					idx.byRepo[repo][pkg.Filename] = pkg
 					// Add to basename index for O(1) lookups
@@ -292,6 +322,7 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 	if pkg != nil && pkg.SHA256 != "" {
 		pkg.Repo = repo
 		idx.packages[pkg.SHA256] = pkg
+		generation = append(generation, pkg)
 		if pkg.Filename != "" {
 			idx.byRepo[repo][pkg.Filename] = pkg
 			// Add to basename index for O(1) lookups
@@ -299,6 +330,10 @@ func (idx *Index) parseForRepo(reader io.Reader, repo string) error {
 			idx.byBasename[basename] = append(idx.byBasename[basename], pkg)
 		}
 		count++
+	}
+
+	if len(generation) > 0 {
+		idx.byIndexFile[fileKey] = generation
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -453,6 +488,7 @@ func (idx *Index) Clear() {
 	idx.packages = make(map[string]*PackageInfo)
 	idx.byRepo = make(map[string]map[string]*PackageInfo)
 	idx.byBasename = make(map[string][]*PackageInfo)
+	idx.byIndexFile = make(map[string][]*PackageInfo)
 }
 
 // ClearRepo removes packages from a specific repository
@@ -463,10 +499,7 @@ func (idx *Index) ClearRepo(repo string) {
 }
 
 // clearRepoLocked removes a repo's packages from all lookup maps. The caller
-// must hold idx.mu. parseForRepo runs this before inserting a fresh parse:
-// without it, byBasename appended a new generation of entries on every
-// re-parse while keeping the old one reachable — unbounded memory growth in a
-// long-running daemon (roughly 20-30MB per apt-get update against Debian main).
+// must hold idx.mu.
 func (idx *Index) clearRepoLocked(repo string) {
 	if repoMap := idx.byRepo[repo]; repoMap != nil {
 		for _, pkg := range repoMap {
@@ -497,6 +530,70 @@ func (idx *Index) clearRepoLocked(repo string) {
 		}
 	}
 	delete(idx.byRepo, repo)
+
+	// Keep the per-file generation lists consistent
+	for key, gen := range idx.byIndexFile {
+		filtered := gen[:0]
+		for _, p := range gen {
+			if p.Repo != repo {
+				filtered = append(filtered, p)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(idx.byIndexFile, key)
+		} else {
+			idx.byIndexFile[key] = filtered
+		}
+	}
+}
+
+// clearIndexFileLocked removes the entries a previous parse of the same
+// logical index file contributed. The caller must hold idx.mu. parseForRepo
+// runs this before inserting a fresh parse: without it, byBasename appended a
+// new generation of entries on every re-parse while keeping the old one
+// reachable — unbounded memory growth in a long-running daemon (roughly
+// 20-30MB per re-parse of Debian main). Removal is by pointer identity, so an
+// entry that a different index file's parse now owns is never touched.
+func (idx *Index) clearIndexFileLocked(fileKey string) {
+	gen := idx.byIndexFile[fileKey]
+	if len(gen) == 0 {
+		return
+	}
+	old := make(map[*PackageInfo]struct{}, len(gen))
+	for _, pkg := range gen {
+		old[pkg] = struct{}{}
+	}
+
+	for _, pkg := range gen {
+		if cur, ok := idx.packages[pkg.SHA256]; ok && cur == pkg {
+			delete(idx.packages, pkg.SHA256)
+		}
+		if repoMap := idx.byRepo[pkg.Repo]; repoMap != nil {
+			if cur, ok := repoMap[pkg.Filename]; ok && cur == pkg {
+				delete(repoMap, pkg.Filename)
+			}
+			if len(repoMap) == 0 {
+				delete(idx.byRepo, pkg.Repo)
+			}
+		}
+		if pkg.Filename != "" {
+			basename := filepath.Base(pkg.Filename)
+			if packages := idx.byBasename[basename]; len(packages) > 0 {
+				filtered := packages[:0]
+				for _, p := range packages {
+					if _, isOld := old[p]; !isOld {
+						filtered = append(filtered, p)
+					}
+				}
+				if len(filtered) == 0 {
+					delete(idx.byBasename, basename)
+				} else {
+					idx.byBasename[basename] = filtered
+				}
+			}
+		}
+	}
+	delete(idx.byIndexFile, fileKey)
 }
 
 // ExtractRepoFromURL extracts the repository base URL from a full URL

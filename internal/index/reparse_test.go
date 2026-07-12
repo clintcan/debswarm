@@ -77,6 +77,75 @@ func TestReparse_DropsRemovedPackages(t *testing.T) {
 	}
 }
 
+// TestReparse_SiblingDistsSurvive covers the bug a Docker soak caught: dists
+// of the same repository host (bookworm/main and bookworm-updates) share one
+// repo key, so clearing per REPO on re-parse wiped main's 60k entries the
+// moment updates parsed — every package then served uncached. Generations are
+// keyed per index FILE, so sibling index files must never clear each other.
+func TestReparse_SiblingDistsSurvive(t *testing.T) {
+	idx := New(t.TempDir(), zap.NewNop())
+	mainURL := "http://deb.example.org/debian/dists/bookworm/main/binary-amd64/Packages.xz"
+	updatesURL := "http://deb.example.org/debian/dists/bookworm-updates/main/binary-amd64/Packages.xz"
+
+	mainData := packagesEntry("mainpkg", "pool/main/m/mainpkg/mainpkg_1.0_amd64.deb", reparseHashA)
+	updatesData := packagesEntry("updpkg", "pool/main/u/updpkg/updpkg_1.0_amd64.deb", reparseHashB)
+
+	if err := idx.LoadFromData([]byte(mainData), mainURL); err != nil {
+		t.Fatalf("LoadFromData main: %v", err)
+	}
+	if err := idx.LoadFromData([]byte(updatesData), updatesURL); err != nil {
+		t.Fatalf("LoadFromData updates: %v", err)
+	}
+
+	if idx.GetBySHA256(reparseHashA) == nil {
+		t.Fatal("main's package was wiped when the sibling dist parsed")
+	}
+	if idx.GetBySHA256(reparseHashB) == nil {
+		t.Fatal("updates' package missing after parse")
+	}
+
+	// Re-parsing one sibling must replace only its own generation.
+	if err := idx.LoadFromData([]byte(updatesData), updatesURL); err != nil {
+		t.Fatalf("LoadFromData updates re-parse: %v", err)
+	}
+	if idx.GetBySHA256(reparseHashA) == nil {
+		t.Fatal("main's package lost on sibling re-parse")
+	}
+
+	idx.mu.RLock()
+	entries := len(idx.byBasename["updpkg_1.0_amd64.deb"])
+	idx.mu.RUnlock()
+	if entries != 1 {
+		t.Errorf("byBasename entries after sibling re-parse = %d, want 1", entries)
+	}
+}
+
+// TestReparse_ByHashURLsShareGeneration verifies that by-hash index URLs —
+// whose digest component changes on every repository update — collapse to one
+// generation key, so re-parses replace instead of leak.
+func TestReparse_ByHashURLsShareGeneration(t *testing.T) {
+	idx := New(t.TempDir(), zap.NewNop())
+	v1 := "http://deb.example.org/debian/dists/stable/main/binary-amd64/by-hash/SHA256/aaaa1111"
+	v2 := "http://deb.example.org/debian/dists/stable/main/binary-amd64/by-hash/SHA256/bbbb2222"
+
+	oldGen := packagesEntry("hashpkg", "pool/main/h/hashpkg/hashpkg_1.0_amd64.deb", reparseHashA)
+	newGen := packagesEntry("hashpkg", "pool/main/h/hashpkg/hashpkg_2.0_amd64.deb", reparseHashB)
+
+	if err := idx.LoadFromData([]byte(oldGen), v1); err != nil {
+		t.Fatalf("LoadFromData v1: %v", err)
+	}
+	if err := idx.LoadFromData([]byte(newGen), v2); err != nil {
+		t.Fatalf("LoadFromData v2: %v", err)
+	}
+
+	if idx.GetBySHA256(reparseHashA) != nil {
+		t.Error("old by-hash generation still resolvable — the leak is back for by-hash repos")
+	}
+	if idx.GetBySHA256(reparseHashB) == nil {
+		t.Error("new by-hash generation missing")
+	}
+}
+
 // TestReparse_PreservesOtherRepoOwnership verifies the pointer-identity guard:
 // when two repos list the same package (same SHA256) and one repo is
 // re-parsed, the global lookup entry now owned by the other repo must survive.

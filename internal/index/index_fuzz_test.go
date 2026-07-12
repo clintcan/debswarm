@@ -58,7 +58,7 @@ Description: Secure Sockets Layer toolkit - cryptographic utility
 
 		// Parse the data - should not panic
 		reader := bytes.NewReader(data)
-		_ = idx.parseForRepo(reader, "fuzz-test")
+		_ = idx.parseForRepo(reader, "fuzz-test", "fuzz-test")
 
 		// Verify internal state is consistent
 		idx.mu.RLock()
