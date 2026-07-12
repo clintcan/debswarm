@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.30.1] - 2026-07-13
+
+### Fixed
+- **Package now depends on `ca-certificates`**: the daemon opens its own HTTPS connections — for the upstream-HTTPS fetch feature (e.g. `pkgs.k8s.io`), for any `https://` mirror, and for the connectivity-check probe — all of which validate against the system CA trust store. On minimal images that ship without `ca-certificates` (many cloud and container base images), those connections failed with `x509: certificate signed by unknown authority`: the v1.30.0 flagship upstream-HTTPS feature could not verify TLS, and the connectivity monitor mis-reported the node as `lan_only`/`offline`. The `.deb` now declares `Depends: … , ca-certificates`, so a CA bundle is present on install. Plain-HTTP mirror traffic and SHA256 package verification were unaffected and are unchanged.
+
 ## [1.30.0] - 2026-07-12
 
 ### Added
