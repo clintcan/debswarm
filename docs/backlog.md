@@ -81,6 +81,13 @@ narrower: concrete, verified gaps in what exists today.
   `pkgs.k8s.io` are uncovered in v1); an `auto` mode (enforce where a key is
   discoverable, warn elsewhere) and wider default `https_upstream_hosts` would
   strengthen the default posture.
+- **Real-APT end-to-end CI test** (PR #109, partially addresses testing/ops #2):
+  a new `e2e` job drives a real apt client through the proxy against a real
+  Debian repo in a `debian:bookworm-slim` container, guarding the pipelining /
+  `ReadTimeout` hang class (a large index fetched with `timeout`), the metadata
+  cache (cold miss → warm hit), and default (`warn`) signature verification.
+  Institutionalizes the manual Docker soak; committed under `test/e2e/`. Still
+  open in testing/ops #2: fuzz-in-CI, two-node P2P, nightly.
 
 ## Product gaps (ranked by user value)
 
@@ -152,10 +159,11 @@ narrower: concrete, verified gaps in what exists today.
 1. **Coverage holes where failures live**: `internal/proxy` ~49% overall with
    the CONNECT tunnel, retry worker, and `handleHealth` near 0%;
    `cmd/debswarm` ~23% (daemon lifecycle, SIGHUP reload untested).
-2. **CI**: no real-APT e2e (`apt-get update`/`install` driven through the
-   proxy — the documented pipelining blind spot); the three fuzz targets and
-   committed corpus never run in CI; no two-node P2P job; no nightly; the
-   Codecov check is informational only.
+2. **CI**: the real-APT e2e now exists (PR #109: the `e2e` job drives a real apt
+   client through the proxy against a real Debian repo, covering the pipelining
+   blind spot + metadata cache + default verification — see Recently addressed).
+   Still open: the three fuzz targets and committed corpus never run in CI; no
+   two-node P2P job; no nightly; the Codecov check is informational only.
 3. **SQLite schema versioning**: no `PRAGMA user_version`; migrations swallow
    errors (`_, _ = db.Exec(ALTER …)`); an old binary against a new schema is
    undetected and untested.
