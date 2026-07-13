@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.0] - 2026-07-13
+
+### Added
+- **APT keeps working when the daemon is down**: the packaged apt configuration now applies the proxy via `Acquire::http(s)::Proxy-Auto-Detect` with a liveness probe (`/usr/lib/debswarm/apt-proxy-detect`, a 1-second TCP connect) instead of a hard `Acquire::http::Proxy` setting. A stopped, crashed, mid-upgrade, or removed-without-purge daemon now degrades to direct mirror access instead of making every `apt` operation fail — and unlike the old failure mode (which returned exit 0 with warnings, so scripts never noticed), the fallback is exercised in CI on every build. Per-host `DIRECT` overrides keep working.
+- **systemd watchdog**: the service now runs as `Type=notify` with `WatchdogSec=90`. The daemon reports readiness via sd_notify and feeds the watchdog only while its own HTTP loop answers `/health`, so a deadlocked-but-alive daemon is automatically killed and restarted by systemd instead of hanging APT until a human notices. CI includes a recovery test that freezes the daemon with SIGSTOP and verifies systemd restarts it.
+- **Operator metrics for the events that matter**: new `debswarm_cache_evictions_total` (sustained growth means the cache is undersized), `debswarm_peers_blacklisted_total` (the primary security-operational signal — the corresponding audit event, previously dead code, is now emitted too), and `debswarm_cache_max_size_bytes` (so dashboards can compute fill percentage). The already-recorded DHT query and multi-source verification metrics are now actually exported at `/metrics`, along with an aggregate peer-latency histogram.
+- **lz4-, zstd-, and bzip2-compressed APT lists are now parsed**: Ubuntu minimized/cloud images write `/var/lib/apt/lists` as `.lz4` by default; those files were previously scanned as raw binary and silently contributed zero index entries, quietly disabling restart recovery on those platforms. By-hash payloads also detect zstd/lz4 magic bytes.
+- **Verified backlog document** (`docs/backlog.md`): concrete, code-verified gaps from a July 2026 three-lens review (product, robustness/security, testing/operations), ranked, with an explicit "verified fine" list.
+
+### Changed
+- **Chunked downloads write each byte once**: chunks now go straight into the preallocated assembly file at their offsets instead of into per-chunk files that were re-read and re-written — half the disk writes and reads for every large download (measured: a 200MB download went from 401MB written/400MB read to 201MB/200MB), which matters on the SD-card-class storage fleet nodes often run on. Resume is tracked in the state database plus the partial assembly file; chunk files persisted by older versions are re-downloaded and cleaned up.
+- **Large downloads use full parallelism in the common topology**: chunk-worker concurrency is no longer capped by the number of sources, so one peer plus a mirror now runs up to 8 chunks in flight instead of 2.
+- **Package reannouncement is 4-way concurrent**: a cache of thousands of packages previously took hours per reannounce cycle (one multi-second DHT walk at a time), undermining the announce interval.
+- **Fleet messages have a 5-second write deadline**: one peer with a full flow-control window (crashed, suspended, overloaded) could previously block fleet coordination for everyone indefinitely.
+- **`debswarm_bytes_uploaded_total` is no longer labeled per peer** and peer latency is an aggregate histogram: full peer IDs made the metric series set grow without bound on a public-DHT node. Dashboards using the per-peer label must switch to the aggregate.
+- **Codecov statuses are informational**: coverage is reported, not gated, matching how the project already treats it.
+
+### Fixed
+- **Failed downloads no longer leak disk and database rows forever**: the cleanup routine existed but was never called, and partial assembly files are deliberately kept for resume — so downloads that exhausted their retry window accumulated indefinitely. An hourly task now purges stale state and orphaned partial directories (live downloads exempt).
+- **The cache self-heals after database-corruption recovery**: recovery creates a fresh database but leaves package files on disk, and every such package previously returned HTTP 500 to APT until a manual `cache rebuild`. An unreadable cache entry is now treated as a miss — the re-download re-caches the package and restores its metadata row automatically.
+- **Client disconnect noise, continued**: fetch failures caused by APT hanging up mid-request are logged at DEBUG (completing the v1.32.0 change for the remaining code paths).
+
 ## [1.32.0] - 2026-07-13
 
 ### Added
