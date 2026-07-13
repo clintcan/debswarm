@@ -230,14 +230,21 @@ When `isPackagesIndexURL(url)` is true and mode ≠ `off`, before
 - **Plain URL**: compute the fetched body's SHA256 (stream through a
   `hashutil.HashingReader`, already used elsewhere) and compare to
   `store[dist].hashes[relPath]`.
-- Result handling:
+- Result handling (consistent with the invariant above — `warn` only *observes*,
+  it never refuses; only `enforce` refuses):
   - **verified** → parse into the index as today; the per-package SHA256s are now
-    GPG-anchored.
-  - **hash mismatch** → always refuse (`enforce` and `warn` alike: a *mismatch* is
-    active tampering, not a missing key). Do not load into the index; do not cache.
-    Metric `result="hash-mismatch"`. This is the `ErrHashMismatch` precedent.
+    GPG-anchored. Metric `result="verified"`.
+  - **hash mismatch** → `enforce`: refuse (do not load into the index). `warn`:
+    load anyway, but log *loudly* (a mismatch is active tampering, not a missing
+    key) and set `X-Debswarm-Unverified: hash-mismatch`. Either way, metric
+    `result="hash-mismatch"`. (Even in `warn` this changes nothing APT sees — APT
+    re-verifies the index against the signed `Release` itself and rejects it — so
+    `warn` staying pure-observation here is safe; `enforce` is the `ErrHashMismatch`
+    precedent.)
   - **no verified Release for this dist** → `warn`: load + `X-Debswarm-Unverified`;
-    `enforce`: attempt on-demand Release fetch, else refuse.
+    `enforce`: refuse. (The signed `Release` is read from the metadata cache, which
+    APT populates before it fetches `Packages`; live on-demand `Release` fetching is
+    a deferred enhancement, not in v1.)
 
 Because the `.deb`'s SHA256 is drawn from a now-anchored `Packages`, the existing
 `.deb`-vs-SHA256 check transitively anchors the package too. **No separate `.deb`
