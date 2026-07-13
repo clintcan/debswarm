@@ -33,6 +33,14 @@ type Metrics struct {
 	// entry (SHA256) was found for them.
 	PackagesServedUncached *Counter
 
+	// Metadata (repository index) cache counters. Hits are metadata files served
+	// from the local cache after a cheap revalidation (or with none, for
+	// immutable by-hash files); BytesSaved is the body volume not re-fetched from
+	// the WAN as a result.
+	MetadataCacheHits       *Counter
+	MetadataCacheMisses     *Counter
+	MetadataCacheBytesSaved *Counter
+
 	// Resume metrics
 	DownloadsResumed *Counter
 	ChunksRecovered  *Counter
@@ -45,13 +53,14 @@ type Metrics struct {
 	PeersLeft   *Counter
 
 	// Gauges
-	ConnectedPeers   *Gauge
-	RoutingTableSize *Gauge
-	CacheSize        *Gauge
-	CacheMaxSize     *Gauge // configured capacity, so dashboards can compute fill percentage
-	CacheCount       *Gauge
-	ActiveDownloads  *Gauge
-	ActiveUploads    *Gauge
+	ConnectedPeers    *Gauge
+	RoutingTableSize  *Gauge
+	CacheSize         *Gauge
+	CacheMaxSize      *Gauge // configured capacity, so dashboards can compute fill percentage
+	CacheCount        *Gauge
+	MetadataCacheSize *Gauge // current repository-metadata cache size in bytes
+	ActiveDownloads   *Gauge
+	ActiveUploads     *Gauge
 
 	// Bandwidth rates (bytes per second, updated periodically)
 	UploadRate   *Gauge
@@ -331,6 +340,10 @@ func New() *Metrics {
 		PeersBlacklisted:       &Counter{},
 		PackagesServedUncached: &Counter{},
 
+		MetadataCacheHits:       &Counter{},
+		MetadataCacheMisses:     &Counter{},
+		MetadataCacheBytesSaved: &Counter{},
+
 		// Resume metrics
 		DownloadsResumed: &Counter{},
 		ChunksRecovered:  &Counter{},
@@ -342,13 +355,14 @@ func New() *Metrics {
 		PeersJoined: &Counter{},
 		PeersLeft:   &Counter{},
 
-		ConnectedPeers:   &Gauge{},
-		CacheMaxSize:     &Gauge{},
-		RoutingTableSize: &Gauge{},
-		CacheSize:        &Gauge{},
-		CacheCount:       &Gauge{},
-		ActiveDownloads:  &Gauge{},
-		ActiveUploads:    &Gauge{},
+		ConnectedPeers:    &Gauge{},
+		CacheMaxSize:      &Gauge{},
+		RoutingTableSize:  &Gauge{},
+		CacheSize:         &Gauge{},
+		CacheCount:        &Gauge{},
+		MetadataCacheSize: &Gauge{},
+		ActiveDownloads:   &Gauge{},
+		ActiveUploads:     &Gauge{},
 
 		// Bandwidth rates
 		UploadRate:   &Gauge{},
@@ -403,6 +417,11 @@ func (m *Metrics) Handler() http.Handler {
 		writeCounter(w, "debswarm_peers_blacklisted_total", m.PeersBlacklisted.Value())
 		writeCounter(w, "debswarm_packages_served_uncached_total", m.PackagesServedUncached.Value())
 
+		// Metadata (repository index) cache
+		writeCounter(w, "debswarm_metadata_cache_hits_total", m.MetadataCacheHits.Value())
+		writeCounter(w, "debswarm_metadata_cache_misses_total", m.MetadataCacheMisses.Value())
+		writeCounter(w, "debswarm_metadata_cache_bytes_saved_total", m.MetadataCacheBytesSaved.Value())
+
 		// Resume metrics
 		writeCounter(w, "debswarm_downloads_resumed_total", m.DownloadsResumed.Value())
 		writeCounter(w, "debswarm_chunks_recovered_total", m.ChunksRecovered.Value())
@@ -432,6 +451,7 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(w, "debswarm_cache_size_bytes", m.CacheSize.Value())
 		writeGauge(w, "debswarm_cache_max_size_bytes", m.CacheMaxSize.Value())
 		writeGauge(w, "debswarm_cache_count", m.CacheCount.Value())
+		writeGauge(w, "debswarm_metadata_cache_size_bytes", m.MetadataCacheSize.Value())
 		writeGauge(w, "debswarm_active_downloads", m.ActiveDownloads.Value())
 		writeGauge(w, "debswarm_active_uploads", m.ActiveUploads.Value())
 

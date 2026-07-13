@@ -250,6 +250,8 @@ Settings for the local package cache.
 | `path` | string | `~/.cache/debswarm` | Directory for cached packages and database. |
 | `max_size` | string | `"10GB"` | Maximum total size of cached packages. Supports KB, MB, GB, TB suffixes. |
 | `min_free_space` | string | `"1GB"` | Minimum free disk space to maintain. Cache writes fail if this limit would be violated. |
+| `cache_metadata` | bool | `true` | Cache repository metadata (Release/InRelease, Packages, Translation, Contents, DEP-11) in addition to `.deb` packages. |
+| `metadata_max_size` | string | `"1GB"` | Disk budget for the metadata cache, kept separate from `max_size` so metadata and packages never evict each other. |
 
 **Example:**
 ```toml
@@ -257,7 +259,19 @@ Settings for the local package cache.
 path = "/var/cache/debswarm"
 max_size = "50GB"
 min_free_space = "2GB"
+cache_metadata = true
+metadata_max_size = "1GB"
 ```
+
+**Metadata caching:** with `cache_metadata` on (the default), the proxy stores
+repository index files so a cold client — a fresh CI container, a reimaged host,
+or any machine with an empty `/var/lib/apt/lists` — fetches them from the local
+cache after a cheap conditional GET instead of re-downloading the full set
+(often tens of MB per `apt-get update`) from the WAN. It is safe by construction:
+every cached file is revalidated against the mirror before use, so the proxy
+never serves stale metadata, and APT's own signature verification is unaffected.
+Immutable `by-hash` index files are served with no upstream round-trip at all.
+Set `cache_metadata = false` to disable and fall back to plain passthrough.
 
 **Size Format:**
 - Supports suffixes: `KB`, `K`, `MB`, `M`, `GB`, `G`, `TB`, `T`

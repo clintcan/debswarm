@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Repository metadata caching**: debswarm now caches repository index files (Release/InRelease, Packages/Sources, Translation, Contents, DEP-11) in addition to `.deb` packages. Previously all metadata was pure passthrough, so every host re-fetched the full set — often tens of MB per `apt-get update` — from the WAN. Now a cold client (a fresh CI container, a reimaged host, any machine with an empty `/var/lib/apt/lists`) fetches metadata from the local cache after a cheap conditional GET. It is safe by construction: every cached file is revalidated against the mirror before use, so the proxy never serves stale metadata, and APT's own signature verification is unaffected. Immutable `by-hash` index files are served with no upstream round-trip at all, and cached Packages bytes also re-warm the in-memory index after a daemon restart. Controlled by `[cache] cache_metadata` (default on) and `[cache] metadata_max_size` (default `1GB`, a budget kept separate from the package cache so the two never evict each other). New metrics: `debswarm_metadata_cache_hits_total`, `debswarm_metadata_cache_misses_total`, `debswarm_metadata_cache_bytes_saved_total`, `debswarm_metadata_cache_size_bytes`. This activates the previously-unused `indices` table in the cache database.
+
 ## [1.33.0] - 2026-07-13
 
 ### Added

@@ -73,6 +73,11 @@ type Server struct {
 	cacheHits       int64
 	activeConns     int64
 
+	// Metadata (repository index) cache statistics (atomic).
+	metadataHits       int64 // metadata served from cache (immutable hit or upstream 304)
+	metadataMisses     int64 // metadata fetched fresh from the mirror (200)
+	metadataBytesSaved int64 // body bytes served from cache instead of the WAN
+
 	// CONNECT tunnel statistics (atomic)
 	connectTotal   int64
 	connectFailed  int64
@@ -526,25 +531,31 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // Stats holds proxy statistics
 type Stats struct {
-	RequestsTotal     int64
-	RequestsP2P       int64
-	RequestsMirror    int64
-	BytesFromP2P      int64
-	BytesFromMirror   int64
-	CacheHits         int64
-	ActiveConnections int64
+	RequestsTotal      int64
+	RequestsP2P        int64
+	RequestsMirror     int64
+	BytesFromP2P       int64
+	BytesFromMirror    int64
+	CacheHits          int64
+	ActiveConnections  int64
+	MetadataHits       int64
+	MetadataMisses     int64
+	MetadataBytesSaved int64
 }
 
 // GetStats returns current statistics
 func (s *Server) GetStats() Stats {
 	return Stats{
-		RequestsTotal:     atomic.LoadInt64(&s.requestsTotal),
-		RequestsP2P:       atomic.LoadInt64(&s.requestsP2P),
-		RequestsMirror:    atomic.LoadInt64(&s.requestsMirror),
-		BytesFromP2P:      atomic.LoadInt64(&s.bytesFromP2P),
-		BytesFromMirror:   atomic.LoadInt64(&s.bytesFromMirror),
-		CacheHits:         atomic.LoadInt64(&s.cacheHits),
-		ActiveConnections: atomic.LoadInt64(&s.activeConns),
+		RequestsTotal:      atomic.LoadInt64(&s.requestsTotal),
+		RequestsP2P:        atomic.LoadInt64(&s.requestsP2P),
+		RequestsMirror:     atomic.LoadInt64(&s.requestsMirror),
+		BytesFromP2P:       atomic.LoadInt64(&s.bytesFromP2P),
+		BytesFromMirror:    atomic.LoadInt64(&s.bytesFromMirror),
+		CacheHits:          atomic.LoadInt64(&s.cacheHits),
+		ActiveConnections:  atomic.LoadInt64(&s.activeConns),
+		MetadataHits:       atomic.LoadInt64(&s.metadataHits),
+		MetadataMisses:     atomic.LoadInt64(&s.metadataMisses),
+		MetadataBytesSaved: atomic.LoadInt64(&s.metadataBytesSaved),
 	}
 }
 
@@ -1653,74 +1664,7 @@ func relayValidators(w http.ResponseWriter, cond *mirror.ConditionalResult) {
 }
 
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {
-	ctx := r.Context()
-	log := requestid.LoggerFromContext(ctx, s.logger)
-
-	log.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
-
-	// Forward APT's revalidation headers only when our in-memory index already
-	// holds this file's entries: relaying an upstream 304 is only correct when
-	// we too have the content. After a daemon restart APT's cache is warm but
-	// ours is empty — a 304 then would leave every package unverifiable.
-	var ims, inm string
-	if s.index.HasIndexFile(url) {
-		ims = r.Header.Get("If-Modified-Since")
-		inm = r.Header.Get("If-None-Match")
-	}
-
-	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url), ims, inm)
-	if err != nil {
-		logFetchFailure(ctx, log, "Failed to fetch index", err)
-		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
-		return
-	}
-
-	if cond.NotModified {
-		// Upstream confirmed the index is unchanged: skip the re-download and
-		// the full re-parse entirely.
-		log.Debug("Index not modified upstream", zap.String("url", sanitize.URL(url)))
-		relayValidators(w, cond)
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
-	defer func() { _ = cond.Body.Close() }()
-
-	data, err := io.ReadAll(io.LimitReader(cond.Body, s.fetcher.MaxResponseSize()+1))
-	if err != nil {
-		logFetchFailure(ctx, log, "Failed to fetch index", err)
-		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
-		return
-	}
-	if int64(len(data)) > s.fetcher.MaxResponseSize() {
-		log.Error("Index response exceeds maximum allowed size")
-		http.Error(w, "Index too large", http.StatusBadGateway)
-		return
-	}
-
-	// Auto-parse Packages files to populate the index for multi-repo support
-	// This must be synchronous to ensure index is populated before package requests arrive
-	// Note: Only parse Packages files (binary-*), not Sources files (source/) since we only cache binary .deb packages
-	lowerURL := strings.ToLower(url)
-	isPackagesFile := strings.Contains(lowerURL, "/packages") && !strings.Contains(lowerURL, "/translation")
-	// Also detect by-hash URLs for Packages files: /binary-*/by-hash/
-	if !isPackagesFile && strings.Contains(lowerURL, "/by-hash/") && strings.Contains(lowerURL, "/binary-") {
-		isPackagesFile = true
-	}
-	if isPackagesFile {
-		if err := s.index.LoadFromData(data, url); err != nil {
-			log.Debug("Failed to parse index file", zap.Error(err))
-		} else {
-			log.Debug("Parsed index file",
-				zap.Int("totalPackages", s.index.Count()),
-				zap.Int("repos", s.index.RepoCount()))
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
-	relayValidators(w, cond)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	s.serveMetadata(w, r, url, true)
 }
 
 func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, url string) {
@@ -1728,45 +1672,299 @@ func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, ur
 }
 
 func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url string) {
+	s.serveMetadata(w, r, url, false)
+}
+
+// serveMetadata handles a repository metadata request (Release/InRelease,
+// Packages/Sources, Translation/Contents/DEP-11). With metadata caching on it
+// revalidates the cached copy against the mirror and serves cached bytes on an
+// upstream 304 — turning a cold client's full metadata download into a cheap
+// conditional GET. isIndex marks Packages/Sources files, whose bytes are also
+// parsed into the in-memory index. With caching off it is a pure revalidating
+// passthrough (the historical behavior).
+func (s *Server) serveMetadata(w http.ResponseWriter, r *http.Request, url string, isIndex bool) {
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
-	// Stream the upstream body straight to the client instead of buffering the
-	// whole response in memory, forwarding APT's revalidation headers so an
-	// unchanged Release/InRelease costs a 304 instead of a full download on
-	// every apt-get update. (Unlike Packages files there is no local parse
-	// state to guard — APT's own cache is the only consumer.) An upstream
-	// failure still yields a 502 before any bytes are sent.
-	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url),
-		r.Header.Get("If-Modified-Since"), r.Header.Get("If-None-Match"))
+	caching := s.cache != nil && s.cache.MetadataEnabled()
+
+	// Immutable by-hash URLs never change; if cached, serve with no upstream call.
+	if caching && cache.IsImmutableMetadataURL(url) {
+		if entry, rc, err := s.cache.GetMetadata(url); err == nil {
+			log.Debug("Serving immutable metadata from cache", zap.String("url", sanitize.URL(url)))
+			s.serveCachedMetadata(w, r, url, isIndex, entry, rc)
+			return
+		}
+	}
+
+	// Choose the validators for the upstream conditional GET: ours when we hold a
+	// cached copy, otherwise the client's — preserving the historical relay, and
+	// for index files only when the in-memory index already has the file (so a
+	// cold-index restart can't relay a 304 it cannot back up).
+	var ims, inm string
+	haveCache := false
+	if caching {
+		if et, lm, ok := s.cache.MetadataValidators(url); ok {
+			inm, ims, haveCache = et, lm, true
+		}
+	}
+	if !haveCache && (!isIndex || s.index.HasIndexFile(url)) {
+		ims = r.Header.Get("If-Modified-Since")
+		inm = r.Header.Get("If-None-Match")
+	}
+
+	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url), ims, inm)
 	if err != nil {
-		logFetchFailure(ctx, log, "Passthrough fetch failed", err)
+		logFetchFailure(ctx, log, "Failed to fetch metadata", err)
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)
 		return
 	}
 
 	if cond.NotModified {
+		if haveCache {
+			// Our cached copy is current: refresh its validators and serve it.
+			s.cache.RevalidateMetadata(url, cond.ETag, cond.LastModified)
+			if entry, rc, gerr := s.cache.GetMetadata(url); gerr == nil {
+				s.serveCachedMetadata(w, r, url, isIndex, entry, rc)
+				return
+			}
+			// The cached file vanished between the validator read and now (rare):
+			// fall back to an unconditional refetch.
+			s.fetchFreshMetadata(w, r, url, isIndex)
+			return
+		}
+		// Uncached: the client's own copy is current — relay the 304.
+		log.Debug("Metadata not modified upstream", zap.String("url", sanitize.URL(url)))
 		relayValidators(w, cond)
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
-	body, size := cond.Body, cond.Size
-	relayValidators(w, cond)
-	defer func() { _ = body.Close() }()
 
-	if size >= 0 {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", size))
+	s.serveFreshBody(w, r, url, isIndex, cond, caching)
+}
+
+// serveFreshBody serves an upstream 200 body, caching it (when enabled) and
+// parsing Packages into the index. It takes ownership of cond.Body.
+func (s *Server) serveFreshBody(w http.ResponseWriter, r *http.Request, url string, isIndex bool, cond *mirror.ConditionalResult, caching bool) {
+	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	defer func() { _ = cond.Body.Close() }()
+
+	atomic.AddInt64(&s.metadataMisses, 1)
+	if s.metrics != nil {
+		s.metrics.MetadataCacheMisses.Inc()
+	}
+
+	if isIndex {
+		// Index files are read fully so they can be parsed; bound the read.
+		data, err := io.ReadAll(io.LimitReader(cond.Body, s.fetcher.MaxResponseSize()+1))
+		if err != nil {
+			logFetchFailure(ctx, log, "Failed to fetch index", err)
+			http.Error(w, "Failed to fetch index", http.StatusBadGateway)
+			return
+		}
+		if int64(len(data)) > s.fetcher.MaxResponseSize() {
+			log.Error("Index response exceeds maximum allowed size")
+			http.Error(w, "Index too large", http.StatusBadGateway)
+			return
+		}
+		if isPackagesIndexURL(url) {
+			if err := s.index.LoadFromData(data, url); err != nil {
+				log.Debug("Failed to parse index file", zap.Error(err))
+			} else {
+				log.Debug("Parsed index file",
+					zap.Int("totalPackages", s.index.Count()),
+					zap.Int("repos", s.index.RepoCount()))
+			}
+		}
+		if caching {
+			s.storeMetadata(url, data, cond.ETag, cond.LastModified, "application/octet-stream", log)
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		relayValidators(w, cond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+
+	// Non-index metadata streams straight through, tee'd into the cache so a
+	// large Contents/Translation file is never buffered in memory.
+	relayValidators(w, cond)
+	if cond.Size >= 0 {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", cond.Size))
 	}
 	w.WriteHeader(http.StatusOK)
 
-	n, err := io.Copy(w, body)
+	var dst io.Writer = w
+	var mw *cache.MetadataWriter
+	if caching {
+		if writer, werr := s.cache.NewMetadataWriter(url, cond.ETag, cond.LastModified, ""); werr == nil {
+			mw = writer
+			dst = io.MultiWriter(w, mw)
+		} else {
+			log.Debug("Metadata cache write unavailable", zap.Error(werr))
+		}
+	}
+
+	n, err := io.Copy(dst, cond.Body)
 	atomic.AddInt64(&s.requestsMirror, 1)
 	atomic.AddInt64(&s.bytesFromMirror, n)
 	if err != nil {
-		// The 200 header is already on the wire, so we cannot change the status;
-		// the client will see a short read. Log it for diagnosis.
+		if mw != nil {
+			mw.Abort()
+		}
+		// The 200 header is already on the wire; the client sees a short read.
 		log.Warn("Passthrough stream interrupted", zap.Int64("written", n), zap.Error(err))
+		return
 	}
+	if mw != nil {
+		if cerr := mw.Commit(); cerr != nil {
+			log.Debug("Failed to cache metadata", zap.String("url", sanitize.URL(url)), zap.Error(cerr))
+		}
+	}
+}
+
+// storeMetadata caches an already-buffered metadata body (index files are
+// buffered for parsing anyway, so they are stored from the buffer).
+func (s *Server) storeMetadata(url string, data []byte, etag, lastModified, contentType string, log *zap.Logger) {
+	mw, err := s.cache.NewMetadataWriter(url, etag, lastModified, contentType)
+	if err != nil {
+		log.Debug("Metadata cache write unavailable", zap.Error(err))
+		return
+	}
+	if _, err := mw.Write(data); err != nil {
+		mw.Abort()
+		log.Debug("Failed to write metadata to cache", zap.Error(err))
+		return
+	}
+	if err := mw.Commit(); err != nil {
+		log.Debug("Failed to cache metadata", zap.String("url", sanitize.URL(url)), zap.Error(err))
+	}
+}
+
+// serveCachedMetadata serves a metadata body from the cache. It answers with a
+// 304 when the client's own validators show it already holds this exact copy,
+// and (for index files) warms the in-memory index from the cached bytes if a
+// restart left it cold. It takes ownership of rc.
+func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url string, isIndex bool, entry *cache.MetadataEntry, rc io.ReadCloser) {
+	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	defer func() { _ = rc.Close() }()
+
+	atomic.AddInt64(&s.metadataHits, 1)
+	atomic.AddInt64(&s.metadataBytesSaved, entry.Size)
+	if s.metrics != nil {
+		s.metrics.MetadataCacheHits.Inc()
+		s.metrics.MetadataCacheBytesSaved.Add(entry.Size)
+	}
+
+	warmIndex := isIndex && isPackagesIndexURL(url) && !s.index.HasIndexFile(url)
+	clientHas := clientHasCurrent(r, entry)
+
+	// Fast path: client already has it and there is no index to warm — 304 without
+	// touching the body at all.
+	if clientHas && !warmIndex {
+		setValidatorHeaders(w, entry)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+
+	if isIndex {
+		// Buffer to parse and/or resend the same bytes.
+		data, err := io.ReadAll(rc)
+		if err != nil {
+			logFetchFailure(ctx, log, "Failed to read cached index", err)
+			http.Error(w, "Failed to read cached index", http.StatusBadGateway)
+			return
+		}
+		if warmIndex {
+			if err := s.index.LoadFromData(data, url); err != nil {
+				log.Debug("Failed to parse cached index file", zap.Error(err))
+			}
+		}
+		if clientHas {
+			setValidatorHeaders(w, entry)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		setValidatorHeaders(w, entry)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+
+	// Non-index: stream the cached body.
+	if entry.ContentType != "" {
+		w.Header().Set("Content-Type", entry.ContentType)
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", entry.Size))
+	setValidatorHeaders(w, entry)
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, rc); err != nil {
+		log.Warn("Cached metadata stream interrupted", zap.Error(err))
+	}
+}
+
+// fetchFreshMetadata does an unconditional upstream fetch and serves it. Used
+// only when a cached file vanishes mid-request.
+func (s *Server) fetchFreshMetadata(w http.ResponseWriter, r *http.Request, url string, isIndex bool) {
+	ctx := r.Context()
+	log := requestid.LoggerFromContext(ctx, s.logger)
+	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url), "", "")
+	if err != nil {
+		logFetchFailure(ctx, log, "Failed to fetch metadata", err)
+		http.Error(w, "Failed to fetch", http.StatusBadGateway)
+		return
+	}
+	if cond.NotModified {
+		relayValidators(w, cond)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	s.serveFreshBody(w, r, url, isIndex, cond, s.cache != nil && s.cache.MetadataEnabled())
+}
+
+// setValidatorHeaders copies a cache entry's ETag/Last-Modified onto a response.
+func setValidatorHeaders(w http.ResponseWriter, entry *cache.MetadataEntry) {
+	if entry.LastModified != "" {
+		w.Header().Set("Last-Modified", entry.LastModified)
+	}
+	if entry.ETag != "" {
+		w.Header().Set("ETag", entry.ETag)
+	}
+}
+
+// clientHasCurrent reports whether the client's conditional-GET validators match
+// the (now-confirmed-current) cached entry, so the client can be answered 304.
+func clientHasCurrent(r *http.Request, entry *cache.MetadataEntry) bool {
+	if inm := r.Header.Get("If-None-Match"); inm != "" && entry.ETag != "" {
+		if inm == "*" || inm == entry.ETag {
+			return true
+		}
+	}
+	if ims := r.Header.Get("If-Modified-Since"); ims != "" && entry.LastModified != "" {
+		if ims == entry.LastModified {
+			return true
+		}
+	}
+	return false
+}
+
+// isPackagesIndexURL reports whether an index URL is a Packages file (parsed into
+// the index) rather than a Sources file (which debswarm does not parse). Mirrors
+// the original handleIndexRequest classification.
+func isPackagesIndexURL(url string) bool {
+	lower := strings.ToLower(url)
+	if strings.Contains(lower, "/packages") && !strings.Contains(lower, "/translation") {
+		return true
+	}
+	if strings.Contains(lower, "/by-hash/") && strings.Contains(lower, "/binary-") {
+		return true
+	}
+	return false
 }
 
 // streamUncachedPackage serves a package that has no signed index entry by
@@ -1956,6 +2154,7 @@ func (s *Server) UpdateMetrics() {
 
 	s.metrics.CacheSize.Set(float64(s.cache.Size()))
 	s.metrics.CacheCount.Set(float64(s.cache.Count()))
+	s.metrics.MetadataCacheSize.Set(float64(s.cache.MetadataSize()))
 
 	if s.p2pNode != nil {
 		s.metrics.ConnectedPeers.Set(float64(s.p2pNode.ConnectedPeers()))

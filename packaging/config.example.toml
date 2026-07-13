@@ -109,6 +109,18 @@ max_size = "10GB"
 # Cache writes fail if this limit would be violated
 min_free_space = "1GB"
 
+# Cache repository metadata (Release/InRelease, Packages, Translation, Contents,
+# DEP-11) in addition to .deb packages. With this on, a cold client (e.g. a fresh
+# CI container) fetches metadata from the local cache after a cheap revalidation
+# instead of re-downloading it all from the WAN on every apt-get update. APT's
+# signature verification is unaffected — the cache always revalidates with the
+# mirror, so it never serves stale metadata. Default: true.
+cache_metadata = true
+
+# Disk budget for the metadata cache, kept separate from max_size so metadata and
+# packages never evict each other. Default: "1GB".
+metadata_max_size = "1GB"
+
 #─────────────────────────────────────────────────────────────────────────────
 # [transfer] - Upload/download settings
 #─────────────────────────────────────────────────────────────────────────────

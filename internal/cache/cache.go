@@ -74,6 +74,15 @@ type Cache struct {
 	// cache is undersized). Called with the cache lock held — must not call
 	// back into the cache.
 	onEvict func()
+
+	// Metadata (repository index) cache, held in the `indices` table and the
+	// `indices/` dir. metadataMaxSize == 0 disables it entirely (Get/Put become
+	// no-ops). metadataSize tracks the on-disk bytes for its own LRU budget,
+	// kept separate from currentSize so metadata and .debs never evict each
+	// other. Both are guarded by mu. onMetadataEvict mirrors onEvict.
+	metadataMaxSize int64
+	metadataSize    int64
+	onMetadataEvict func()
 }
 
 // New creates a new cache instance
@@ -87,8 +96,9 @@ func NewWithMinFreeSpace(basePath string, maxSize int64, minFreeSpace int64, log
 	packagesDir := filepath.Join(basePath, "packages", "sha256")
 	pendingDir := filepath.Join(basePath, "packages", "pending")
 	indicesDir := filepath.Join(basePath, "indices")
+	indicesPendingDir := filepath.Join(basePath, "indices", "pending")
 
-	for _, dir := range []string{packagesDir, pendingDir, indicesDir} {
+	for _, dir := range []string{packagesDir, pendingDir, indicesDir, indicesPendingDir} {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			return nil, fmt.Errorf("failed to create directory %s: %w", dir, err)
 		}
@@ -283,7 +293,12 @@ func createTables(db *sql.DB) error {
 			etag TEXT,
 			last_modified TEXT,
 			fetched_at INTEGER NOT NULL,
-			path TEXT NOT NULL
+			path TEXT NOT NULL,
+			size INTEGER NOT NULL DEFAULT 0,
+			content_type TEXT DEFAULT '',
+			last_accessed INTEGER NOT NULL DEFAULT 0,
+			access_count INTEGER NOT NULL DEFAULT 1,
+			last_validated INTEGER NOT NULL DEFAULT 0
 		);
 
 		CREATE TABLE IF NOT EXISTS downloads (
@@ -332,6 +347,17 @@ func createTables(db *sql.DB) error {
 
 	// Migrations for existing databases
 	_, _ = db.Exec(`ALTER TABLE downloads ADD COLUMN retry_count INTEGER DEFAULT 0`)
+	// The indices table shipped earlier with only (url, etag, last_modified,
+	// fetched_at, path) and was never used; the metadata cache activates it, so
+	// upgraders need the added columns. ADD COLUMN is idempotent-by-intent here
+	// (it errors only when the column already exists, which the ignored result
+	// tolerates).
+	_, _ = db.Exec(`ALTER TABLE indices ADD COLUMN size INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE indices ADD COLUMN content_type TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE indices ADD COLUMN last_accessed INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE indices ADD COLUMN access_count INTEGER NOT NULL DEFAULT 1`)
+	_, _ = db.Exec(`ALTER TABLE indices ADD COLUMN last_validated INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_indices_last_accessed ON indices(last_accessed)`)
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_name TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN package_version TEXT DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN architecture TEXT DEFAULT ''`)
@@ -851,6 +877,14 @@ func (c *Cache) calculateSize() error {
 		return err
 	}
 	c.currentSize = total
+
+	// Metadata bytes are tracked separately (its own budget); a missing/older
+	// indices schema still returns 0 here.
+	var metaTotal int64
+	if err := c.db.QueryRow("SELECT COALESCE(SUM(size), 0) FROM indices").Scan(&metaTotal); err != nil {
+		return err
+	}
+	c.metadataSize = metaTotal
 	return nil
 }
 
