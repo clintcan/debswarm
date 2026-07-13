@@ -28,6 +28,7 @@ type Config struct {
 	Scheduler SchedulerConfig `toml:"scheduler"`
 	Fleet     FleetConfig     `toml:"fleet"`
 	Index     IndexConfig     `toml:"index"`
+	Security  SecurityConfig  `toml:"security"`
 }
 
 // ProxyConfig holds proxy-related settings
@@ -317,6 +318,59 @@ func (c *IndexConfig) GetImportAPTArchives() bool {
 		return true
 	}
 	return *c.ImportAPTArchives
+}
+
+// Upstream signature-verification modes for SecurityConfig.VerifyUpstreamSignatures.
+const (
+	// VerifyOff disables daemon-side signature verification (pre-1.34 behavior).
+	VerifyOff = "off"
+	// VerifyWarn verifies but still serves on failure, emitting a metric, a log,
+	// and an X-Debswarm-Unverified response header. Behaviorally identical to
+	// "off" from APT's perspective (nothing is refused). Default.
+	VerifyWarn = "warn"
+	// VerifyEnforce refuses to parse/serve an index whose Release fails signature
+	// or hash verification (fail-closed).
+	VerifyEnforce = "enforce"
+)
+
+// SecurityConfig holds daemon-side upstream signature-verification settings: the
+// daemon verifies a repository's GPG-signed Release against a trusted keyring and
+// checks each Packages/Sources index against that signed Release, anchoring the
+// SHA256 it trusts. See docs/design/upstream-gpg-verification.md.
+type SecurityConfig struct {
+	// VerifyUpstreamSignatures is one of "off", "warn", or "enforce". Defaults to
+	// "warn" when unset. See the Verify* constants for semantics.
+	VerifyUpstreamSignatures string `toml:"verify_upstream_signatures"`
+
+	// KeyringPath is an optional file or directory of additional trusted public
+	// keys (binary .gpg or armored .asc), appended to the auto-discovered APT
+	// keyrings (/etc/apt/trusted.gpg{,.d}, /usr/share/keyrings, /etc/apt/keyrings).
+	// Required in enforce mode on a host whose APT keyrings are empty, e.g. a
+	// dedicated cache-server that never runs apt-get update locally.
+	KeyringPath string `toml:"keyring_path"`
+
+	// VerifyExemptHosts lists repository hostnames served even when unverifiable.
+	// Effective only in enforce mode — an escape hatch for a repo whose signing
+	// key cannot be provisioned. Ignored in off/warn (which serve regardless).
+	VerifyExemptHosts []string `toml:"verify_exempt_hosts"`
+}
+
+// GetVerifyMode returns the normalized verification mode, defaulting to "warn"
+// (and for any unrecognized value, which Validate rejects separately).
+func (c *SecurityConfig) GetVerifyMode() string {
+	switch strings.ToLower(strings.TrimSpace(c.VerifyUpstreamSignatures)) {
+	case VerifyOff:
+		return VerifyOff
+	case VerifyEnforce:
+		return VerifyEnforce
+	default:
+		return VerifyWarn
+	}
+}
+
+// VerificationEnabled reports whether any verification work runs (mode != off).
+func (c *SecurityConfig) VerificationEnabled() bool {
+	return c.GetVerifyMode() != VerifyOff
 }
 
 // TransferConfig holds transfer-related settings
@@ -781,6 +835,12 @@ func DefaultConfig() *Config {
 		Logging: LoggingConfig{
 			Level: "info",
 			File:  "",
+		},
+		Security: SecurityConfig{
+			// Default "warn": verify upstream signatures and report failures, but
+			// serve unchanged (identical to old behavior from APT's view). Operators
+			// set "enforce" for fail-closed protection, or "off" to disable entirely.
+			VerifyUpstreamSignatures: VerifyWarn,
 		},
 	}
 }
@@ -1247,6 +1307,25 @@ func (c *Config) Validate() error {
 					Message: fmt.Sprintf("invalid duration %q: %v", c.Fleet.RefreshInterval, err),
 				})
 			}
+		}
+	}
+
+	// Validate upstream signature-verification settings.
+	if v := strings.ToLower(strings.TrimSpace(c.Security.VerifyUpstreamSignatures)); v != "" &&
+		v != VerifyOff && v != VerifyWarn && v != VerifyEnforce {
+		errs = append(errs, ValidationError{
+			Field:   "security.verify_upstream_signatures",
+			Message: fmt.Sprintf("must be one of \"off\", \"warn\", or \"enforce\", got %q", c.Security.VerifyUpstreamSignatures),
+		})
+	}
+	// An explicit keyring_path that does not exist is an operator mistake — fail
+	// rather than silently verifying against fewer keys than intended.
+	if c.Security.KeyringPath != "" {
+		if _, err := os.Stat(c.Security.KeyringPath); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "security.keyring_path",
+				Message: fmt.Sprintf("keyring path %q is not accessible: %v", c.Security.KeyringPath, err),
+			})
 		}
 	}
 
