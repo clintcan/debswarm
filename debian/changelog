@@ -1,3 +1,24 @@
+debswarm (1.33.0-1) stable; urgency=low
+
+  * APT keeps working when the daemon is down: the apt drop-in applies the
+    proxy via Proxy-Auto-Detect with a liveness probe instead of a hard
+    Acquire::http::Proxy setting, so a stopped or removed daemon degrades to
+    direct mirror access instead of failing every apt operation
+  * systemd watchdog: Type=notify + WatchdogSec=90; a deadlocked-but-alive
+    daemon is automatically restarted (CI includes a SIGSTOP recovery test)
+  * Failed downloads no longer leak disk and database rows forever; the cache
+    self-heals after database-corruption recovery instead of returning 500s
+  * Operator metrics: cache evictions, peer blacklists (with audit event),
+    cache capacity gauge; DHT and verification metrics now exported;
+    bytes_uploaded_total is no longer labeled per peer
+  * lz4/zstd/bzip2-compressed APT lists are parsed (Ubuntu minimized images
+    default to lz4; they previously contributed zero index entries)
+  * Chunked downloads write each byte once (half the disk I/O for large
+    packages); full parallelism with one peer plus a mirror; reannouncement
+    is 4-way concurrent; fleet sends have write deadlines
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 13 Jul 2026 00:00:00 +0000
+
 debswarm (1.32.0-1) stable; urgency=low
 
   * Fleet: cold-package downloads no longer stall for the 5s claim window
