@@ -599,7 +599,11 @@ func runWatchdog(ctx context.Context, interval time.Duration, metricsBind string
 		case <-ticker.C:
 			// Any HTTP response proves the daemon's HTTP machinery is alive;
 			// on failure we simply skip the ping and let systemd act.
-			resp, err := client.Get(healthURL)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
 			if err != nil {
 				logger.Warn("Watchdog health check failed; withholding watchdog ping", zap.Error(err))
 				continue
