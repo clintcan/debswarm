@@ -96,6 +96,16 @@ func (s *Server) verificationEnabled() bool {
 	return s.verifyMode == verifyWarn || s.verifyMode == verifyEnforce
 }
 
+// recordVerifyResult increments the upstream-verify counter, labeled by result
+// only (result values use underscores; the reason constants use hyphens). Never
+// labeled by repo/URL, to keep metric cardinality bounded.
+func (s *Server) recordVerifyResult(result string) {
+	if s.metrics == nil {
+		return
+	}
+	s.metrics.UpstreamVerifyTotal.WithLabel(strings.ReplaceAll(result, "-", "_")).Inc()
+}
+
 // isExemptHost reports whether the URL's host is on the operator's exempt list
 // (served even when unverifiable, effective only in enforce mode).
 func (s *Server) isExemptHost(rawURL string) bool {
@@ -225,8 +235,10 @@ func (s *Server) checkIndexVerification(w http.ResponseWriter, rawURL string, da
 	}
 	verified, reason := s.verifyIndex(rawURL, data)
 	if verified {
+		s.recordVerifyResult("verified")
 		return true
 	}
+	s.recordVerifyResult(reason)
 	if s.verifyMode == verifyEnforce && !s.isExemptHost(rawURL) {
 		log.Warn("upstream index failed signature verification; refusing (enforce mode)",
 			zap.String("url", sanitize.URL(rawURL)), zap.String("reason", reason))

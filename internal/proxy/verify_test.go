@@ -231,6 +231,24 @@ func TestCheckIndexVerification_ModePolicy(t *testing.T) {
 	}
 }
 
+func TestCheckIndexVerification_RecordsMetric(t *testing.T) {
+	pkgBody := []byte("Package: hello\n\n")
+	e, kr := genKeyAndKeyring(t)
+	srv := verifyTestServer(t, e, kr, pkgBody, verifyWarn)
+
+	srv.checkIndexVerification(httptest.NewRecorder(), verPkgURL, pkgBody, newTestLogger()) // verified
+	tampered := append(append([]byte{}, pkgBody...), 'X')
+	srv.checkIndexVerification(httptest.NewRecorder(), verPkgURL, tampered, newTestLogger()) // hash_mismatch
+
+	vals := srv.metrics.UpstreamVerifyTotal.Values()
+	if vals["verified"] != 1 {
+		t.Errorf("verified count = %d, want 1 (%v)", vals["verified"], vals)
+	}
+	if vals["hash_mismatch"] != 1 { // reason "hash-mismatch" recorded with underscores
+		t.Errorf("hash_mismatch count = %d, want 1 (%v)", vals["hash_mismatch"], vals)
+	}
+}
+
 func TestCheckIndexVerification_ExemptHost(t *testing.T) {
 	pkgBody := []byte("Package: hello\n\n")
 	e, kr := genKeyAndKeyring(t)

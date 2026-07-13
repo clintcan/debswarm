@@ -91,6 +91,11 @@ type Metrics struct {
 	VerificationProviders *Histogram  // Distribution of provider counts found
 	VerificationDuration  *Histogram  // Time taken for verification queries
 
+	// Upstream GPG verification: outcome of checking a Packages index against the
+	// signed Release. Labeled by result only (verified, no_key, no_dist,
+	// no_release, hash_mismatch) — never by repo/URL, to bound cardinality.
+	UpstreamVerifyTotal *CounterVec
+
 	// Histograms
 	// PeerLatency is deliberately unlabeled: labeling by peer ID made the
 	// series set grow without bound on a public-DHT node.
@@ -391,6 +396,7 @@ func New() *Metrics {
 
 		// Multi-source verification
 		VerificationResults:   NewCounterVec(),
+		UpstreamVerifyTotal:   NewCounterVec(),
 		VerificationProviders: NewHistogram([]float64{0, 1, 2, 3, 5, 10}),
 		VerificationDuration:  NewHistogram(DurationBuckets),
 
@@ -493,6 +499,11 @@ func (m *Metrics) Handler() http.Handler {
 		}
 		writeHistogram(w, "debswarm_verification_providers", m.VerificationProviders)
 		writeHistogram(w, "debswarm_verification_duration_seconds", m.VerificationDuration)
+
+		// Upstream GPG verification outcomes
+		for label, value := range m.UpstreamVerifyTotal.Values() {
+			writeCounterWithLabel(w, "debswarm_upstream_verify_total", "result", label, value)
+		}
 
 		// Histograms
 		writeHistogram(w, "debswarm_peer_latency_milliseconds", m.PeerLatency)
