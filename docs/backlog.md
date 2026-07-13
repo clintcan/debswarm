@@ -29,9 +29,10 @@ narrower: concrete, verified gaps in what exists today.
 - Trust-model honesty pass: reworded the overstated "cryptographically
   verified" / "signed index" / "a trusted host cannot serve a tampered package"
   claims across README, SECURITY.md, the docs, config examples, and code
-  comments to state the real model — no daemon-side GPG check; APT's client-side
-  verification is the guarantee. Robustness/security #1 below is now
-  doc-complete; only the optional code hardening remains.
+  comments to state the real model — APT's client-side verification is the
+  guarantee by default. (This was the doc half of former robustness/security #1;
+  the optional daemon-side code hardening has since shipped too — see
+  "Daemon-side upstream GPG verification" below.)
 - **Repository metadata caching** (PR #98, resolves former product gap "metadata
   is never cached"): Release/InRelease, Packages/Sources, Translation, Contents,
   and DEP-11 are now cached in the (previously dead) `indices` table with their
@@ -54,19 +55,27 @@ narrower: concrete, verified gaps in what exists today.
   CIDR allowlist (`[network] proxy_allowed_cidrs`) or the daemon refuses to start;
   the allowlist matches the client's real connection address (X-Forwarded-For is
   never trusted) and loopback is always allowed. When set it also gates the admin
-  read surface, closing robustness/security #6 for opted-in operators. Design:
+  read surface, closing robustness/security #5 (metrics inventory leak) for
+  opted-in operators. Design:
   `docs/design/lan-server-mode.md`.
-- **Daemon-side upstream GPG verification** (resolves the code half of
-  robustness/security #1): the daemon can verify each repository's GPG-signed
-  `Release` against a trusted keyring and each `Packages` index against it,
-  anchoring every `.deb` hash to GPG rather than the mirror. `[security]
-  verify_upstream_signatures`: `off`, `warn` (default — verify and report via
-  `debswarm_upstream_verify_total`, a log, and an `X-Debswarm-Unverified` header,
-  but always serve, so APT sees identical behavior), or `enforce` (refuse an
+- **Daemon-side upstream GPG verification** (PRs #104 design + #105 impl;
+  **resolves former robustness/security #1** — the doc-honesty half landed in the
+  trust-model pass above, this is the code half): the daemon can verify each
+  repository's GPG-signed `Release` against a trusted keyring and each `Packages`
+  index against it, anchoring every `.deb` hash to GPG rather than the mirror.
+  `[security] verify_upstream_signatures`: `off`, `warn` (default — verify and
+  report via `debswarm_upstream_verify_total`, a log, and an `X-Debswarm-Unverified`
+  header, but always serve, so APT sees identical behavior), or `enforce` (refuse an
   unverified index). Keys auto-discovered from APT's keyrings; reads the signed
   `Release` from the metadata cache, so it needs `[cache] cache_metadata`. Closes
   the `[trusted=yes]` / `dpkg -i` / P2P-seed gap. Design:
   `docs/design/upstream-gpg-verification.md`. Dependency `ProtonMail/go-crypto`.
+  Follow-ups (smaller, tracked in Robustness/security below): `enforce` is opt-in
+  rather than the default (back-compat); verification needs a cached signed
+  `Release` (no live on-demand mirror fetch yet, and flat/no-`dists` repos such as
+  `pkgs.k8s.io` are uncovered in v1); an `auto` mode (enforce where a key is
+  discoverable, warn elsewhere) and wider default `https_upstream_hosts` would
+  strengthen the default posture.
 
 ## Product gaps (ranked by user value)
 
@@ -103,39 +112,35 @@ narrower: concrete, verified gaps in what exists today.
 
 ## Robustness / security
 
-1. **Trust model: docs corrected and daemon-side verification shipped; defaults
-   remain.** The overstated claims were reworded across README, SECURITY.md, the
-   docs, config examples, and code comments, and the daemon can now verify the
-   signed `Release` and each `Packages` index itself (`[security]
-   verify_upstream_signatures`, see Recently addressed). By default the SHA256 it
-   verifies against still comes from a Packages index fetched over the same
-   (usually `http://`) upstream leg as the bytes, so with verification `off`/`warn`
-   the proxy's own check provides no upstream-MITM resistance — the end-to-end
-   guarantee stays APT's client-side GPG verification. `enforce` closes that gap
-   for any repo whose signing key debswarm can discover. What's left is opt-in
-   posture: `enforce` is not the default (back-compat), verification needs a
-   cached signed `Release` (no live on-demand mirror fetch yet), and more hosts
-   could default to HTTPS upstream.
-2. **Peer blacklisting is in-memory and Sybil-trivial.** A restart clears all
+1. **Peer blacklisting is in-memory and Sybil-trivial.** A restart clears all
    blacklists; an offender reconnects under a fresh peer ID. Verification
    prevents poisoning, so this is a deterrence gap, not a correctness one.
    Persistent reputation or per-IP throttling would raise attacker cost.
-3. **No default upload-bandwidth cap.** Upload concurrency is slot-limited
+2. **No default upload-bandwidth cap.** Upload concurrency is slot-limited
    (20 global / 4 per peer) but `max_upload_rate` defaults to unlimited; a
    few peers repeatedly requesting large cached packages can saturate a
    node's uplink.
-4. **Corruption-recovery orphan accounting.** PR #93 made orphaned entries
+3. **Corruption-recovery orphan accounting.** PR #93 made orphaned entries
    self-heal on access, but orphaned files that are never re-requested still
    escape size accounting and eviction until a `cache rebuild`. A post-
    recovery automatic rebuild (or startup orphan sweep) would finish the job.
-5. **Fleet message hash validation.** `handleFetching` inserts entries keyed
+4. **Fleet message hash validation.** `handleFetching` inserts entries keyed
    by unvalidated remote input (any string up to 1024 bytes). Bounded by the
    message queue and reaper, and fleet peers are LAN/PSK-scoped — but
    validating 64-hex on ingest is cheap defense-in-depth.
-6. **Metrics endpoints leak the package inventory when bound non-locally.**
+5. **Metrics endpoints leak the package inventory when bound non-locally.**
    Mutating API routes are loopback-gated; `GET /api/cache/packages*`,
    `/stats`, and `/dashboard` are not. Binding to `0.0.0.0` is warned about
    in logs but exposes the full installed-package list.
+6. **Upstream verification: stronger default posture (follow-up to the shipped
+   feature).** Daemon-side GPG verification landed (see Recently addressed), but
+   the default is `warn` (observe-only) for back-compat, so out of the box the
+   proxy still provides no upstream-MITM resistance — the guarantee stays APT's
+   client-side check. Remaining, all smaller: an `auto` mode (enforce where a
+   signing key is discoverable, warn elsewhere) as a stronger default;
+   live on-demand `Release` fetch so `enforce` works before the metadata cache is
+   warm; flat/no-`dists` repo coverage (e.g. `pkgs.k8s.io`); and wider default
+   `https_upstream_hosts`.
 
 ## Testing / operations
 
