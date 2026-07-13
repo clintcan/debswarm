@@ -248,3 +248,20 @@ jobs:
             sleep 1
           done
           curl -fsS http://127.0.0.1:9978/stats | grep -q requests_total
+
+      - name: APT falls back to DIRECT when the daemon is down
+        run: |
+          # The apt drop-in routes through Proxy-Auto-Detect with a liveness
+          # probe, so a stopped daemon must degrade to direct mirror access
+          # instead of failing every apt operation against a dead proxy.
+          test -x /usr/lib/debswarm/apt-proxy-detect
+          /usr/lib/debswarm/apt-proxy-detect | grep -qx 'http://127.0.0.1:9977'
+          sudo systemctl stop debswarm
+          /usr/lib/debswarm/apt-proxy-detect | grep -qx 'DIRECT'
+          sudo apt-get update -qq   # must succeed, going DIRECT
+          sudo systemctl start debswarm
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9978/stats >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          /usr/lib/debswarm/apt-proxy-detect | grep -qx 'http://127.0.0.1:9977'

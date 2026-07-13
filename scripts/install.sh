@@ -88,13 +88,26 @@ EOF
     fi
 fi
 
-# Install APT config
+# Install APT config: proxy via auto-detection, so a stopped or removed
+# daemon degrades to DIRECT mirror access instead of breaking apt.
 echo "Installing APT configuration..."
+mkdir -p /usr/lib/debswarm
+cat > /usr/lib/debswarm/apt-proxy-detect << 'EOF'
+#!/bin/bash
+# Prints the debswarm proxy URL while the daemon answers, DIRECT otherwise.
+if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/9977 && exec 3>&-' 2>/dev/null; then
+    echo "http://127.0.0.1:9977"
+else
+    echo "DIRECT"
+fi
+EOF
+chmod 0755 /usr/lib/debswarm/apt-proxy-detect
 if [ -f "$TMP_DIR/dist/90debswarm.conf" ]; then
     cp "$TMP_DIR/dist/90debswarm.conf" /etc/apt/apt.conf.d/
 else
     cat > /etc/apt/apt.conf.d/90debswarm.conf << 'EOF'
-Acquire::http::Proxy "http://127.0.0.1:9977";
+Acquire::http::Proxy-Auto-Detect "/usr/lib/debswarm/apt-proxy-detect";
+Acquire::https::Proxy-Auto-Detect "/usr/lib/debswarm/apt-proxy-detect";
 EOF
 fi
 
@@ -140,5 +153,6 @@ echo "To uninstall:"
 echo "  sudo systemctl disable --now debswarm"
 echo "  sudo rm /usr/local/bin/debswarm"
 echo "  sudo rm /etc/apt/apt.conf.d/90debswarm.conf"
+echo "  sudo rm /usr/lib/debswarm/apt-proxy-detect"
 echo "  sudo rm /etc/systemd/system/debswarm.service"
 echo "  sudo rm -rf /etc/debswarm /var/cache/debswarm"
