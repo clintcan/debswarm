@@ -113,9 +113,10 @@ type Server struct {
 	retryDone        chan struct{}
 
 	// Security configuration
-	allowedHosts       []string // Additional allowed repository hosts
-	httpsUpstreamHosts []string // Hosts to fetch over HTTPS even when APT requests HTTP
-	metadataServeStale bool     // serve cached metadata when the mirror is unreachable
+	allowedHosts       []string     // Additional allowed repository hosts
+	httpsUpstreamHosts []string     // Hosts to fetch over HTTPS even when APT requests HTTP
+	metadataServeStale bool         // serve cached metadata when the mirror is unreachable
+	allowedClientNets  []*net.IPNet // inbound client allowlist for LAN server mode (empty = loopback only)
 
 	// uncachedHostsSeen tracks repository hosts for which we have already logged
 	// an INFO-level "served uncached" notice, so the log is emitted once per host
@@ -151,6 +152,12 @@ type Config struct {
 
 	// Security settings
 	AllowedHosts []string // Additional allowed repository hosts (beyond built-in Debian/Ubuntu/Mint)
+
+	// AllowedClientCIDRs restricts which inbound clients may use the proxy when it
+	// is bound to a non-loopback address (LAN server mode). Loopback clients are
+	// always allowed. Empty means loopback-only (the default). Parsed from
+	// network.proxy_allowed_cidrs by the daemon.
+	AllowedClientCIDRs []*net.IPNet
 
 	// HTTPSUpstreamHosts lists hosts for which the proxy upgrades an incoming
 	// plain-HTTP APT request to an HTTPS upstream fetch (MITM-free), enabling
@@ -243,6 +250,7 @@ func NewServer(
 		allowedHosts:       cfg.AllowedHosts,
 		httpsUpstreamHosts: cfg.HTTPSUpstreamHosts,
 		metadataServeStale: cfg.MetadataServeStale,
+		allowedClientNets:  cfg.AllowedClientCIDRs,
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -280,12 +288,23 @@ func NewServer(
 		Cache:         pkgCache,
 	})
 
+	// Warn when the proxy is exposed beyond loopback. The daemon's fail-closed
+	// validation guarantees a client allowlist is present in that case, but a
+	// visible startup warning helps operators confirm the exposure is intended.
+	if host, _, err := net.SplitHostPort(cfg.Addr); err == nil && !bindIsLoopback(host) {
+		logger.Warn("Proxy bound to a non-loopback address (LAN server mode); inbound clients are restricted to network.proxy_allowed_cidrs",
+			zap.String("bind", host),
+			zap.Int("allowedCIDRs", len(cfg.AllowedClientCIDRs)))
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleRequest)
 
 	s.server = &http.Server{
-		Addr:    cfg.Addr,
-		Handler: mux,
+		Addr: cfg.Addr,
+		// gateClient enforces the inbound client allowlist (loopback always
+		// allowed). It is a no-op when the proxy is bound to loopback.
+		Handler: s.gateClient(mux),
 		// ReadHeaderTimeout (not a blanket ReadTimeout) guards against slow-loris
 		// header sends. A full ReadTimeout is a deadline on the whole request
 		// lifecycle of a connection; on a keep-alive/pipelined connection — which
@@ -368,6 +387,54 @@ func (s *Server) startMetricsServer() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		s.logger.Error("Metrics server failed", zap.Error(err))
 	}
+}
+
+// bindIsLoopback reports whether a bind host restricts a listener to the local
+// machine. Empty and "localhost" count as loopback; "0.0.0.0"/"::" (all
+// interfaces) and any specific interface IP do not.
+func bindIsLoopback(host string) bool {
+	if host == "" || host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// clientAllowed reports whether the request's client is permitted. Loopback is
+// always allowed; otherwise the client IP must fall inside one of the configured
+// allowlist networks. The decision is made on the real TCP peer address only —
+// X-Forwarded-For and similar client-supplied headers are never consulted.
+func (s *Server) clientAllowed(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	for _, n := range s.allowedClientNets {
+		if n != nil && n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// gateClient wraps a handler with the inbound client allowlist. It is a no-op
+// for loopback clients, so a loopback-bound proxy (the default) is unaffected.
+func (s *Server) gateClient(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.clientAllowed(r) {
+			// Deliberately terse: do not disclose the allowlist to rejected clients.
+			http.Error(w, "forbidden: client not permitted", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // setSecurityHeaders adds security headers to HTTP responses

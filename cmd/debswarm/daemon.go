@@ -440,9 +440,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	defer func() { _ = verifier.Close() }()
 	logger.Debug("Multi-source verifier initialized")
 
+	// Parse the inbound client allowlist for LAN server mode. Validate() has
+	// already rejected malformed entries (and enforced the fail-closed rule), so
+	// this should not error, but treat any error as fatal rather than binding
+	// unguarded.
+	allowedClientCIDRs, err := cfg.Network.ParsedAllowedCIDRs()
+	if err != nil {
+		return fmt.Errorf("invalid network.proxy_allowed_cidrs: %w", err)
+	}
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
 		Addr:                       net.JoinHostPort(cfg.Network.ProxyBind, strconv.Itoa(cfg.Network.ProxyPort)),
+		AllowedClientCIDRs:         allowedClientCIDRs,
 		P2PTimeout:                 5 * time.Second,
 		DHTLookupLimit:             10,
 		MetricsPort:                cfg.Metrics.Port,
