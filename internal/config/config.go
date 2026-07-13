@@ -57,7 +57,7 @@ type ProxyConfig struct {
 //
 // This only broadens which *public* hosts the proxy will fetch from: private and
 // internal addresses remain blocked (SSRF protection), and every package is still
-// verified against the SHA256 in the signed repository index. All entries use the
+// checked against the SHA256 in the repository index. All entries use the
 // standard /dists/ and /pool/ layout required by the proxy's path check.
 var DefaultTrustedRepos = []string{
 	"ppa.launchpad.net",          // Launchpad PPAs

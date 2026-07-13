@@ -6,32 +6,53 @@ This guide covers debswarm's security model and provides recommendations for har
 
 debswarm's security is built on several layers:
 
-1. **Cryptographic Verification**: All packages verified against SHA256 hashes from GPG-signed repository metadata
-2. **Multi-Source Verification**: DHT queries confirm multiple independent peers have the same package hash
-3. **Network Isolation**: HTTP endpoints bind to localhost by default
-4. **Input Validation**: SSRF protection, multiaddr filtering, path sanitization
-5. **P2P Security**: Optional PSK encryption, peer allowlists, eclipse attack mitigation
+1. **Signature verification stays with `apt`**: debswarm does **not** verify GPG signatures. It passes fetched bytes through unmodified, so `apt`'s client-side verification of the signed `Release` file and the hash chain down to each `.deb` applies exactly as it would without a proxy. That is what protects you against a tampered mirror.
+2. **Hash verification (swarm integrity)**: every P2P download is checked against the SHA256 from the `Packages` index debswarm fetched from the mirror, so a malicious peer cannot poison the cache. This is *not* independent upstream protection (see Trust Model below).
+3. **Multi-Source Verification**: DHT queries confirm multiple independent peers have the same package hash
+4. **Network Isolation**: HTTP endpoints bind to localhost by default
+5. **Input Validation**: SSRF protection, multiaddr filtering, path sanitization
+6. **P2P Security**: Optional PSK encryption, peer allowlists, eclipse attack mitigation
 
 ### Trust Model
 
+debswarm's SHA256 check and `apt`'s signature check are **two separate layers**.
+Only the second defends against a tampered *upstream*; debswarm never checks a
+GPG signature itself.
+
 ```
-Debian/Ubuntu Mirror ──GPG signs──> Release file
-                                          │
-                                    contains hashes
-                                          │
-                                          ▼
-                                    Packages index
-                                          │
-                                    SHA256 per package
-                                          │
-                                          ▼
-              P2P Download ──verified against──> Expected SHA256
-                                          │
-                                    ✓ Match: Cache and serve
-                                    ✗ Mismatch: Reject, blacklist peer
+debswarm's layer — swarm integrity, protects against a bad PEER:
+
+  Packages index  (fetched from the mirror over http; debswarm does NOT
+        │          verify its signature)
+        │  SHA256 per package
+        ▼
+  P2P / mirror download ── must match ──> expected SHA256
+        │
+        ├─ ✓ match:    cache and serve to apt
+        └─ ✗ mismatch: reject, blacklist the peer
+
+apt's layer — the real root of trust, protects against a bad MIRROR:
+
+  Debian/Ubuntu signing key ── GPG ──> InRelease / Release
+        │                                   │  hash of Packages
+        ▼                                   ▼
+  apt re-checks the signature and every hash, client-side, on the bytes
+  debswarm hands it — exactly as it would with no proxy.
 ```
 
-Peers cannot serve malicious packages that pass verification. The signed Release file from official mirrors is the root of trust.
+A malicious **peer** is caught by debswarm's SHA256 check: its bytes won't match
+the index hash. A malicious **mirror** that rewrites *both* the package and the
+index is **not** caught by that check — the index and the bytes ride the same
+upstream leg — but it **is** caught by `apt`, which verifies the GPG signature on
+`Release` and re-checks every hash after receiving the bytes from debswarm. The
+signed `Release` is the root of trust, and `apt` — not debswarm — is what
+enforces it.
+
+> **Bypass caveat:** if you disable `apt`'s signature check (`[trusted=yes]`,
+> `Acquire::AllowInsecureRepositories`) or run `dpkg -i` directly on a file from
+> debswarm's cache, that second layer is gone, and debswarm's SHA256 check is
+> **not** a substitute — it only proves the bytes match an index that was itself
+> never signature-verified by debswarm.
 
 ### Multi-Source Verification
 
@@ -41,8 +62,8 @@ After downloading a package, debswarm queries the DHT to find other peers that h
 |-----------------|-------------------|---------------------------|
 | Random peer serves bad package | Caught (hash mismatch) | Caught |
 | Compromised mirror (pkg only) | Caught (hash mismatch) | Caught |
-| Compromised mirror (pkg + index) | **Not caught** | **Detected** (no other providers) |
-| Targeted attack on specific user | **Not caught** | **Detected** (hash differs from swarm) |
+| Compromised mirror (pkg + index) | **Not caught** | **Flagged, not blocked** (a new/rare package also has no other providers) |
+| Targeted attack on specific user | **Not caught** | **Flagged, not blocked** (heuristic only) |
 
 **How it works:**
 1. Package downloaded and verified against expected SHA256
@@ -50,6 +71,8 @@ After downloading a package, debswarm queries the DHT to find other peers that h
 3. If 2+ independent providers found → package is "verified"
 4. If only self found → logged as "unverified" (new/rare package)
 5. Results recorded in audit log and metrics
+
+Multi-source verification is a best-effort *signal*, not a control: it records a metric and an audit event but never blocks a package, and it cannot tell a targeted attack apart from a genuinely new or rare package — both have a single provider. Don't rely on it as protection; `apt`'s signature verification remains the guarantee.
 
 **Configuration:** Multi-source verification is enabled by default with minimal overhead (queries only, no re-download).
 

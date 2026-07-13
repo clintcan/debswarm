@@ -398,7 +398,7 @@ Provider Key: /debswarm/pkg/{sha256_hash}
 │  ┌─────────────────────────────────────────────┐    │
 │  │  debswarm verification                      │    │
 │  │  - All downloads verified against SHA256    │    │
-│  │  - Hash from trusted Packages index         │    │
+│  │  - Hash from fetched Packages index         │    │
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
                         │
@@ -414,6 +414,15 @@ Provider Key: /debswarm/pkg/{sha256_hash}
 │  └─────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────┘
 ```
+
+**How to read this:** the boxes are integrity layers, not a trust hand-off.
+debswarm does **not** inherit APT's GPG trust — it fetches the Packages index
+itself (usually over plain HTTP) and never checks the `Release` signature. The
+GPG verification in the top box happens *client-side, on the bytes debswarm
+outputs*, and is what actually defends against a tampered mirror. debswarm's
+SHA256 check (middle box) only guarantees a peer can't serve bytes that differ
+from that fetched index — swarm integrity, not upstream authenticity. See
+[security-hardening.md](security-hardening.md) for the full trust model.
 
 ### Security Hardening (v0.6.x)
 

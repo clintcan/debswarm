@@ -32,7 +32,7 @@ func main() {
 		Short: "Peer-to-peer package distribution for APT",
 		Long: `debswarm is a peer-to-peer package distribution system that integrates
 with APT to download Debian packages from other peers, reducing load on
-mirrors while maintaining security through hash verification.
+mirrors. Each download is checked against the repository index hash, and APT's own signature verification is left intact.
 
 Features:
   • Parallel chunked downloads from multiple peers

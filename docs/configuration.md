@@ -236,7 +236,7 @@ Notes:
 **Security Notes:**
 - Requests must look like APT traffic: either the standard `/dists/` + `/pool/` layout, or a recognized APT file (`Release`, `InRelease`, `Packages*`, `Sources*`, `by-hash/`, `*.deb`). This supports flat-layout repositories (e.g. Kubernetes) while still blocking arbitrary non-repository files on an allowed host.
 - Private/internal hosts (localhost, 10.x.x.x, 192.168.x.x, link-local, cloud metadata, etc.) are always blocked, even if listed in `allowed_hosts`.
-- Every package is verified against the SHA256 in the signed repository index regardless of source, so a trusted host cannot serve a tampered package.
+- Every P2P download is checked against the SHA256 in the repository index regardless of source, so a *peer* cannot serve tampered bytes. This is not upstream-MITM protection: the index and the bytes come from the same mirror, so a compromised mirror is caught by APT's GPG verification (see line above), not by debswarm.
 - Only ports 443 and 80 are allowed for HTTPS CONNECT tunnels.
 
 ---
@@ -670,9 +670,9 @@ This is essential for the proxy to look up package hashes when APT requests a `.
 debswarm can import existing packages from APT's local cache:
 - Scans `/var/cache/apt/archives/` for `.deb` files on startup
 - Skips the `partial/` subdirectory (incomplete downloads)
-- Verifies each package's SHA256 hash against the index
-- Only imports packages that can be verified (security)
-- Copies verified packages to debswarm's cache
+- Checks each package's SHA256 against the index
+- Only imports packages whose hash matches the index (others are skipped)
+- Copies matching packages to debswarm's cache
 - Runs in background to avoid blocking daemon startup
 
 This makes new debswarm users immediate contributors to the P2P network by sharing packages they already have.
@@ -681,7 +681,7 @@ This makes new debswarm users immediate contributors to the P2P network by shari
 - APT lists watching requires the daemon to have read access to `/var/lib/apt/lists`
 - Archives import requires read access to `/var/cache/apt/archives`
 - When running as systemd service, these directories are typically accessible
-- Unverified packages (not in index) are skipped for security
+- Packages not present in any fetched index are skipped (their hash can't be checked)
 - Already-cached packages are skipped (idempotent)
 
 ---

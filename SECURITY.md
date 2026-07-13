@@ -29,23 +29,25 @@ Please include the following information (as much as you can provide):
 
 ## Security Model
 
-debswarm is designed to maintain APT's existing security guarantees while adding P2P distribution:
+debswarm **preserves** APT's existing security guarantees while adding P2P distribution. It does not add a cryptographic guarantee of its own: **debswarm performs no GPG verification.** Your protection against a tampered mirror is APT's client-side signature check, which debswarm leaves intact by passing fetched bytes through unmodified for APT to verify.
 
 ### Trust Model
 
 1. **Release Files**: Always fetched from official mirrors. These are GPG-signed by Debian/Ubuntu and verified by APT. debswarm never serves Release files via P2P.
 
-2. **Packages Index**: Fetched from mirrors and cached. Contains SHA256 hashes of all packages, signed transitively via Release files.
+2. **Packages Index**: Fetched from mirrors (usually over plain HTTP) and cached. It carries the SHA256 of every package and is signed transitively via the Release file — but **debswarm does not verify that signature**; APT does, client-side.
 
-3. **Package Downloads**: Can be served via P2P. Every package is verified against its SHA256 hash from the signed Packages index before use.
+3. **Package Downloads**: Can be served via P2P. Every package is checked against its SHA256 from the Packages index debswarm fetched, before use. This catches a bad *peer* — its bytes won't match the hash — but the hash and the index arrive over the same upstream leg, so it does **not** catch a bad *mirror* that rewrites both (see below).
 
-4. **Peers**: Zero trust. Peers cannot serve malicious packages because all downloads are cryptographically verified. Hash mismatches result in:
+4. **Peers**: A peer's bytes must match the index SHA256 or the download is rejected and the peer blacklisted, so a peer cannot poison the swarm. Hash mismatches result in:
    - Immediate rejection of the download
    - Blacklisting of the peer
    - Automatic retry from another peer or mirror
 
 ### What debswarm Does NOT Protect Against
 
+- **A compromised or malicious upstream mirror** (or a man-in-the-middle on the mirror connection). If it serves a poisoned Packages index *and* matching poisoned bytes, debswarm's SHA256 check passes — the hash it checks against came from that same poisoned index. Only APT's GPG verification of the signed Release catches this; debswarm is not a substitute for it. Use HTTPS mirrors to reduce the MITM surface.
+- **Anything that bypasses APT's signature verification** — `[trusted=yes]` sources, `Acquire::AllowInsecureRepositories`, or `dpkg -i` on a file pulled from debswarm's cache. These forgo the one check that makes the upstream trustworthy; debswarm's SHA256 check is not equivalent.
 - Compromise of the official Debian/Ubuntu signing keys
 - Vulnerabilities in APT itself
 - Local privilege escalation (debswarm runs as a dynamic user with restricted permissions)
@@ -92,6 +94,7 @@ debswarm is designed to maintain APT's existing security guarantees while adding
 
 ### Out of Scope
 
+- A compromised upstream mirror, or a MITM on the mirror connection, serving a poisoned index plus matching bytes (defended by APT's client-side GPG verification, not by debswarm — see the Trust Model above)
 - Physical access to the machine
 - Compromise of the underlying OS
 - Attacks requiring root/sudo access
