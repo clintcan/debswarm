@@ -578,6 +578,7 @@ func runPeriodicTasks(
 			// Update metrics
 			m.CacheSize.Set(float64(pkgCache.Size()))
 			m.CacheCount.Set(float64(pkgCache.Count()))
+			m.MetadataCacheSize.Set(float64(pkgCache.MetadataSize()))
 			m.ConnectedPeers.Set(float64(p2pNode.ConnectedPeers()))
 			m.RoutingTableSize.Set(float64(p2pNode.RoutingTableSize()))
 

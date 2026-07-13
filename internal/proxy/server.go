@@ -460,33 +460,41 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := struct {
-		RequestsTotal     int64             `json:"requests_total"`
-		RequestsP2P       int64             `json:"requests_p2p"`
-		RequestsMirror    int64             `json:"requests_mirror"`
-		BytesFromP2P      int64             `json:"bytes_from_p2p"`
-		BytesFromMirror   int64             `json:"bytes_from_mirror"`
-		CacheHits         int64             `json:"cache_hits"`
-		ActiveConnections int64             `json:"active_connections"`
-		P2PRatioPercent   float64           `json:"p2p_ratio_percent"`
-		CacheSizeBytes    int64             `json:"cache_size_bytes"`
-		CacheCount        int               `json:"cache_count"`
-		PackagesUncached  int64             `json:"packages_served_uncached"`
-		Scheduler         *scheduler.Status `json:"scheduler,omitempty"`
-		Fleet             *fleet.Status     `json:"fleet,omitempty"`
+		RequestsTotal      int64             `json:"requests_total"`
+		RequestsP2P        int64             `json:"requests_p2p"`
+		RequestsMirror     int64             `json:"requests_mirror"`
+		BytesFromP2P       int64             `json:"bytes_from_p2p"`
+		BytesFromMirror    int64             `json:"bytes_from_mirror"`
+		CacheHits          int64             `json:"cache_hits"`
+		ActiveConnections  int64             `json:"active_connections"`
+		P2PRatioPercent    float64           `json:"p2p_ratio_percent"`
+		CacheSizeBytes     int64             `json:"cache_size_bytes"`
+		CacheCount         int               `json:"cache_count"`
+		PackagesUncached   int64             `json:"packages_served_uncached"`
+		MetadataCacheHits  int64             `json:"metadata_cache_hits"`
+		MetadataCacheMiss  int64             `json:"metadata_cache_misses"`
+		MetadataBytesSaved int64             `json:"metadata_cache_bytes_saved"`
+		MetadataCacheSize  int64             `json:"metadata_cache_size_bytes"`
+		Scheduler          *scheduler.Status `json:"scheduler,omitempty"`
+		Fleet              *fleet.Status     `json:"fleet,omitempty"`
 	}{
-		RequestsTotal:     stats.RequestsTotal,
-		RequestsP2P:       stats.RequestsP2P,
-		RequestsMirror:    stats.RequestsMirror,
-		BytesFromP2P:      stats.BytesFromP2P,
-		BytesFromMirror:   stats.BytesFromMirror,
-		CacheHits:         stats.CacheHits,
-		ActiveConnections: stats.ActiveConnections,
-		P2PRatioPercent:   p2pRatio,
-		CacheSizeBytes:    s.cache.Size(),
-		CacheCount:        s.cache.Count(),
-		PackagesUncached:  s.metrics.PackagesServedUncached.Value(),
-		Scheduler:         schedStatus,
-		Fleet:             fleetStatus,
+		RequestsTotal:      stats.RequestsTotal,
+		RequestsP2P:        stats.RequestsP2P,
+		RequestsMirror:     stats.RequestsMirror,
+		BytesFromP2P:       stats.BytesFromP2P,
+		BytesFromMirror:    stats.BytesFromMirror,
+		CacheHits:          stats.CacheHits,
+		ActiveConnections:  stats.ActiveConnections,
+		P2PRatioPercent:    p2pRatio,
+		CacheSizeBytes:     s.cache.Size(),
+		CacheCount:         s.cache.Count(),
+		PackagesUncached:   s.metrics.PackagesServedUncached.Value(),
+		MetadataCacheHits:  stats.MetadataHits,
+		MetadataCacheMiss:  stats.MetadataMisses,
+		MetadataBytesSaved: stats.MetadataBytesSaved,
+		MetadataCacheSize:  s.cache.MetadataSize(),
+		Scheduler:          schedStatus,
+		Fleet:              fleetStatus,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
