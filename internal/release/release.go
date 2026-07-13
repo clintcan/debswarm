@@ -39,6 +39,17 @@ type Release struct {
 	// SHA256 maps a dist-relative index path (e.g. "main/binary-amd64/Packages.gz")
 	// to its listed hash and size.
 	SHA256 map[string]FileHash
+	// hashSet holds every SHA256 value listed, for O(1) by-hash membership checks
+	// (an Acquire-By-Hash URL carries the file's hash directly).
+	hashSet map[string]struct{}
+}
+
+// HasHash reports whether the given hex SHA256 is listed anywhere in the Release.
+// A by-hash index URL (/by-hash/SHA256/<hex>) is verified iff its digest is a
+// hash the signed Release vouches for.
+func (r *Release) HasHash(hexSHA256 string) bool {
+	_, ok := r.hashSet[strings.ToLower(hexSHA256)]
+	return ok
 }
 
 // releaseTimeLayouts are the formats seen in Release "Valid-Until"/"Date" fields.
@@ -55,7 +66,7 @@ var ErrNoSHA256 = errors.New("release: no SHA256 section found")
 // Parse parses a Release body (or the verified plaintext of an InRelease). It
 // returns ErrNoSHA256 if the body carries no SHA256 section.
 func Parse(body []byte) (*Release, error) {
-	r := &Release{SHA256: make(map[string]FileHash)}
+	r := &Release{SHA256: make(map[string]FileHash), hashSet: make(map[string]struct{})}
 
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	sc.Buffer(make([]byte, 0, 64*1024), maxReleaseSize)
@@ -73,7 +84,9 @@ func Parse(body []byte) (*Release, error) {
 			if inSHA256 {
 				if f := strings.Fields(line); len(f) >= 3 {
 					size, _ := strconv.ParseInt(f[1], 10, 64)
-					r.SHA256[f[2]] = FileHash{SHA256: strings.ToLower(f[0]), Size: size}
+					h := strings.ToLower(f[0])
+					r.SHA256[f[2]] = FileHash{SHA256: h, Size: size}
+					r.hashSet[h] = struct{}{}
 				}
 			}
 			continue
