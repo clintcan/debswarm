@@ -166,7 +166,7 @@ func (w *Watcher) isPackagesFile(name string) bool {
 
 	// Match *_Packages, *_Packages.gz, *_Packages.xz, *_Packages.lz4
 	base := name
-	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2"} {
+	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2", ".zst"} {
 		base = strings.TrimSuffix(base, ext)
 	}
 
@@ -187,7 +187,7 @@ func (w *Watcher) parseFile(path string) error {
 func (w *Watcher) extractRepoFromFilename(filename string) string {
 	// Remove compression extension
 	name := filename
-	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2"} {
+	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2", ".zst"} {
 		name = strings.TrimSuffix(name, ext)
 	}
 

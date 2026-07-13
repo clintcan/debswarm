@@ -217,3 +217,34 @@ jobs:
           # so fetch through the proxy from a default-allowed public mirror.
           curl -fsS --retry 3 --retry-delay 2 -x http://127.0.0.1:9977 \
             http://deb.debian.org/debian/dists/bookworm/InRelease | grep -q '^Origin: Debian'
+
+      - name: Watchdog recovers a hung daemon
+        run: |
+          # Regression test for the hung-but-alive failure class (a deadlocked
+          # HTTP loop once hung apt-get update while the process stayed up, and
+          # Restart=on-failure never fired). SIGSTOP the daemon so it stops
+          # answering /health and feeding the watchdog, then verify systemd
+          # (Type=notify + WatchdogSec=90) kills and restarts it.
+          old_pid=$(systemctl show -p MainPID --value debswarm)
+          test "$old_pid" -gt 0
+          sudo kill -STOP "$old_pid"
+          echo "SIGSTOPped pid $old_pid; waiting for the watchdog to fire (<=90s + kill escalation)"
+          for _ in $(seq 1 60); do
+            new_pid=$(systemctl show -p MainPID --value debswarm)
+            if [ "$new_pid" != "$old_pid" ] && [ "$new_pid" -gt 0 ] && sudo systemctl is-active --quiet debswarm; then
+              break
+            fi
+            sleep 5
+          done
+          new_pid=$(systemctl show -p MainPID --value debswarm)
+          echo "old_pid=$old_pid new_pid=$new_pid"
+          sudo journalctl -u debswarm --no-pager | grep -iE 'watchdog|abort' | tail -5 || true
+          test "$new_pid" != "$old_pid"
+          test "$new_pid" -gt 0
+          sudo systemctl is-active --quiet debswarm
+          # The restarted daemon serves again
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:9978/stats >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:9978/stats | grep -q requests_total

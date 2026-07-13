@@ -52,6 +52,7 @@ type Server struct {
 	p2pNode      *p2p.Node
 	fetcher      *mirror.Fetcher
 	downloader   *downloader.Downloader
+	stateManager *downloader.StateManager
 	logger       *zap.Logger
 	server       *http.Server
 	metrics      *metrics.Metrics
@@ -238,6 +239,13 @@ func NewServer(
 
 	// Create state manager for download resume support
 	stateManager := downloader.NewStateManager(pkgCache.GetDB())
+	s.stateManager = stateManager
+
+	// Expose the cache's capacity and eviction pressure to operators
+	if m != nil {
+		m.CacheMaxSize.Set(float64(pkgCache.MaxSize()))
+		pkgCache.SetOnEvict(func() { m.CacheEvictions.Inc() })
+	}
 
 	// Determine max concurrent downloads (use config or default)
 	maxConcurrentDownloads := cfg.MaxConcurrentPeerDownloads
@@ -904,15 +912,25 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	// Check local cache first
 	if s.cache.Has(expectedHash) {
-		log.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
-		atomic.AddInt64(&s.cacheHits, 1)
-		s.metrics.CacheHits.Inc()
+		err := s.serveFromCache(w, expectedHash)
+		if err == nil {
+			log.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
+			atomic.AddInt64(&s.cacheHits, 1)
+			s.metrics.CacheHits.Inc()
 
-		// Audit log cache hit
-		s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize).WithRequestID(reqID))
-
-		s.serveFromCache(w, expectedHash)
-		return
+			// Audit log cache hit
+			s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize).WithRequestID(reqID))
+			return
+		}
+		// Has() saw the file but Get() failed — the classic aftermath of
+		// database corruption recovery, which leaves package files on disk
+		// with no metadata rows. Previously this returned 500 for every such
+		// package until a manual `cache rebuild`. Treat it as a miss instead:
+		// the re-download below re-caches the package (Put handles an
+		// already-present file), self-healing the entry.
+		log.Warn("Cached file unreadable, re-downloading",
+			zap.String("hash", expectedHash[:16]+"..."),
+			zap.Error(err))
 	}
 
 	s.metrics.CacheMisses.Inc()
@@ -1113,8 +1131,10 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 				s.metrics.VerificationFailures.Inc()
 				if ps, ok := src.(*downloader.PeerSource); ok {
 					s.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
-					// Audit log verification failure
+					s.metrics.PeersBlacklisted.Inc()
+					// Audit log verification failure and the resulting blacklist
 					s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, ps.Info.ID.String()).WithRequestID(reqID))
+					s.audit.Log(audit.NewPeerBlacklistedEvent(ps.Info.ID.String(), "hash mismatch").WithRequestID(reqID))
 				}
 				continue
 			}
@@ -1271,6 +1291,8 @@ func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, 
 
 	if err := s.verifyAndCache(data, expectedHash, path); err != nil {
 		s.scorer.Blacklist(providerID, "fleet hash mismatch", 24*time.Hour)
+		s.metrics.PeersBlacklisted.Inc()
+		s.audit.Log(audit.NewPeerBlacklistedEvent(providerID.String(), "fleet hash mismatch"))
 		return nil, fmt.Errorf("fleet peer hash mismatch")
 	}
 	return data, nil
@@ -1806,12 +1828,15 @@ func (s *Server) noteUncachedServe(log *zap.Logger, rawURL string) {
 		zap.String("host", host))
 }
 
-func (s *Server) serveFromCache(w http.ResponseWriter, hash string) {
+// serveFromCache streams a cached package to the client. It returns an error
+// (without having written a response) when the cache entry cannot be opened —
+// notably when database corruption recovery left the package file on disk
+// with no metadata row, in which case Has() is true but Get() fails. Callers
+// that can re-download must treat that as a cache miss, not a hard failure.
+func (s *Server) serveFromCache(w http.ResponseWriter, hash string) error {
 	reader, pkg, err := s.cache.Get(hash)
 	if err != nil {
-		s.logger.Error("Cache read failed", zap.Error(err))
-		http.Error(w, "Cache error", http.StatusInternalServerError)
-		return
+		return err
 	}
 	defer reader.Close()
 
@@ -1821,6 +1846,7 @@ func (s *Server) serveFromCache(w http.ResponseWriter, hash string) {
 	w.WriteHeader(http.StatusOK)
 
 	_, _ = io.Copy(w, reader)
+	return nil
 }
 
 // SetP2PNode sets the P2P node
@@ -1892,6 +1918,34 @@ func (s *Server) ReannouncePackages(ctx context.Context) error {
 
 	wg.Wait()
 	return nil
+}
+
+// CleanupDownloadState purges failed and abandoned download state rows and
+// orphaned partial-download directories. Failed downloads stop being retried
+// after the retry window, but their state rows and multi-MB partial assembly
+// files were never garbage-collected — unbounded disk and database growth on
+// a daemon facing flaky mirrors or peers.
+func (s *Server) CleanupDownloadState(maxAge time.Duration) {
+	if s.stateManager != nil {
+		if n, err := s.stateManager.CleanupStale(maxAge); err != nil {
+			s.logger.Warn("Failed to clean up stale download state", zap.Error(err))
+		} else if n > 0 {
+			s.logger.Info("Cleaned up stale download state", zap.Int("removed", n))
+		}
+	}
+
+	n, err := s.cache.SweepStalePartials(maxAge, func(hash string) bool {
+		if s.stateManager == nil {
+			return false
+		}
+		state, err := s.stateManager.GetDownload(hash)
+		return err == nil && state != nil
+	})
+	if err != nil {
+		s.logger.Warn("Failed to sweep stale partial downloads", zap.Error(err))
+	} else if n > 0 {
+		s.logger.Info("Swept stale partial download directories", zap.Int("removed", n))
+	}
 }
 
 // UpdateMetrics updates metrics from current state

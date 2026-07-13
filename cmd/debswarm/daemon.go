@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -29,6 +32,7 @@ import (
 	"github.com/debswarm/debswarm/internal/peers"
 	"github.com/debswarm/debswarm/internal/proxy"
 	"github.com/debswarm/debswarm/internal/scheduler"
+	"github.com/debswarm/debswarm/internal/sdnotify"
 	"github.com/debswarm/debswarm/internal/timeouts"
 	"github.com/debswarm/debswarm/internal/verify"
 )
@@ -469,6 +473,13 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		zap.String("proxyAddr", proxyCfg.Addr),
 		zap.String("metricsAddr", fmt.Sprintf("%s:%d/metrics", cfg.Metrics.Bind, cfg.Metrics.Port)))
 
+	// Tell systemd we are ready (Type=notify), and feed its watchdog if armed.
+	// Both are no-ops outside systemd.
+	sdnotify.Ready()
+	if interval, ok := sdnotify.WatchdogInterval(); ok {
+		go runWatchdog(ctx, interval, cfg.Metrics.Bind, cfg.Metrics.Port, logger)
+	}
+
 	// Wait for shutdown signal or error
 	for {
 		select {
@@ -491,6 +502,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 
 	// Graceful shutdown
+	sdnotify.Stopping()
 	logger.Info("Shutting down...")
 
 	// Stop APT lists watcher
@@ -533,8 +545,10 @@ func runPeriodicTasks(
 ) {
 	announceTicker := time.NewTicker(announceInterval)
 	metricsTicker := time.NewTicker(30 * time.Second)
+	cleanupTicker := time.NewTicker(time.Hour)
 	defer announceTicker.Stop()
 	defer metricsTicker.Stop()
+	defer cleanupTicker.Stop()
 
 	for {
 		select {
@@ -553,6 +567,49 @@ func runPeriodicTasks(
 			m.CacheCount.Set(float64(pkgCache.Count()))
 			m.ConnectedPeers.Set(float64(p2pNode.ConnectedPeers()))
 			m.RoutingTableSize.Set(float64(p2pNode.RoutingTableSize()))
+
+		case <-cleanupTicker.C:
+			// Purge failed/abandoned download state rows and orphaned partial
+			// directories; downloads past the retry window only leak disk.
+			proxyServer.CleanupDownloadState(24 * time.Hour)
+		}
+	}
+}
+
+// runWatchdog feeds the systemd watchdog for as long as the daemon's HTTP
+// loop is actually responding. A deadlocked-but-alive daemon (the class of
+// bug where a bad server timeout hung apt-get update while the process kept
+// running) previously required a manual restart, because Restart=on-failure
+// only fires on process exit; with WatchdogSec armed, systemd now recovers it.
+func runWatchdog(ctx context.Context, interval time.Duration, metricsBind string, metricsPort int, logger *zap.Logger) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	healthURL := fmt.Sprintf("http://%s/health", net.JoinHostPort(metricsBind, strconv.Itoa(metricsPort)))
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	logger.Info("systemd watchdog armed",
+		zap.Duration("pingInterval", interval),
+		zap.String("healthURL", healthURL))
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Any HTTP response proves the daemon's HTTP machinery is alive;
+			// on failure we simply skip the ping and let systemd act.
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+			if err != nil {
+				continue
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				logger.Warn("Watchdog health check failed; withholding watchdog ping", zap.Error(err))
+				continue
+			}
+			_ = resp.Body.Close()
+			sdnotify.Watchdog()
 		}
 	}
 }

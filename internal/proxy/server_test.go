@@ -688,10 +688,16 @@ func TestServeFromCache_NotFound(t *testing.T) {
 	}()
 
 	w := httptest.NewRecorder()
-	server.serveFromCache(w, "nonexistent_hash_1234567890abcdef1234567890abcdef")
+	err := server.serveFromCache(w, "nonexistent_hash_1234567890abcdef1234567890abcdef")
 
-	if w.Code != http.StatusInternalServerError {
-		t.Errorf("Status = %d, want %d", w.Code, http.StatusInternalServerError)
+	// serveFromCache reports the failure to the caller WITHOUT writing a
+	// response, so handlePackageRequest can fall through to a re-download
+	// (the corruption-recovery self-heal) instead of returning 500.
+	if err == nil {
+		t.Error("expected an error for a missing cache entry")
+	}
+	if w.Code != http.StatusOK || w.Body.Len() != 0 {
+		t.Errorf("serveFromCache wrote a response on failure (code=%d, body=%d bytes); it must leave the response untouched", w.Code, w.Body.Len())
 	}
 }
 
