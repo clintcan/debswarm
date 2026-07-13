@@ -32,6 +32,22 @@ narrower: concrete, verified gaps in what exists today.
   comments to state the real model — no daemon-side GPG check; APT's client-side
   verification is the guarantee. Robustness/security #1 below is now
   doc-complete; only the optional code hardening remains.
+- **Repository metadata caching** (PR #98, resolves former product gap "metadata
+  is never cached"): Release/InRelease, Packages/Sources, Translation, Contents,
+  and DEP-11 are now cached in the (previously dead) `indices` table with their
+  own LRU disk budget. A cold client revalidates against the local cache with a
+  cheap conditional GET instead of re-downloading tens of MB per update;
+  immutable `by-hash` files skip the upstream round-trip entirely, and cached
+  Packages bytes re-warm the in-memory index after a restart. `[cache]
+  cache_metadata` / `metadata_max_size`; metrics `debswarm_metadata_cache_*`.
+- **Offline metadata serving** (PR #99, partially resolves the offline-mode gap):
+  when the mirror is unreachable (network down, mirror outage, or the
+  connectivity monitor reporting offline) the proxy serves the last cached
+  metadata instead of failing `apt-get update`, marked `X-Debswarm-Stale: true`;
+  an offline monitor short-circuits the doomed upstream call. APT still verifies
+  the GPG signature and `Valid-Until`, so this is not a trust regression.
+  `[cache] serve_stale_metadata` (default on); metric
+  `debswarm_metadata_cache_stale_served_total`.
 
 ## Product gaps (ranked by user value)
 
@@ -41,17 +57,15 @@ narrower: concrete, verified gaps in what exists today.
    APT cache, foreclosing the one-cache-per-office/lab/CI-fleet deployment
    and any Kubernetes DaemonSet story. Needs a bind option plus a hard think
    about the trust story for remote clients.
-2. **Repository metadata is never cached — only `.deb`s.** Packages files are
-   parsed then discarded; Release/InRelease, Translation-*, Contents-*,
-   DEP-11 are pure passthrough. Every host re-fetches all metadata from the
-   WAN each update cycle (304 relay softens this only when upstream sends
-   validators). Likely the biggest recurring-bandwidth delta vs apt-cacher-ng.
-3. **Offline / `lan_only` mode is documented but not wired.** The
-   connectivity monitor's mode is consumed exactly once — for display in
-   `/health`. No download path consults it, the in-memory index is never
-   persisted (`Index.cachePath` is unused), and `apt-get update` fails hard
-   offline even with a full cache. `docs/comparison.md` overclaims here.
-4. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
+2. **Offline / `lan_only` mode: metadata done, package path remaining.** Serving
+   cached *metadata* offline landed in PR #99 and the in-memory index now
+   re-warms from the cache after a restart (PR #98), so `apt-get update` survives
+   an outage. What's still unwired: the `.deb` **download** path never consults
+   the connectivity monitor's `GetMode()`, so a package *install* offline still
+   fails even when every needed `.deb` is cached, and there is no explicit
+   `lan_only` gating (mirror fallback is simply attempted and allowed to fail).
+   Re-check `docs/comparison.md` once the package path is wired.
+3. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
    transport and hole punching are enabled — no AutoRelay reservation logic,
    and no debswarm node ever runs the relay service, so DCUtR has no relayed
    connection to coordinate through. Two NAT'd peers can never connect.
@@ -59,15 +73,15 @@ narrower: concrete, verified gaps in what exists today.
    `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
    publicly reachable nodes) — and until then, `docs/comparison.md`
    ("Relay Fallback: Yes") should be corrected.
-5. **No apt repository or container image for debswarm itself.** Distribution
+4. **No apt repository or container image for debswarm itself.** Distribution
    is GitHub releases + `curl | bash`. No signed apt repo means no
    `unattended-upgrades` and no fleet-wide upgrade path — ironic for an APT
    tool. No Dockerfile/OCI image/Helm chart exists.
-6. **Source packages get zero benefit.** Sources indices are deliberately not
+5. **Source packages get zero benefit.** Sources indices are deliberately not
    parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
    Sources carrying SHA256s that would make verification identical to the
    `.deb` path. Build farms are a natural audience.
-7. **Smaller**: `rollback fetch` from P2P is a stub while the README
+6. **Smaller**: `rollback fetch` from P2P is a stub while the README
    advertises it; no mirror remapping/failover (per-mirror stats are
    collected but never used for selection); no per-repo cache stats or
    quotas; cache pinning is by SHA256 prefix only.
@@ -140,8 +154,8 @@ narrower: concrete, verified gaps in what exists today.
    returns `[]byte`; fixing it needs a streaming P2P transfer API. Deferred
    from the 2026-07 performance batches as the only remaining structural item.
 2. Smaller: per-chunk 4MB allocations bypass any pooling (shape depends on
-   the streaming API above); the `indices` ETag table in the cache schema is
-   dead code.
+   the streaming API above). (The `indices` table, formerly dead schema, is now
+   the metadata cache — see Recently addressed.)
 
 ## Verified fine (don't re-audit without cause)
 

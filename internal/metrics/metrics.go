@@ -40,6 +40,9 @@ type Metrics struct {
 	MetadataCacheHits       *Counter
 	MetadataCacheMisses     *Counter
 	MetadataCacheBytesSaved *Counter
+	// MetadataCacheStaleServed counts metadata files served from cache without a
+	// successful upstream revalidation (mirror unreachable / offline).
+	MetadataCacheStaleServed *Counter
 
 	// Resume metrics
 	DownloadsResumed *Counter
@@ -340,9 +343,10 @@ func New() *Metrics {
 		PeersBlacklisted:       &Counter{},
 		PackagesServedUncached: &Counter{},
 
-		MetadataCacheHits:       &Counter{},
-		MetadataCacheMisses:     &Counter{},
-		MetadataCacheBytesSaved: &Counter{},
+		MetadataCacheHits:        &Counter{},
+		MetadataCacheMisses:      &Counter{},
+		MetadataCacheBytesSaved:  &Counter{},
+		MetadataCacheStaleServed: &Counter{},
 
 		// Resume metrics
 		DownloadsResumed: &Counter{},
@@ -421,6 +425,7 @@ func (m *Metrics) Handler() http.Handler {
 		writeCounter(w, "debswarm_metadata_cache_hits_total", m.MetadataCacheHits.Value())
 		writeCounter(w, "debswarm_metadata_cache_misses_total", m.MetadataCacheMisses.Value())
 		writeCounter(w, "debswarm_metadata_cache_bytes_saved_total", m.MetadataCacheBytesSaved.Value())
+		writeCounter(w, "debswarm_metadata_cache_stale_served_total", m.MetadataCacheStaleServed.Value())
 
 		// Resume metrics
 		writeCounter(w, "debswarm_downloads_resumed_total", m.DownloadsResumed.Value())

@@ -233,6 +233,11 @@ type CacheConfig struct {
 	// MetadataMaxSize is the disk budget for the metadata cache, kept separate
 	// from MaxSize so metadata and packages never evict each other. Default: 1GB.
 	MetadataMaxSize string `toml:"metadata_max_size"`
+	// ServeStaleMetadata lets the proxy serve cached metadata when the mirror is
+	// unreachable (or connectivity is offline) instead of failing the request,
+	// so apt-get update keeps working offline. APT still verifies the signature
+	// and Valid-Until of whatever is served. Default: true.
+	ServeStaleMetadata *bool `toml:"serve_stale_metadata"`
 }
 
 // IndexConfig holds package index settings
@@ -500,6 +505,15 @@ func (c *CacheConfig) MetadataCachingEnabled() bool {
 		return true
 	}
 	return *c.CacheMetadata
+}
+
+// ServesStaleMetadata reports whether serving stale cached metadata when the
+// mirror is unreachable is on. Default: true.
+func (c *CacheConfig) ServesStaleMetadata() bool {
+	if c.ServeStaleMetadata == nil {
+		return true
+	}
+	return *c.ServeStaleMetadata
 }
 
 // MetadataMaxSizeBytes returns the metadata cache disk budget in bytes, or 0

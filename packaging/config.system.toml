@@ -50,9 +50,13 @@ max_size = "10GB"
 min_free_space = "1GB"
 # Cache repository metadata (Release/Packages/Translation/Contents/DEP-11) so a
 # cold client revalidates against the local cache instead of re-fetching it from
-# the WAN. Always revalidated, so never stale; APT's signature check is unchanged.
+# the WAN. Revalidated on every request; APT's signature check is unchanged.
 cache_metadata = true
 metadata_max_size = "1GB"
+# Serve cached metadata when the mirror is unreachable so apt-get update keeps
+# working offline (response marked X-Debswarm-Stale). APT still verifies the GPG
+# signature and Valid-Until. Set false to make an unreachable mirror a hard error.
+serve_stale_metadata = true
 
 [transfer]
 max_upload_rate = "0"

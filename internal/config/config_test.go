@@ -501,6 +501,19 @@ func TestCacheConfig_MetadataMaxSizeBytes(t *testing.T) {
 	}
 }
 
+func TestCacheConfig_ServesStaleMetadata(t *testing.T) {
+	yes, no := true, false
+	if !(&CacheConfig{}).ServesStaleMetadata() {
+		t.Error("stale metadata serving should default to enabled")
+	}
+	if !(&CacheConfig{ServeStaleMetadata: &yes}).ServesStaleMetadata() {
+		t.Error("stale metadata serving should be enabled when set true")
+	}
+	if (&CacheConfig{ServeStaleMetadata: &no}).ServesStaleMetadata() {
+		t.Error("stale metadata serving should be disabled when set false")
+	}
+}
+
 func TestCacheConfig_MinFreeSpaceBytes(t *testing.T) {
 	tests := []struct {
 		name         string

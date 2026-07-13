@@ -252,6 +252,7 @@ Settings for the local package cache.
 | `min_free_space` | string | `"1GB"` | Minimum free disk space to maintain. Cache writes fail if this limit would be violated. |
 | `cache_metadata` | bool | `true` | Cache repository metadata (Release/InRelease, Packages, Translation, Contents, DEP-11) in addition to `.deb` packages. |
 | `metadata_max_size` | string | `"1GB"` | Disk budget for the metadata cache, kept separate from `max_size` so metadata and packages never evict each other. |
+| `serve_stale_metadata` | bool | `true` | Serve cached metadata when the mirror is unreachable (offline / mirror outage) so `apt-get update` keeps working. Responses are marked `X-Debswarm-Stale: true`. |
 
 **Example:**
 ```toml
@@ -261,17 +262,29 @@ max_size = "50GB"
 min_free_space = "2GB"
 cache_metadata = true
 metadata_max_size = "1GB"
+serve_stale_metadata = true
 ```
 
 **Metadata caching:** with `cache_metadata` on (the default), the proxy stores
 repository index files so a cold client — a fresh CI container, a reimaged host,
 or any machine with an empty `/var/lib/apt/lists` — fetches them from the local
 cache after a cheap conditional GET instead of re-downloading the full set
-(often tens of MB per `apt-get update`) from the WAN. It is safe by construction:
+(often tens of MB per `apt-get update`) from the WAN. Under normal operation
 every cached file is revalidated against the mirror before use, so the proxy
-never serves stale metadata, and APT's own signature verification is unaffected.
-Immutable `by-hash` index files are served with no upstream round-trip at all.
-Set `cache_metadata = false` to disable and fall back to plain passthrough.
+does not serve stale metadata, and APT's own signature verification is
+unaffected. Immutable `by-hash` index files are served with no upstream
+round-trip at all. Set `cache_metadata = false` to disable and fall back to
+plain passthrough.
+
+**Offline / mirror outage:** with `serve_stale_metadata` on (the default), when
+the mirror is unreachable — the network is down, the mirror is having an outage,
+or the connectivity monitor reports offline — the proxy serves the last cached
+copy of the metadata instead of failing `apt-get update`, and marks the response
+with an `X-Debswarm-Stale: true` header. This does not weaken security: APT
+still verifies the GPG signature **and** the `Valid-Until` field of whatever is
+served, so a genuinely expired `Release` file is rejected by APT itself. Set
+`serve_stale_metadata = false` to make an unreachable mirror a hard error even
+when a cached copy exists.
 
 **Size Format:**
 - Supports suffixes: `KB`, `K`, `MB`, `M`, `GB`, `G`, `TB`, `T`

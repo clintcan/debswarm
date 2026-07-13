@@ -115,11 +115,16 @@ type Server struct {
 	// Security configuration
 	allowedHosts       []string // Additional allowed repository hosts
 	httpsUpstreamHosts []string // Hosts to fetch over HTTPS even when APT requests HTTP
+	metadataServeStale bool     // serve cached metadata when the mirror is unreachable
 
 	// uncachedHostsSeen tracks repository hosts for which we have already logged
 	// an INFO-level "served uncached" notice, so the log is emitted once per host
 	// (the packages_served_uncached_total metric carries the full count).
 	uncachedHostsSeen sync.Map
+
+	// staleHostsSeen tracks repository hosts for which we have already logged an
+	// INFO-level "serving stale metadata" notice (once per host).
+	staleHostsSeen sync.Map
 }
 
 // Config holds proxy server configuration
@@ -151,6 +156,12 @@ type Config struct {
 	// plain-HTTP APT request to an HTTPS upstream fetch (MITM-free), enabling
 	// caching and P2P sharing of HTTPS-only repositories.
 	HTTPSUpstreamHosts []string
+
+	// MetadataServeStale lets the proxy serve a cached metadata copy when the
+	// mirror is unreachable (or connectivity is offline) instead of failing the
+	// request, so apt-get update keeps working offline. APT still verifies the
+	// signature and Valid-Until of whatever is served.
+	MetadataServeStale bool
 }
 
 // DefaultConfig returns default configuration
@@ -231,6 +242,7 @@ func NewServer(
 		retryDone:          make(chan struct{}),
 		allowedHosts:       cfg.AllowedHosts,
 		httpsUpstreamHosts: cfg.HTTPSUpstreamHosts,
+		metadataServeStale: cfg.MetadataServeStale,
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -460,41 +472,43 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := struct {
-		RequestsTotal      int64             `json:"requests_total"`
-		RequestsP2P        int64             `json:"requests_p2p"`
-		RequestsMirror     int64             `json:"requests_mirror"`
-		BytesFromP2P       int64             `json:"bytes_from_p2p"`
-		BytesFromMirror    int64             `json:"bytes_from_mirror"`
-		CacheHits          int64             `json:"cache_hits"`
-		ActiveConnections  int64             `json:"active_connections"`
-		P2PRatioPercent    float64           `json:"p2p_ratio_percent"`
-		CacheSizeBytes     int64             `json:"cache_size_bytes"`
-		CacheCount         int               `json:"cache_count"`
-		PackagesUncached   int64             `json:"packages_served_uncached"`
-		MetadataCacheHits  int64             `json:"metadata_cache_hits"`
-		MetadataCacheMiss  int64             `json:"metadata_cache_misses"`
-		MetadataBytesSaved int64             `json:"metadata_cache_bytes_saved"`
-		MetadataCacheSize  int64             `json:"metadata_cache_size_bytes"`
-		Scheduler          *scheduler.Status `json:"scheduler,omitempty"`
-		Fleet              *fleet.Status     `json:"fleet,omitempty"`
+		RequestsTotal       int64             `json:"requests_total"`
+		RequestsP2P         int64             `json:"requests_p2p"`
+		RequestsMirror      int64             `json:"requests_mirror"`
+		BytesFromP2P        int64             `json:"bytes_from_p2p"`
+		BytesFromMirror     int64             `json:"bytes_from_mirror"`
+		CacheHits           int64             `json:"cache_hits"`
+		ActiveConnections   int64             `json:"active_connections"`
+		P2PRatioPercent     float64           `json:"p2p_ratio_percent"`
+		CacheSizeBytes      int64             `json:"cache_size_bytes"`
+		CacheCount          int               `json:"cache_count"`
+		PackagesUncached    int64             `json:"packages_served_uncached"`
+		MetadataCacheHits   int64             `json:"metadata_cache_hits"`
+		MetadataCacheMiss   int64             `json:"metadata_cache_misses"`
+		MetadataBytesSaved  int64             `json:"metadata_cache_bytes_saved"`
+		MetadataCacheSize   int64             `json:"metadata_cache_size_bytes"`
+		MetadataStaleServed int64             `json:"metadata_cache_stale_served"`
+		Scheduler           *scheduler.Status `json:"scheduler,omitempty"`
+		Fleet               *fleet.Status     `json:"fleet,omitempty"`
 	}{
-		RequestsTotal:      stats.RequestsTotal,
-		RequestsP2P:        stats.RequestsP2P,
-		RequestsMirror:     stats.RequestsMirror,
-		BytesFromP2P:       stats.BytesFromP2P,
-		BytesFromMirror:    stats.BytesFromMirror,
-		CacheHits:          stats.CacheHits,
-		ActiveConnections:  stats.ActiveConnections,
-		P2PRatioPercent:    p2pRatio,
-		CacheSizeBytes:     s.cache.Size(),
-		CacheCount:         s.cache.Count(),
-		PackagesUncached:   s.metrics.PackagesServedUncached.Value(),
-		MetadataCacheHits:  stats.MetadataHits,
-		MetadataCacheMiss:  stats.MetadataMisses,
-		MetadataBytesSaved: stats.MetadataBytesSaved,
-		MetadataCacheSize:  s.cache.MetadataSize(),
-		Scheduler:          schedStatus,
-		Fleet:              fleetStatus,
+		RequestsTotal:       stats.RequestsTotal,
+		RequestsP2P:         stats.RequestsP2P,
+		RequestsMirror:      stats.RequestsMirror,
+		BytesFromP2P:        stats.BytesFromP2P,
+		BytesFromMirror:     stats.BytesFromMirror,
+		CacheHits:           stats.CacheHits,
+		ActiveConnections:   stats.ActiveConnections,
+		P2PRatioPercent:     p2pRatio,
+		CacheSizeBytes:      s.cache.Size(),
+		CacheCount:          s.cache.Count(),
+		PackagesUncached:    s.metrics.PackagesServedUncached.Value(),
+		MetadataCacheHits:   stats.MetadataHits,
+		MetadataCacheMiss:   stats.MetadataMisses,
+		MetadataBytesSaved:  stats.MetadataBytesSaved,
+		MetadataCacheSize:   s.cache.MetadataSize(),
+		MetadataStaleServed: s.metrics.MetadataCacheStaleServed.Value(),
+		Scheduler:           schedStatus,
+		Fleet:               fleetStatus,
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -1695,14 +1709,26 @@ func (s *Server) serveMetadata(w http.ResponseWriter, r *http.Request, url strin
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
 	caching := s.cache != nil && s.cache.MetadataEnabled()
+	staleOK := caching && s.metadataServeStale
 
 	// Immutable by-hash URLs never change; if cached, serve with no upstream call.
 	if caching && cache.IsImmutableMetadataURL(url) {
 		if entry, rc, err := s.cache.GetMetadata(url); err == nil {
 			log.Debug("Serving immutable metadata from cache", zap.String("url", sanitize.URL(url)))
-			s.serveCachedMetadata(w, r, url, isIndex, entry, rc)
+			s.serveCachedMetadata(w, r, url, isIndex, entry, rc, false)
 			return
 		}
+	}
+
+	// Offline fast-path: when connectivity is known-offline, skip the doomed
+	// upstream request and serve the cached copy (stale) directly.
+	if staleOK && s.connectivity != nil && s.connectivity.GetMode() == connectivity.ModeOffline {
+		if entry, rc, err := s.cache.GetMetadata(url); err == nil {
+			s.serveCachedMetadata(w, r, url, isIndex, entry, rc, true)
+			return
+		}
+		// Offline with nothing cached: fall through — the upstream attempt fails
+		// and returns 502 (there is nothing to serve).
 	}
 
 	// Choose the validators for the upstream conditional GET: ours when we hold a
@@ -1723,6 +1749,15 @@ func (s *Server) serveMetadata(w http.ResponseWriter, r *http.Request, url strin
 
 	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url), ims, inm)
 	if err != nil {
+		// Upstream unreachable: serve a stale cached copy if we have one so
+		// apt-get update keeps working offline. APT still verifies the signature
+		// and Valid-Until of whatever we serve.
+		if staleOK {
+			if entry, rc, gerr := s.cache.GetMetadata(url); gerr == nil {
+				s.serveCachedMetadata(w, r, url, isIndex, entry, rc, true)
+				return
+			}
+		}
 		logFetchFailure(ctx, log, "Failed to fetch metadata", err)
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)
 		return
@@ -1733,7 +1768,7 @@ func (s *Server) serveMetadata(w http.ResponseWriter, r *http.Request, url strin
 			// Our cached copy is current: refresh its validators and serve it.
 			s.cache.RevalidateMetadata(url, cond.ETag, cond.LastModified)
 			if entry, rc, gerr := s.cache.GetMetadata(url); gerr == nil {
-				s.serveCachedMetadata(w, r, url, isIndex, entry, rc)
+				s.serveCachedMetadata(w, r, url, isIndex, entry, rc, false)
 				return
 			}
 			// The cached file vanished between the validator read and now (rare):
@@ -1854,8 +1889,10 @@ func (s *Server) storeMetadata(url string, data []byte, etag, lastModified, cont
 // serveCachedMetadata serves a metadata body from the cache. It answers with a
 // 304 when the client's own validators show it already holds this exact copy,
 // and (for index files) warms the in-memory index from the cached bytes if a
-// restart left it cold. It takes ownership of rc.
-func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url string, isIndex bool, entry *cache.MetadataEntry, rc io.ReadCloser) {
+// restart left it cold. When stale is true the copy is served without an
+// upstream revalidation (mirror unreachable / offline); it is flagged with an
+// X-Debswarm-Stale header and counted separately. It takes ownership of rc.
+func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url string, isIndex bool, entry *cache.MetadataEntry, rc io.ReadCloser, stale bool) {
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 	defer func() { _ = rc.Close() }()
@@ -1865,6 +1902,14 @@ func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url
 	if s.metrics != nil {
 		s.metrics.MetadataCacheHits.Inc()
 		s.metrics.MetadataCacheBytesSaved.Add(entry.Size)
+	}
+	if stale {
+		// Set the marker header before any WriteHeader below.
+		w.Header().Set("X-Debswarm-Stale", "true")
+		if s.metrics != nil {
+			s.metrics.MetadataCacheStaleServed.Inc()
+		}
+		s.noteStaleServe(log, url)
 	}
 
 	warmIndex := isIndex && isPackagesIndexURL(url) && !s.index.HasIndexFile(url)
@@ -1973,6 +2018,25 @@ func isPackagesIndexURL(url string) bool {
 		return true
 	}
 	return false
+}
+
+// noteStaleServe logs, at most once per repository host, that debswarm is serving
+// stale cached metadata because the mirror is unreachable. The
+// metadata_cache_stale_served_total metric carries the full per-file count;
+// repeat serves for an already-logged host are logged at DEBUG.
+func (s *Server) noteStaleServe(log *zap.Logger, rawURL string) {
+	host := rawURL
+	if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	if _, seen := s.staleHostsSeen.LoadOrStore(host, struct{}{}); seen {
+		log.Debug("Serving stale metadata (mirror unreachable)", zap.String("host", host))
+		return
+	}
+	log.Warn("Mirror unreachable: serving stale cached metadata so apt can continue "+
+		"from the last-known-good copy (apt still verifies signatures and Valid-Until). "+
+		"This host will not log again until restart.",
+		zap.String("host", host))
 }
 
 // streamUncachedPackage serves a package that has no signed index entry by
