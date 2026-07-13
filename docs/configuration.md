@@ -347,7 +347,7 @@ anchors the hash debswarm checks to GPG rather than to the mirror's word.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `verify_upstream_signatures` | string | `"warn"` | `"off"`, `"warn"`, `"auto"`, or `"enforce"` (see below). |
+| `verify_upstream_signatures` | string | `"auto"` | `"off"`, `"warn"`, `"auto"`, or `"enforce"` (see below). |
 | `keyring_path` | string | `""` | Optional file/dir of extra trusted public keys (binary `.gpg` or armored `.asc`), added to the auto-discovered APT keyrings. |
 | `verify_exempt_hosts` | string[] | `[]` | Hosts served even when unverifiable; applies only in the refusing modes (`auto`, `enforce`). |
 
@@ -361,19 +361,22 @@ P2P peers (whose only anchor is otherwise "the mirror said so").
 
 | Mode | Behavior |
 |------|----------|
-| `off` | No verification. Unchanged behavior. |
-| `warn` (default) | Verify and report — on failure, increment `debswarm_upstream_verify_total`, log, and set an `X-Debswarm-Unverified: <reason>` response header — but **always serve**. Identical to `off` from APT's point of view (nothing is refused); it only adds visibility. |
-| `auto` | Refuse an index **only when verification was possible and failed** — a signature-verified `Release` exists for the repo but the index does not match it (`hash-mismatch` or `not-listed`) — and behave like `warn` (serve + flag) when verification could not be attempted at all (`no-key`, `no-dist`, `no-release`). This gives real protection for every repository whose signing key is discoverable, without breaking one that cannot be verified. A safe middle ground between `warn` and `enforce`. |
+| `off` | No verification. Pre-1.34 behavior. |
+| `warn` | Verify and report — on failure, increment `debswarm_upstream_verify_total`, log, and set an `X-Debswarm-Unverified: <reason>` response header — but **always serve**. Identical to `off` from APT's point of view (nothing is refused); it only adds visibility. |
+| `auto` (default) | Refuse an index **only when verification was possible and failed** — a signature-verified `Release` exists for the repo but the index does not match it (`hash-mismatch` or `not-listed`) — and behave like `warn` (serve + flag) when verification could not be attempted at all (`no-key`, `no-dist`, `no-release`). This gives real protection for every repository whose signing key is discoverable, without breaking one that cannot be verified. A safe middle ground between `warn` and `enforce`, and the default. |
 | `enforce` | Refuse to parse/serve an index whenever it is not verified, **including** when verification could not be attempted (fresh fetch → `502`; a cached index is simply not loaded into the in-memory index). Fully fail-closed. |
 
 APT's end-to-end GPG verification is unaffected in every mode; this is defense
 for the bypass cases above, not a replacement for it.
 
-**Choosing a mode:** `warn` observes only (the guarantee stays APT's client-side
-check). `auto` is the strongest setting that never breaks a repo debswarm cannot
-verify — recommended when you want protection to apply by default. `enforce` is
-strictest: it also refuses repos it *cannot* verify (a flat repo, or one whose key
-is absent), so it typically needs `verify_exempt_hosts` and/or `keyring_path`.
+**Choosing a mode:** `auto` (the default) is the strongest setting that never
+breaks a repo debswarm cannot verify — it protects every repository whose signing
+key is discoverable and degrades to serve-and-flag for the rest, so it is safe to
+leave on. Downgrade to `warn` to observe only (the guarantee stays APT's
+client-side check), or `off` to disable verification entirely. Step up to `enforce`
+for the strictest posture: it also refuses repos it *cannot* verify (a flat repo,
+or one whose key is absent), so it typically needs `verify_exempt_hosts` and/or
+`keyring_path`.
 
 **Keys:** trusted keys are auto-discovered from the host's APT keyrings
 (`/etc/apt/trusted.gpg{,.d}`, `/usr/share/keyrings`, `/etc/apt/keyrings`), so on a

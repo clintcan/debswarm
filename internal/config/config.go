@@ -326,7 +326,7 @@ const (
 	VerifyOff = "off"
 	// VerifyWarn verifies but still serves on failure, emitting a metric, a log,
 	// and an X-Debswarm-Unverified response header. Behaviorally identical to
-	// "off" from APT's perspective (nothing is refused). Default.
+	// "off" from APT's perspective (nothing is refused).
 	VerifyWarn = "warn"
 	// VerifyAuto refuses an index only when verification was possible and it
 	// failed — a signature-verified Release exists for the repository but the
@@ -334,7 +334,8 @@ const (
 	// (serve + report) when verification could not be attempted at all (no
 	// trusted key for the repo, a flat/no-dists repo, or no cached signed
 	// Release). This gives real protection for every repository whose signing key
-	// is discoverable without breaking repositories that cannot be verified.
+	// is discoverable without breaking repositories that cannot be verified, which
+	// is why it is the default.
 	VerifyAuto = "auto"
 	// VerifyEnforce refuses to parse/serve an index whose Release fails signature
 	// or hash verification, including when verification could not be attempted
@@ -348,7 +349,7 @@ const (
 // SHA256 it trusts. See docs/design/upstream-gpg-verification.md.
 type SecurityConfig struct {
 	// VerifyUpstreamSignatures is one of "off", "warn", "auto", or "enforce".
-	// Defaults to "warn" when unset. See the Verify* constants for semantics.
+	// Defaults to "auto" when unset. See the Verify* constants for semantics.
 	VerifyUpstreamSignatures string `toml:"verify_upstream_signatures"`
 
 	// KeyringPath is an optional file or directory of additional trusted public
@@ -365,18 +366,20 @@ type SecurityConfig struct {
 	VerifyExemptHosts []string `toml:"verify_exempt_hosts"`
 }
 
-// GetVerifyMode returns the normalized verification mode, defaulting to "warn"
-// (and for any unrecognized value, which Validate rejects separately).
+// GetVerifyMode returns the normalized verification mode, defaulting to "auto"
+// when unset (and for any unrecognized value, which Validate rejects separately).
 func (c *SecurityConfig) GetVerifyMode() string {
 	switch strings.ToLower(strings.TrimSpace(c.VerifyUpstreamSignatures)) {
 	case VerifyOff:
 		return VerifyOff
-	case VerifyAuto:
-		return VerifyAuto
+	case VerifyWarn:
+		return VerifyWarn
 	case VerifyEnforce:
 		return VerifyEnforce
+	case VerifyAuto:
+		return VerifyAuto
 	default:
-		return VerifyWarn
+		return VerifyAuto
 	}
 }
 
@@ -849,10 +852,12 @@ func DefaultConfig() *Config {
 			File:  "",
 		},
 		Security: SecurityConfig{
-			// Default "warn": verify upstream signatures and report failures, but
-			// serve unchanged (identical to old behavior from APT's view). Operators
-			// set "enforce" for fail-closed protection, or "off" to disable entirely.
-			VerifyUpstreamSignatures: VerifyWarn,
+			// Default "auto": refuse an index only when a signature-verified Release
+			// proves it was tampered with, and otherwise serve-and-report (like warn)
+			// when verification cannot be attempted — real protection without breaking
+			// unverifiable repos. Operators set "enforce" for strict fail-closed
+			// protection, "warn" to only observe, or "off" to disable entirely.
+			VerifyUpstreamSignatures: VerifyAuto,
 		},
 	}
 }

@@ -447,7 +447,7 @@ func TestNetworkConfig_ParsedAllowedCIDRs(t *testing.T) {
 
 func TestSecurityConfig_GetVerifyMode(t *testing.T) {
 	cases := map[string]string{
-		"":        VerifyWarn, // unset defaults to warn
+		"":        VerifyAuto, // unset defaults to auto
 		"warn":    VerifyWarn,
 		"WARN":    VerifyWarn,
 		"  warn ": VerifyWarn,
@@ -457,7 +457,7 @@ func TestSecurityConfig_GetVerifyMode(t *testing.T) {
 		"AUTO":    VerifyAuto,
 		"enforce": VerifyEnforce,
 		"ENFORCE": VerifyEnforce,
-		"bogus":   VerifyWarn, // unrecognized defaults to warn (Validate rejects it separately)
+		"bogus":   VerifyAuto, // unrecognized defaults to auto (Validate rejects it separately)
 	}
 	for in, want := range cases {
 		sc := &SecurityConfig{VerifyUpstreamSignatures: in}
@@ -467,12 +467,12 @@ func TestSecurityConfig_GetVerifyMode(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_VerifyModeWarn(t *testing.T) {
-	if got := DefaultConfig().Security.GetVerifyMode(); got != VerifyWarn {
-		t.Fatalf("default verify mode = %q, want warn", got)
+func TestDefaultConfig_VerifyModeAuto(t *testing.T) {
+	if got := DefaultConfig().Security.GetVerifyMode(); got != VerifyAuto {
+		t.Fatalf("default verify mode = %q, want auto", got)
 	}
 	if !DefaultConfig().Security.VerificationEnabled() {
-		t.Fatal("verification should be enabled by default (warn)")
+		t.Fatal("verification should be enabled by default (auto)")
 	}
 }
 

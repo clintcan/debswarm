@@ -111,10 +111,11 @@ QUIC's UDP-based transport in debswarm provides significantly better NAT travers
 
 #### Security Model
 
-Both solutions share the same fundamental security model — and in both, the real
-guarantee by default is APT's own client-side GPG verification, not the proxy's:
+Both solutions share the same fundamental security model — APT's own client-side
+GPG verification is always the end-to-end guarantee — but debswarm adds its own
+daemon-side check on top:
 
-1. **APT verifies repository signatures** - the GPG signature on the `Release` file is checked by `apt`, client-side; apt-p2p never verifies it, and debswarm does so only when daemon-side verification is enabled (v1.34+, `[security] verify_upstream_signatures = "enforce"`; the default `warn` observes but does not block)
+1. **APT verifies repository signatures** - the GPG signature on the `Release` file is checked by `apt`, client-side. apt-p2p never verifies it itself; debswarm additionally does, by default (v1.34+, `[security] verify_upstream_signatures`, default `auto`): it refuses an index a signature-verified `Release` proves was tampered with for any repo whose signing key it can discover, and falls back to observe-and-report for repos it cannot verify. `enforce` refuses every unverified index; `warn`/`off` reduce this to reporting-only / nothing
 2. **Proxy hash check** - each download is matched against the SHA256 in the Packages index the proxy fetched (swarm integrity, not upstream-MITM protection)
 3. **Peers are untrusted** - a peer's bytes must match that hash or they're rejected and the peer blacklisted
 

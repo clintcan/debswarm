@@ -1,9 +1,22 @@
 # Design: daemon-side upstream GPG verification
 
-**Status:** Proposed
+**Status:** Implemented
 **Author:** debswarm maintainers
 **Date:** 2026-07-13
 **Backlog item:** Robustness/security #1 — "Trust model: docs corrected; daemon-side hardening remains"
+
+> **Update (2026-07-14, post-implementation):** a fourth mode, **`auto`**, was
+> added after this design and is now the **default** (this doc's "Decision"
+> section below argued for `warn` as the default for strict back-compat; `auto`
+> supersedes that). `auto` refuses an index **only when verification was possible
+> and it failed** — a signature-verified `Release` exists for the repository but
+> the index does not match it (a new `not-listed` reason, split out from
+> `no-release`, plus `hash-mismatch`) — and otherwise behaves exactly like `warn`
+> (serve + flag) when verification cannot be attempted (`no-key`, `no-dist`,
+> `no-release`). It is safe as a default because it degrades to `warn` behavior
+> whenever verification is impossible and, like `warn`, never fails daemon startup
+> on a missing keyring or metadata cache — only `enforce` does. The mode order is
+> now `off | warn | auto | enforce`. See `docs/configuration.md` → `[security]`.
 
 ## Context
 
