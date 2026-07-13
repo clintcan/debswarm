@@ -1,0 +1,20 @@
+#!/bin/bash
+# Tells APT whether to route through the local debswarm proxy.
+#
+# APT runs this via Acquire::http::Proxy-Auto-Detect (see
+# /etc/apt/apt.conf.d/90debswarm.conf) and expects ONE line on stdout:
+# the proxy URL, or the word DIRECT to connect without a proxy.
+#
+# The probe is a TCP connect with a 1s cap — the same liveness pattern
+# apt-cacher-ng and squid-deb-proxy use. If the debswarm daemon is stopped,
+# crashed, mid-upgrade, or removed without purging this file, APT falls back
+# to talking to mirrors directly instead of failing every operation against a
+# dead proxy.
+#
+# If you change [network] proxy_port in /etc/debswarm/config.toml, update the
+# port here and in 90debswarm.conf's comments accordingly.
+if timeout 1 bash -c 'exec 3<>/dev/tcp/127.0.0.1/9977 && exec 3>&-' 2>/dev/null; then
+    echo "http://127.0.0.1:9977"
+else
+    echo "DIRECT"
+fi
