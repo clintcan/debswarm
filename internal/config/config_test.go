@@ -472,6 +472,35 @@ func TestCacheConfig_MaxSizeBytes(t *testing.T) {
 	}
 }
 
+func TestCacheConfig_MetadataMaxSizeBytes(t *testing.T) {
+	yes, no := true, false
+	tests := []struct {
+		name     string
+		cfg      CacheConfig
+		expected int64
+	}{
+		{"default (nil) enabled, 1GB default", CacheConfig{}, 1024 * 1024 * 1024},
+		{"explicit enabled with size", CacheConfig{CacheMetadata: &yes, MetadataMaxSize: "256MB"}, 256 * 1024 * 1024},
+		{"enabled, empty size falls back to 1GB", CacheConfig{CacheMetadata: &yes}, 1024 * 1024 * 1024},
+		{"enabled, invalid size falls back to 1GB", CacheConfig{CacheMetadata: &yes, MetadataMaxSize: "nope"}, 1024 * 1024 * 1024},
+		{"disabled returns 0 regardless of size", CacheConfig{CacheMetadata: &no, MetadataMaxSize: "256MB"}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.MetadataMaxSizeBytes(); got != tt.expected {
+				t.Errorf("MetadataMaxSizeBytes() = %d, want %d", got, tt.expected)
+			}
+		})
+	}
+
+	if !(&CacheConfig{}).MetadataCachingEnabled() {
+		t.Error("metadata caching should default to enabled")
+	}
+	if (&CacheConfig{CacheMetadata: &no}).MetadataCachingEnabled() {
+		t.Error("metadata caching should be disabled when set false")
+	}
+}
+
 func TestCacheConfig_MinFreeSpaceBytes(t *testing.T) {
 	tests := []struct {
 		name         string

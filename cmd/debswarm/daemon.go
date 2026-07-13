@@ -204,6 +204,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		zap.Int("currentCount", pkgCache.Count()),
 		zap.Int64("currentSize", pkgCache.Size()))
 
+	// Enable repository-metadata caching (Release/Packages/Translation/…) so a
+	// cold client revalidates against the local cache instead of re-fetching all
+	// metadata from the WAN each apt-get update.
+	metadataMaxSize := cfg.Cache.MetadataMaxSizeBytes()
+	pkgCache.SetMetadataMaxSize(metadataMaxSize)
+	if metadataMaxSize > 0 {
+		logger.Info("Repository metadata caching enabled",
+			zap.Int64("metadataMaxSize", metadataMaxSize),
+			zap.Int64("currentMetadataSize", pkgCache.MetadataSize()))
+	} else {
+		logger.Info("Repository metadata caching disabled")
+	}
+
 	// Update cache metrics
 	m.CacheSize.Set(float64(pkgCache.Size()))
 	m.CacheCount.Set(float64(pkgCache.Count()))
@@ -565,6 +578,7 @@ func runPeriodicTasks(
 			// Update metrics
 			m.CacheSize.Set(float64(pkgCache.Size()))
 			m.CacheCount.Set(float64(pkgCache.Count()))
+			m.MetadataCacheSize.Set(float64(pkgCache.MetadataSize()))
 			m.ConnectedPeers.Set(float64(p2pNode.ConnectedPeers()))
 			m.RoutingTableSize.Set(float64(p2pNode.RoutingTableSize()))
 

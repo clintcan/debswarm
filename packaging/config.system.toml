@@ -48,6 +48,11 @@ trust_known_repos = true
 path = "/var/cache/debswarm"
 max_size = "10GB"
 min_free_space = "1GB"
+# Cache repository metadata (Release/Packages/Translation/Contents/DEP-11) so a
+# cold client revalidates against the local cache instead of re-fetching it from
+# the WAN. Always revalidated, so never stale; APT's signature check is unchanged.
+cache_metadata = true
+metadata_max_size = "1GB"
 
 [transfer]
 max_upload_rate = "0"

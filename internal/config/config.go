@@ -224,6 +224,15 @@ type CacheConfig struct {
 	MaxSize      string `toml:"max_size"`
 	Path         string `toml:"path"`
 	MinFreeSpace string `toml:"min_free_space"`
+	// CacheMetadata enables caching of repository metadata (Release/InRelease,
+	// Packages/Sources, Translation, Contents, DEP-11) in addition to .deb
+	// packages, so a cold client (e.g. a fresh CI container) fetches it from the
+	// local cache after a cheap revalidation instead of re-downloading from the
+	// WAN. Default: true.
+	CacheMetadata *bool `toml:"cache_metadata"`
+	// MetadataMaxSize is the disk budget for the metadata cache, kept separate
+	// from MaxSize so metadata and packages never evict each other. Default: 1GB.
+	MetadataMaxSize string `toml:"metadata_max_size"`
 }
 
 // IndexConfig holds package index settings
@@ -480,6 +489,28 @@ func (c *CacheConfig) MinFreeSpaceBytes() int64 {
 	size, err := ParseSize(c.MinFreeSpace)
 	if err != nil {
 		return 0 // no minimum requirement
+	}
+	return size
+}
+
+// MetadataCachingEnabled reports whether repository-metadata caching is on.
+// Default: true.
+func (c *CacheConfig) MetadataCachingEnabled() bool {
+	if c.CacheMetadata == nil {
+		return true
+	}
+	return *c.CacheMetadata
+}
+
+// MetadataMaxSizeBytes returns the metadata cache disk budget in bytes, or 0
+// when metadata caching is disabled. Defaults to 1GB.
+func (c *CacheConfig) MetadataMaxSizeBytes() int64 {
+	if !c.MetadataCachingEnabled() {
+		return 0
+	}
+	size, err := ParseSize(c.MetadataMaxSize)
+	if err != nil || size == 0 {
+		return 1 * 1024 * 1024 * 1024 // 1GB default
 	}
 	return size
 }
