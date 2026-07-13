@@ -40,6 +40,9 @@ debian/*.log
 *.tar.gz
 dist/
 
+# E2E test binary (built into test/e2e/ as the Docker build context)
+test/e2e/debswarm
+
 # Private notes (not for public repo)
 notes/
 # Windows redirect artifact

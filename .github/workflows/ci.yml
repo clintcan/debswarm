@@ -98,6 +98,35 @@ jobs:
           path: gosec-results.json
         if: always()
 
+  e2e:
+    # Drive a REAL apt client through the proxy against a real Debian repo, in a
+    # debian:bookworm-slim container. Covers what unit/integration tests can't:
+    # APT's default HTTP pipelining over a large index (the ReadTimeout hang
+    # class), the metadata cache, and daemon-side signature verification. See
+    # test/e2e/.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build linux binary into the e2e build context
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -ldflags="-s -w" -o test/e2e/debswarm ./cmd/debswarm
+
+      - name: Build the e2e image
+        run: docker build -t debswarm-e2e test/e2e
+
+      - name: Run APT-through-proxy e2e
+        run: docker run --rm debswarm-e2e
+
   build-matrix:
     runs-on: ubuntu-latest
     strategy:
