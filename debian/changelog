@@ -1,3 +1,27 @@
+debswarm (1.34.0-1) stable; urgency=low
+
+  * Repository metadata caching: index files (Release/Packages/Translation/
+    Contents/DEP-11) are cached, not just .deb packages, so a cold client
+    revalidates against the local cache instead of re-fetching tens of MB per
+    apt-get update; immutable by-hash files skip the upstream round-trip
+    ([cache] cache_metadata / metadata_max_size)
+  * apt-get update keeps working when the mirror is unreachable: the last
+    cached metadata is served (marked X-Debswarm-Stale) instead of failing the
+    update; APT still verifies the GPG signature and Valid-Until
+    ([cache] serve_stale_metadata)
+  * LAN server mode: the proxy can bind a LAN interface so a fleet shares one
+    cache; fail-closed — a non-loopback bind requires a client CIDR allowlist
+    or the daemon refuses to start ([network] proxy_bind / proxy_allowed_cidrs)
+  * apt-get install of a cached package works offline on a cache-server: the
+    in-memory index re-warms from cached metadata on first miss, and a genuine
+    miss while offline fails fast with 503 instead of a doomed upstream chain
+  * Daemon-side upstream GPG verification (optional): verify the signed Release
+    and each Packages index against a keyring auto-discovered from APT's
+    keyrings; warn (default) reports failures but serves, enforce refuses
+    ([security] verify_upstream_signatures)
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 14 Jul 2026 00:00:00 +0000
+
 debswarm (1.33.0-1) stable; urgency=low
 
   * APT keeps working when the daemon is down: the apt drop-in applies the
