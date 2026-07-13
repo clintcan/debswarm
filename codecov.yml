@@ -1,0 +1,13 @@
+# Coverage is tracked and reported, not gated: CI uploads with
+# fail_ci_if_error disabled, and without this file Codecov's default patch
+# status hard-fails any PR whose diff coverage is below the project average —
+# a red X on otherwise-green PRs that nothing and nobody acts on. Keep the
+# report, make the status informational.
+coverage:
+  status:
+    patch:
+      default:
+        informational: true
+    project:
+      default:
+        informational: true
