@@ -5,7 +5,7 @@
 
 **Peer-to-peer package distribution for Debian/Ubuntu**
 
-debswarm accelerates APT package downloads by fetching packages from nearby peers while maintaining security through cryptographic verification. It operates as a transparent HTTP proxy, requiring no changes to your normal `apt` workflow.
+debswarm accelerates APT package downloads by fetching packages from nearby peers, without changing how `apt` verifies them. It operates as a transparent HTTP proxy, requiring no changes to your normal `apt` workflow.
 
 ## Features
 
@@ -14,7 +14,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **P2P Package Sharing** - Download from and upload to other debswarm users
 - **Multi-Repository Support** - Works with Debian, Ubuntu, and third-party repositories simultaneously
 - **HTTPS Repository Support** - CONNECT tunneling for HTTPS sources (v1.20+), plus upstream HTTPS fetch (v1.30+) so HTTPS-only repos are cached, verified, and P2P-shared
-- **Hash Verification** - All packages verified against signed repository metadata
+- **Hash Verification** - P2P downloads are checked against the SHA256 in the repository index, so a peer can't poison the swarm (`apt`'s own signature verification is preserved end-to-end)
 - **Fleet Coordination** - LAN download deduplication: only one node fetches from WAN, others get it via P2P
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
@@ -95,7 +95,7 @@ echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
 2. If fleet coordination is enabled, consult LAN peers to avoid redundant WAN downloads
 3. debswarm looks up the package hash in the Kademlia DHT
 4. If peers have it, download using parallel chunks from multiple peers
-5. Verify SHA256 hash against signed repository metadata
+5. Verify the bytes against the SHA256 from the repository index (`apt` still verifies signatures end-to-end)
 6. On failure, fall back to official mirror
 7. Cache the package and announce to DHT for other peers
 
@@ -454,13 +454,17 @@ peer_blocklist = [
 
 ## Security Model
 
-debswarm maintains APT's security guarantees:
+**Your protection against a tampered mirror comes from `apt`, not debswarm.** debswarm does not verify GPG signatures; it passes fetched bytes through unmodified, and `apt` performs its normal client-side verification — the GPG signature on the `Release` file, then the hash chain down to each `.deb` — exactly as it would without a proxy. That end-to-end guarantee is preserved.
 
-1. **Release files** - Always fetched from mirrors (GPG-signed by Debian/Ubuntu)
-2. **Package hashes** - Extracted from signed Packages index
-3. **P2P downloads** - Verified against expected SHA256 before use
-4. **Hash mismatch** - Peer blacklisted, retry with different peer or mirror
-5. **No trust required** - Peers cannot serve malicious packages that pass verification
+What debswarm's own SHA256 check adds is **swarm integrity**:
+
+1. **Package hashes** - Extracted from the `Packages` index debswarm fetched from the mirror
+2. **P2P downloads** - Every peer's bytes must match that SHA256 before use, so a malicious peer cannot poison the cache
+3. **Hash mismatch** - Peer blacklisted; retry with a different peer or mirror
+
+This is deliberately *not* independent upstream protection: the index and the package bytes come over the same (usually plain-HTTP) upstream leg, so debswarm's check alone does not detect a mirror that tampers with both — `apt`'s signature check is what catches that.
+
+> **Caveat:** anything that bypasses `apt`'s signature verification — `[trusted=yes]` sources, `Acquire::AllowInsecureRepositories`, or `dpkg -i` on a file pulled from the cache — gets no cryptographic guarantee from debswarm. Treat the SHA256 check as swarm integrity, not a substitute for signature verification.
 
 ## systemd Service
 

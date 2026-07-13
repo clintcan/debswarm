@@ -286,7 +286,7 @@ The `"DIRECT"` keyword tells APT to connect directly without using the proxy.
 debswarm restricts the proxy to known mirrors to prevent:
 - SSRF (Server-Side Request Forgery) attacks
 - Accidental exposure of internal services
-- Unverified packages entering the P2P network
+- Packages with no known index hash entering the P2P network
 
 Third-party repositories don't benefit from debswarm's P2P features anyway (packages aren't hash-indexed), so bypassing them has no functional downside.
 
@@ -337,7 +337,7 @@ You still get partial benefit when a repo's *index* is fetched over plain HTTP: 
 
 ##### Option B — upstream HTTPS fetch (v1.30+): full caching and P2P
 
-Point APT at the repo over **plain HTTP** and let debswarm open its own HTTPS connection to the mirror on your behalf. APT talks HTTP to your local proxy; debswarm talks HTTPS to the internet. Packages are cached, SHA256-verified against the signed index, and shared over P2P like any other repo.
+Point APT at the repo over **plain HTTP** and let debswarm open its own HTTPS connection to the mirror on your behalf. APT talks HTTP to your local proxy; debswarm talks HTTPS to the internet. Packages are cached, checked against the repository index SHA256, and shared over P2P like any other repo.
 
 This is **not** a MITM — no certificate is forged, and APT's GPG verification of the signed `Release`/`InRelease` is untouched and still authoritative.
 
@@ -362,7 +362,7 @@ See [Configuration: HTTPS-only repositories](configuration.md#https-only-reposit
 **Security notes (both options):**
 - CONNECT tunnels only allow ports 443 and 80
 - Only allowed mirrors are permitted; private/internal hosts (localhost, RFC1918 addresses) are blocked
-- Every cached package is verified against the SHA256 in the signed repository index
+- Every cached package is checked against the SHA256 in the repository index (APT's signature check is unchanged)
 
 **Pre-v1.20 behavior:**
 In older versions, HTTPS repositories bypass the proxy entirely. For P2P benefits with older versions, use HTTP mirrors or configure mixed sources.

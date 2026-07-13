@@ -21,31 +21,37 @@ narrower: concrete, verified gaps in what exists today.
   after DB-corruption recovery (was: 500s until manual rebuild), eviction and
   peer-blacklist metrics, systemd watchdog (`Type=notify` + `WatchdogSec`),
   lz4/zstd/bz2 index support, CI watchdog-recovery test.
+- v1.33.0 (2026-07-13): the reliability release — the apt-fallback drop-in (PR
+  #94) resolves the former product gap "APT breaks when the daemon is down": the
+  `.deb` now applies the proxy via `Proxy-Auto-Detect` with a liveness probe, so
+  a stopped/crashed/removed daemon degrades to `DIRECT` instead of failing every
+  `apt` operation (CI-tested each build).
+- Trust-model honesty pass: reworded the overstated "cryptographically
+  verified" / "signed index" / "a trusted host cannot serve a tampered package"
+  claims across README, SECURITY.md, the docs, config examples, and code
+  comments to state the real model — no daemon-side GPG check; APT's client-side
+  verification is the guarantee. Robustness/security #1 below is now
+  doc-complete; only the optional code hardening remains.
 
 ## Product gaps (ranked by user value)
 
-1. **APT breaks when the daemon is down.** The `.deb`'s apt drop-in hard-sets
-   `Acquire::http::Proxy` with no `Proxy-Auto-Detect` liveness script (the
-   apt-cacher-ng pattern: probe the daemon, fall back to `DIRECT`). A stopped,
-   crashed, or removed-but-not-purged daemon makes every `apt` operation fail.
-   Small packaging fix; the single most likely way a deployment gets hurt.
-2. **No LAN cache-server mode.** The proxy bind is hardcoded to `127.0.0.1`
+1. **No LAN cache-server mode.** The proxy bind is hardcoded to `127.0.0.1`
    (`cmd/debswarm/daemon.go`); only the metrics endpoint is configurable.
    Other machines/containers/CI runners cannot use a debswarm box as their
    APT cache, foreclosing the one-cache-per-office/lab/CI-fleet deployment
    and any Kubernetes DaemonSet story. Needs a bind option plus a hard think
    about the trust story for remote clients.
-3. **Repository metadata is never cached — only `.deb`s.** Packages files are
+2. **Repository metadata is never cached — only `.deb`s.** Packages files are
    parsed then discarded; Release/InRelease, Translation-*, Contents-*,
    DEP-11 are pure passthrough. Every host re-fetches all metadata from the
    WAN each update cycle (304 relay softens this only when upstream sends
    validators). Likely the biggest recurring-bandwidth delta vs apt-cacher-ng.
-4. **Offline / `lan_only` mode is documented but not wired.** The
+3. **Offline / `lan_only` mode is documented but not wired.** The
    connectivity monitor's mode is consumed exactly once — for display in
    `/health`. No download path consults it, the in-memory index is never
    persisted (`Index.cachePath` is unused), and `apt-get update` fails hard
    offline even with a full cache. `docs/comparison.md` overclaims here.
-5. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
+4. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
    transport and hole punching are enabled — no AutoRelay reservation logic,
    and no debswarm node ever runs the relay service, so DCUtR has no relayed
    connection to coordinate through. Two NAT'd peers can never connect.
@@ -53,31 +59,33 @@ narrower: concrete, verified gaps in what exists today.
    `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
    publicly reachable nodes) — and until then, `docs/comparison.md`
    ("Relay Fallback: Yes") should be corrected.
-6. **No apt repository or container image for debswarm itself.** Distribution
+5. **No apt repository or container image for debswarm itself.** Distribution
    is GitHub releases + `curl | bash`. No signed apt repo means no
    `unattended-upgrades` and no fleet-wide upgrade path — ironic for an APT
    tool. No Dockerfile/OCI image/Helm chart exists.
-7. **Source packages get zero benefit.** Sources indices are deliberately not
+6. **Source packages get zero benefit.** Sources indices are deliberately not
    parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
    Sources carrying SHA256s that would make verification identical to the
    `.deb` path. Build farms are a natural audience.
-8. **Smaller**: `rollback fetch` from P2P is a stub while the README
+7. **Smaller**: `rollback fetch` from P2P is a stub while the README
    advertises it; no mirror remapping/failover (per-mirror stats are
    collected but never used for selection); no per-repo cache stats or
    quotas; cache pinning is by SHA256 prefix only.
 
 ## Robustness / security
 
-1. **The trust model is overstated in docs.** The daemon performs no GPG
+1. **Trust model: docs corrected (this pass); daemon-side hardening remains.**
+   The overstated claims were reworded across README, SECURITY.md, the docs,
+   config examples, and code comments — so the model is now stated accurately.
+   What's left is the *optional code* work below. The daemon performs no GPG
    verification: the SHA256 it verifies against comes from a Packages index
    fetched over the same (usually `http://`) upstream leg as the package
    bytes, so the proxy's own check provides no MITM resistance upstream. The
    end-to-end guarantee is APT's client-side GPG verification — which holds —
    but `[trusted=yes]` repos, `Acquire::AllowInsecureRepositories`, or
    `dpkg -i` of proxy-fetched files inherit attacker-controlled bytes.
-   Options: verify Packages against the signed Release in the daemon
-   (openpgp), default more hosts to HTTPS upstream, and at minimum reword
-   "all packages cryptographically verified" claims.
+   Remaining options: verify Packages against the signed Release in the daemon
+   (openpgp), and default more hosts to HTTPS upstream. (The doc reword is done.)
 2. **Peer blacklisting is in-memory and Sybil-trivial.** A restart clears all
    blacklists; an offender reconnects under a fresh peer ID. Verification
    prevents poisoning, so this is a deterrence gap, not a correctness one.

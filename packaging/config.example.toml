@@ -65,7 +65,7 @@ bootstrap_peers = [
 #   packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org,
 #   pkgs.k8s.io (Kubernetes, flat layout)
 # Regardless of this setting, private/internal hosts are always blocked (SSRF
-# protection) and every package is verified against the signed index's SHA256.
+# protection) and every download is still checked against the repository index's SHA256.
 trust_known_repos = true
 
 # Additional repository hosts to allow, on top of the built-ins and (when enabled)

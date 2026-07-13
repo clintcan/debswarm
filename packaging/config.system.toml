@@ -29,7 +29,7 @@ bootstrap_peers = [
 # packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org,
 # pkgs.k8s.io), in addition to Debian, Ubuntu, and Linux Mint. Set to false for
 # a strict, mirrors-only posture. Private/internal hosts are always blocked
-# (SSRF protection) and every package is SHA256-verified against the signed
+# (SSRF protection) and every download is SHA256-checked against the repository
 # index regardless of this setting.
 trust_known_repos = true
 
@@ -97,7 +97,7 @@ file = ""
 # Fleet coordination — LAN peer-to-peer sharing.
 # On by default since v1.30: nodes on the same LAN share cached packages over
 # P2P and coordinate to avoid redundant WAN downloads of the same package.
-# Every shared package is still SHA256-verified against the signed index. Set
+# Every shared package is still SHA256-checked against the repository index. Set
 # enabled = false for an isolated node that should not share on the LAN.
 [fleet]
 enabled = true

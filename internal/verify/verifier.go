@@ -1,6 +1,8 @@
 // Package verify provides multi-source verification for downloaded packages.
-// It queries the DHT to find other providers of the same content hash,
-// providing confidence that the package hasn't been tampered with.
+// It queries the DHT to find other providers of the same content hash — a
+// best-effort signal (not a guarantee) about how widely a package is mirrored.
+// It never blocks a package; APT's client-side signature check remains the
+// actual tamper defense.
 package verify
 
 import (
