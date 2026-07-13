@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/debswarm/debswarm/internal/cache"
+	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
@@ -249,4 +250,142 @@ func TestMetadataCache_WarmsIndexAfterRestart(t *testing.T) {
 		t.Error("post-restart fetch was not conditional (no revalidation happened)")
 	}
 	_ = before
+}
+
+// TestMetadataCache_ServesStaleWhenUpstreamDown proves the offline win: once a
+// metadata file is cached, a later request served while the mirror is
+// unreachable still returns the cached body (flagged stale) instead of failing
+// apt-get update. APT itself still enforces the GPG signature and Valid-Until.
+func TestMetadataCache_ServesStaleWhenUpstreamDown(t *testing.T) {
+	payload := []byte("Origin: Debian\nSuite: stable\nValid-Until: Thu, 01 Jan 2099 00:00:00 UTC\n")
+	m := &countingMirror{body: payload, etag: `"rel1"`}
+	mockMirror := httptest.NewServer(m.handler())
+
+	server := newTestServerWithMirror(t)
+	defer shutdownServer(t, server)
+	server.cache.SetMetadataMaxSize(1 * 1024 * 1024)
+	server.metadataServeStale = true
+
+	url := mockMirror.URL + "/dists/stable/InRelease"
+
+	// Prime the cache while the mirror is up.
+	w1 := httptest.NewRecorder()
+	server.handlePassthrough(w1, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("prime: code=%d want 200", w1.Code)
+	}
+
+	// Mirror goes down.
+	mockMirror.Close()
+
+	w2 := httptest.NewRecorder()
+	server.handlePassthrough(w2, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("stale serve: code=%d want 200 (served from cache while mirror down)", w2.Code)
+	}
+	if !bytes.Equal(w2.Body.Bytes(), payload) {
+		t.Fatal("stale body differs from cached copy")
+	}
+	if got := w2.Header().Get("X-Debswarm-Stale"); got != "true" {
+		t.Errorf("X-Debswarm-Stale = %q, want \"true\" (headers: %v)", got, w2.Header())
+	}
+	if got := server.metrics.MetadataCacheStaleServed.Value(); got != 1 {
+		t.Errorf("MetadataCacheStaleServed = %d, want 1", got)
+	}
+}
+
+// TestMetadataCache_StaleGateOffReturnsError proves the safety valve: with stale
+// serving disabled, an unreachable mirror produces a hard 502 even when a cached
+// copy exists — the operator opted out of ever serving unrevalidated metadata.
+func TestMetadataCache_StaleGateOffReturnsError(t *testing.T) {
+	payload := []byte("Origin: Debian\n")
+	m := &countingMirror{body: payload, etag: `"r"`}
+	mockMirror := httptest.NewServer(m.handler())
+
+	server := newTestServerWithMirror(t)
+	defer shutdownServer(t, server)
+	server.cache.SetMetadataMaxSize(1 * 1024 * 1024)
+	server.metadataServeStale = false // gate off
+
+	url := mockMirror.URL + "/dists/stable/InRelease"
+
+	w1 := httptest.NewRecorder()
+	server.handlePassthrough(w1, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("prime: code=%d want 200", w1.Code)
+	}
+	mockMirror.Close()
+
+	w2 := httptest.NewRecorder()
+	server.handlePassthrough(w2, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w2.Code != http.StatusBadGateway {
+		t.Fatalf("gate off: code=%d want 502 (stale serving disabled)", w2.Code)
+	}
+	if got := server.metrics.MetadataCacheStaleServed.Value(); got != 0 {
+		t.Errorf("MetadataCacheStaleServed = %d, want 0 (nothing stale should have been served)", got)
+	}
+}
+
+// TestMetadataCache_UpstreamDownNoCacheReturnsError proves that stale serving is
+// not a way to conjure content: an unreachable mirror with nothing cached still
+// fails hard rather than inventing an empty 200.
+func TestMetadataCache_UpstreamDownNoCacheReturnsError(t *testing.T) {
+	m := &countingMirror{body: []byte("x"), etag: `"r"`}
+	mockMirror := httptest.NewServer(m.handler())
+	mockMirror.Close() // down before the cache is ever primed
+
+	server := newTestServerWithMirror(t)
+	defer shutdownServer(t, server)
+	server.cache.SetMetadataMaxSize(1 * 1024 * 1024)
+	server.metadataServeStale = true
+
+	url := mockMirror.URL + "/dists/stable/InRelease"
+
+	w := httptest.NewRecorder()
+	server.handlePassthrough(w, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("no cache + mirror down: code=%d want 502", w.Code)
+	}
+}
+
+// TestMetadataCache_OfflineFastPathSkipsUpstream proves the connectivity
+// fast-path: when the monitor reports offline, a cached metadata request is
+// served straight from cache without even attempting the doomed upstream call.
+func TestMetadataCache_OfflineFastPathSkipsUpstream(t *testing.T) {
+	payload := []byte("Origin: Debian\n")
+	m := &countingMirror{body: payload, etag: `"r"`}
+	mockMirror := httptest.NewServer(m.handler())
+	defer mockMirror.Close()
+
+	server := newTestServerWithMirror(t)
+	defer shutdownServer(t, server)
+	server.cache.SetMetadataMaxSize(1 * 1024 * 1024)
+	server.metadataServeStale = true
+
+	url := mockMirror.URL + "/dists/stable/InRelease"
+
+	// Prime while online (connectivity monitor unset == treated as reachable).
+	w1 := httptest.NewRecorder()
+	server.handlePassthrough(w1, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("prime: code=%d want 200", w1.Code)
+	}
+	primeReqs := atomic.LoadInt32(&m.requests)
+
+	// Flip to offline; the fast-path must serve from cache with no upstream call.
+	mon := connectivity.NewMonitor(nil, newTestLogger())
+	mon.ForceMode(connectivity.ModeOffline)
+	server.connectivity = mon
+
+	w2 := httptest.NewRecorder()
+	server.handlePassthrough(w2, httptest.NewRequest("GET", "/"+url, nil), url)
+	if w2.Code != http.StatusOK || !bytes.Equal(w2.Body.Bytes(), payload) {
+		t.Fatalf("offline serve: code=%d bodyLen=%d want 200/%d", w2.Code, w2.Body.Len(), len(payload))
+	}
+	if got := w2.Header().Get("X-Debswarm-Stale"); got != "true" {
+		t.Errorf("offline serve X-Debswarm-Stale = %q, want \"true\"", got)
+	}
+	if got := atomic.LoadInt32(&m.requests); got != primeReqs {
+		t.Errorf("offline fast-path contacted the mirror: requests %d -> %d", primeReqs, got)
+	}
 }

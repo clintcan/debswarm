@@ -16,7 +16,7 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 - **HTTPS Repository Support** - CONNECT tunneling for HTTPS sources (v1.20+), plus upstream HTTPS fetch (v1.30+) so HTTPS-only repos are cached, verified, and P2P-shared
 - **Hash Verification** - P2P downloads are checked against the SHA256 in the repository index, so a peer can't poison the swarm (`apt`'s own signature verification is preserved end-to-end)
 - **Fleet Coordination** - LAN download deduplication: only one node fetches from WAN, others get it via P2P
-- **Metadata Caching** (v1.34+) - Caches repository index files (Release/Packages/Translation/Contents/DEP-11), so a cold client (a fresh CI container, a reimaged host) revalidates against the local cache instead of re-downloading all metadata from the WAN each `apt-get update`. Always revalidated, so never stale
+- **Metadata Caching** (v1.34+) - Caches repository index files (Release/Packages/Translation/Contents/DEP-11), so a cold client (a fresh CI container, a reimaged host) revalidates against the local cache instead of re-downloading all metadata from the WAN each `apt-get update`. Revalidated on every request; when the mirror is unreachable it serves the cached copy so `apt-get update` keeps working offline (`apt` still verifies the signature and `Valid-Until`)
 - **Mirror Fallback** - Automatic fallback to official mirrors if P2P fails
 - **Package Seeding** - Import local .deb files to seed the network
 - **Package Rollback** - List and fetch old package versions from cache or P2P peers
