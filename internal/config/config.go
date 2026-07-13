@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -149,8 +150,17 @@ func (p *ProxyConfig) EffectiveHTTPSUpstreamHosts() []string {
 
 // NetworkConfig holds network-related settings
 type NetworkConfig struct {
-	ListenPort     int      `toml:"listen_port"`
-	ProxyPort      int      `toml:"proxy_port"`
+	ListenPort int `toml:"listen_port"`
+	ProxyPort  int `toml:"proxy_port"`
+
+	// ProxyBind is the HTTP proxy listen address (default "127.0.0.1", loopback
+	// only). Setting a non-loopback address (a LAN interface IP or "0.0.0.0")
+	// enables LAN server mode and REQUIRES ProxyAllowedCIDRs (fail-closed).
+	ProxyBind string `toml:"proxy_bind"`
+	// ProxyAllowedCIDRs lists the client networks (CIDR notation) permitted to
+	// use this cache when ProxyBind is non-loopback. Loopback is always allowed.
+	ProxyAllowedCIDRs []string `toml:"proxy_allowed_cidrs"`
+
 	MaxConnections int      `toml:"max_connections"`
 	BootstrapPeers []string `toml:"bootstrap_peers"`
 
@@ -170,6 +180,47 @@ func (c *NetworkConfig) GetConnectivityMode() string {
 		return "auto"
 	}
 	return c.ConnectivityMode
+}
+
+// ParsedAllowedCIDRs parses ProxyAllowedCIDRs into *net.IPNet values, skipping
+// empty entries. Validate reports every malformed entry; this returns an error on
+// the first one for callers that parse after validation has passed. The result is
+// used to gate inbound proxy clients in LAN server mode.
+func (c *NetworkConfig) ParsedAllowedCIDRs() ([]*net.IPNet, error) {
+	var nets []*net.IPNet
+	for _, cidr := range c.ProxyAllowedCIDRs {
+		if cidr == "" {
+			continue
+		}
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q: %w", cidr, err)
+		}
+		nets = append(nets, ipnet)
+	}
+	return nets, nil
+}
+
+// isLoopbackBindAddr reports whether a bind address restricts the listener to the
+// local host. Empty and "localhost" count as loopback; "0.0.0.0"/"::" (all
+// interfaces) and any specific interface IP do not.
+func isLoopbackBindAddr(bind string) bool {
+	if bind == "" || bind == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(bind)
+	return ip != nil && ip.IsLoopback()
+}
+
+// countNonEmptyStrings returns the number of non-empty entries in s.
+func countNonEmptyStrings(s []string) int {
+	n := 0
+	for _, v := range s {
+		if v != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // GetConnectivityCheckInterval returns the check interval duration.
@@ -675,6 +726,7 @@ func DefaultConfig() *Config {
 		Network: NetworkConfig{
 			ListenPort:     4001,
 			ProxyPort:      9977,
+			ProxyBind:      "127.0.0.1", // loopback only; non-loopback needs ProxyAllowedCIDRs
 			MaxConnections: 100,
 			BootstrapPeers: []string{
 				// libp2p public bootstrap nodes
@@ -975,6 +1027,34 @@ func (c *Config) Validate() error {
 		errs = append(errs, ValidationError{
 			Field:   "network.proxy_port",
 			Message: fmt.Sprintf("must be between 1 and 65535, got %d", c.Network.ProxyPort),
+		})
+	}
+
+	// Validate proxy bind address + client allowlist (LAN server mode).
+	if c.Network.ProxyBind != "" && c.Network.ProxyBind != "localhost" && net.ParseIP(c.Network.ProxyBind) == nil {
+		errs = append(errs, ValidationError{
+			Field:   "network.proxy_bind",
+			Message: fmt.Sprintf("invalid bind address %q; must be an IP address (e.g. 127.0.0.1, 0.0.0.0, or a LAN interface IP)", c.Network.ProxyBind),
+		})
+	}
+	for i, cidr := range c.Network.ProxyAllowedCIDRs {
+		if cidr == "" {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   fmt.Sprintf("network.proxy_allowed_cidrs[%d]", i),
+				Message: fmt.Sprintf("invalid CIDR %q: %v", cidr, err),
+			})
+		}
+	}
+	// Fail-closed: a non-loopback proxy bind exposes the cache to the network, so
+	// it must be paired with an explicit client allowlist. Refuse to start
+	// otherwise rather than silently serving every reachable host.
+	if !isLoopbackBindAddr(c.Network.ProxyBind) && countNonEmptyStrings(c.Network.ProxyAllowedCIDRs) == 0 {
+		errs = append(errs, ValidationError{
+			Field:   "network.proxy_allowed_cidrs",
+			Message: fmt.Sprintf("proxy_bind %q is not loopback; set proxy_allowed_cidrs to the client network(s) allowed to use this cache (e.g. [\"192.168.1.0/24\"])", c.Network.ProxyBind),
 		})
 	}
 
