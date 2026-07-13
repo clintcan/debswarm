@@ -18,6 +18,7 @@ var (
 	logFile         string
 	dataDir         string
 	proxyPort       int
+	proxyBind       string
 	p2pPort         int
 	metricsPort     int
 	metricsBind     string
