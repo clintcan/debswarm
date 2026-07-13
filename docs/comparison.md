@@ -105,22 +105,23 @@ File Request → Find N Peers → Score & Rank
 | **NAT-PMP** | No | Via libp2p |
 | **STUN** | No | Yes (QUIC) |
 | **Hole Punching** | Limited | Yes (libp2p) |
-| **Relay Fallback** | No | Yes (libp2p circuit relay) |
+| **Relay Fallback** | No | Partial (libp2p circuit-relay client transport only; no relay service runs yet, so two NAT'd peers cannot yet connect through a relay) |
 
 QUIC's UDP-based transport in debswarm provides significantly better NAT traversal than apt-p2p's TCP-only approach. Many corporate firewalls and home routers handle UDP hole punching better than TCP.
 
 #### Security Model
 
 Both solutions share the same fundamental security model — and in both, the real
-guarantee is APT's own client-side GPG verification, not the proxy's:
+guarantee by default is APT's own client-side GPG verification, not the proxy's:
 
-1. **APT verifies repository signatures** - the GPG signature on the `Release` file is checked by `apt`, client-side; neither proxy verifies it
+1. **APT verifies repository signatures** - the GPG signature on the `Release` file is checked by `apt`, client-side; apt-p2p never verifies it, and debswarm does so only when daemon-side verification is enabled (v1.34+, `[security] verify_upstream_signatures = "enforce"`; the default `warn` observes but does not block)
 2. **Proxy hash check** - each download is matched against the SHA256 in the Packages index the proxy fetched (swarm integrity, not upstream-MITM protection)
 3. **Peers are untrusted** - a peer's bytes must match that hash or they're rejected and the peer blacklisted
 
 | Security Feature | apt-p2p | debswarm |
 |------------------|---------|----------|
 | **Hash Verification** | SHA256 | SHA256 |
+| **Daemon-side signature verification** | No | Optional (v1.34+: `enforce`) |
 | **Peer Blacklisting** | Yes | Yes |
 | **Private Networks** | No | Yes (PSK) |
 | **Peer Allowlists** | No | Yes |

@@ -457,7 +457,9 @@ peer_blocklist = [
 
 ## Security Model
 
-**Your protection against a tampered mirror comes from `apt`, not debswarm.** debswarm does not verify GPG signatures; it passes fetched bytes through unmodified, and `apt` performs its normal client-side verification — the GPG signature on the `Release` file, then the hash chain down to each `.deb` — exactly as it would without a proxy. That end-to-end guarantee is preserved.
+**By default, your protection against a tampered mirror comes from `apt`, not debswarm.** In its default mode debswarm does not block on GPG signatures; it passes fetched bytes through unmodified, and `apt` performs its normal client-side verification — the GPG signature on the `Release` file, then the hash chain down to each `.deb` — exactly as it would without a proxy. That end-to-end guarantee is always preserved.
+
+Optionally (v1.34+), debswarm can add its **own** daemon-side GPG verification: `[security] verify_upstream_signatures` verifies each repository's signed `Release` against a trusted keyring (auto-discovered from APT's keyrings) and each `Packages` index against it. The default, `warn`, only observes and reports (behaviorally identical to before); `enforce` refuses an index it cannot vouch for. Unless you enable `enforce`, `apt`'s client-side check remains the actual guarantee. See [SECURITY.md](SECURITY.md#upstream-signature-verification-optional-v134).
 
 What debswarm's own SHA256 check adds is **swarm integrity**:
 
@@ -465,9 +467,9 @@ What debswarm's own SHA256 check adds is **swarm integrity**:
 2. **P2P downloads** - Every peer's bytes must match that SHA256 before use, so a malicious peer cannot poison the cache
 3. **Hash mismatch** - Peer blacklisted; retry with a different peer or mirror
 
-This is deliberately *not* independent upstream protection: the index and the package bytes come over the same (usually plain-HTTP) upstream leg, so debswarm's check alone does not detect a mirror that tampers with both — `apt`'s signature check is what catches that.
+This is deliberately *not* independent upstream protection: the index and the package bytes come over the same (usually plain-HTTP) upstream leg, so debswarm's SHA256 check alone does not detect a mirror that tampers with both — `apt`'s signature check is what catches that (as does debswarm's own `enforce` mode, above).
 
-> **Caveat:** anything that bypasses `apt`'s signature verification — `[trusted=yes]` sources, `Acquire::AllowInsecureRepositories`, or `dpkg -i` on a file pulled from the cache — gets no cryptographic guarantee from debswarm. Treat the SHA256 check as swarm integrity, not a substitute for signature verification.
+> **Caveat:** anything that bypasses `apt`'s signature verification — `[trusted=yes]` sources, `Acquire::AllowInsecureRepositories`, or `dpkg -i` on a file pulled from the cache — gets no cryptographic guarantee from debswarm's SHA256 check alone. Treat that check as swarm integrity, not a substitute for signature verification. (These bypass cases are exactly what `[security] verify_upstream_signatures = "enforce"` is designed to harden, since it anchors the index — and thus each `.deb`'s hash — to GPG at the daemon.)
 
 ## systemd Service
 

@@ -11,6 +11,11 @@ narrower: concrete, verified gaps in what exists today.
 
 ## Recently addressed (for context)
 
+> Released in **v1.34.0** (2026-07-14): repository metadata caching, offline
+> metadata serving, LAN server mode, offline cached-`.deb` serving, and
+> daemon-side upstream GPG verification (all detailed below). Earlier entries
+> shipped in v1.32.0–v1.33.0; see `CHANGELOG.md` for the per-release breakdown.
+
 - v1.32.0 shipped three soak-validated performance batches (PRs #88–#90):
   fleet claim-window latency, real WAL mode, streaming mirror downloads,
   cache lock contention, index re-parse leak, stall-based timeouts,
@@ -95,8 +100,8 @@ narrower: concrete, verified gaps in what exists today.
    connection to coordinate through. Two NAT'd peers can never connect.
    Fixing this properly means a relay story (static relays config,
    `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
-   publicly reachable nodes) — and until then, `docs/comparison.md`
-   ("Relay Fallback: Yes") should be corrected.
+   publicly reachable nodes). `docs/comparison.md` now states this honestly
+   (Relay Fallback: "Partial — client transport only") pending that work.
 3. **No apt repository or container image for debswarm itself.** Distribution
    is GitHub releases + `curl | bash`. No signed apt repo means no
    `unattended-upgrades` and no fleet-wide upgrade path — ironic for an APT
