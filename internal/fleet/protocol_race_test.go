@@ -23,6 +23,8 @@ type concurrencyStream struct {
 	buf      bytes.Buffer
 }
 
+func (m *concurrencyStream) SetWriteDeadline(_ time.Time) error { return nil }
+
 func (m *concurrencyStream) Write(p []byte) (int, error) {
 	if m.active.Add(1) > 1 {
 		m.overlaps.Add(1)

@@ -1857,25 +1857,40 @@ func (s *Server) ReannouncePackages(ctx context.Context) error {
 
 	s.logger.Info("Reannouncing packages", zap.Int("count", len(packages)))
 
+	// Each Provide is a multi-second DHT walk; done one at a time, a cache of
+	// thousands of packages takes hours per reannounce cycle and undermines
+	// the announce interval. Announce with bounded concurrency instead — the
+	// same width as the async announcement worker.
+	const maxConcurrent = 4
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
 	for _, pkg := range packages {
 		select {
 		case <-ctx.Done():
+			wg.Wait()
 			return ctx.Err()
-		default:
+		case sem <- struct{}{}:
 		}
 
-		if err := s.p2pNode.Provide(ctx, pkg.SHA256); err != nil {
-			s.logger.Debug("Failed to announce package",
-				zap.String("hash", pkg.SHA256[:16]+"..."),
-				zap.Error(err))
-			continue
-		}
+		wg.Add(1)
+		go func(hash string) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		if err := s.cache.MarkAnnounced(pkg.SHA256); err != nil {
-			s.logger.Warn("Failed to mark as announced", zap.Error(err))
-		}
+			if err := s.p2pNode.Provide(ctx, hash); err != nil {
+				s.logger.Debug("Failed to announce package",
+					zap.String("hash", hash[:16]+"..."),
+					zap.Error(err))
+				return
+			}
+			if err := s.cache.MarkAnnounced(hash); err != nil {
+				s.logger.Warn("Failed to mark as announced", zap.Error(err))
+			}
+		}(pkg.SHA256)
 	}
 
+	wg.Wait()
 	return nil
 }
 
