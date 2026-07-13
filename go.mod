@@ -4,10 +4,12 @@ go 1.25.7
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/klauspost/compress v1.18.0
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.41.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/pelletier/go-toml/v2 v2.4.3
+	github.com/pierrec/lz4/v4 v4.1.27
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.15
 	go.uber.org/zap v1.28.0

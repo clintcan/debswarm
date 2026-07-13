@@ -5,10 +5,13 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 ExecStart=/usr/bin/debswarm daemon
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
+# The daemon pings the watchdog only while its HTTP loop answers /health, so a
+# deadlocked-but-alive daemon is restarted instead of hanging APT indefinitely.
+WatchdogSec=90
 RestartSec=5
 
 # Run as dedicated system user (created by package postinst)

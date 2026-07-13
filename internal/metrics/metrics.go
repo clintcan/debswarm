@@ -10,14 +10,23 @@ import (
 // Metrics holds all application metrics
 type Metrics struct {
 	// Counters
-	DownloadsTotal       *CounterVec
-	BytesDownloaded      *CounterVec
-	BytesUploaded        *CounterVec
-	PeerConnections      *CounterVec
+	DownloadsTotal  *CounterVec
+	BytesDownloaded *CounterVec
+	// BytesUploaded is deliberately unlabeled: labeling by peer ID made the
+	// series set grow without bound on a public-DHT node.
+	BytesUploaded        *Counter
 	DHTQueries           *CounterVec
 	CacheHits            *Counter
 	CacheMisses          *Counter
 	VerificationFailures *Counter
+
+	// CacheEvictions counts packages evicted to make room; sustained growth
+	// means the cache is undersized for the workload.
+	CacheEvictions *Counter
+
+	// PeersBlacklisted counts peers blacklisted for serving corrupt data —
+	// the primary security-operational signal.
+	PeersBlacklisted *Counter
 
 	// PackagesServedUncached counts packages proxied straight from the mirror
 	// without caching, verification, or P2P sharing because no signed index
@@ -39,6 +48,7 @@ type Metrics struct {
 	ConnectedPeers   *Gauge
 	RoutingTableSize *Gauge
 	CacheSize        *Gauge
+	CacheMaxSize     *Gauge // configured capacity, so dashboards can compute fill percentage
 	CacheCount       *Gauge
 	ActiveDownloads  *Gauge
 	ActiveUploads    *Gauge
@@ -70,8 +80,9 @@ type Metrics struct {
 	VerificationDuration  *Histogram  // Time taken for verification queries
 
 	// Histograms
-	DownloadDuration  *HistogramVec
-	PeerLatency       *HistogramVec
+	// PeerLatency is deliberately unlabeled: labeling by peer ID made the
+	// series set grow without bound on a public-DHT node.
+	PeerLatency       *Histogram
 	ChunkDownloadTime *Histogram
 	DHTLookupDuration *Histogram
 
@@ -311,12 +322,13 @@ func New() *Metrics {
 	return &Metrics{
 		DownloadsTotal:         NewCounterVec(),
 		BytesDownloaded:        NewCounterVec(),
-		BytesUploaded:          NewCounterVec(),
-		PeerConnections:        NewCounterVec(),
+		BytesUploaded:          &Counter{},
 		DHTQueries:             NewCounterVec(),
 		CacheHits:              &Counter{},
 		CacheMisses:            &Counter{},
 		VerificationFailures:   &Counter{},
+		CacheEvictions:         &Counter{},
+		PeersBlacklisted:       &Counter{},
 		PackagesServedUncached: &Counter{},
 
 		// Resume metrics
@@ -331,6 +343,7 @@ func New() *Metrics {
 		PeersLeft:   &Counter{},
 
 		ConnectedPeers:   &Gauge{},
+		CacheMaxSize:     &Gauge{},
 		RoutingTableSize: &Gauge{},
 		CacheSize:        &Gauge{},
 		CacheCount:       &Gauge{},
@@ -363,8 +376,7 @@ func New() *Metrics {
 		VerificationProviders: NewHistogram([]float64{0, 1, 2, 3, 5, 10}),
 		VerificationDuration:  NewHistogram(DurationBuckets),
 
-		DownloadDuration:  NewHistogramVec(DurationBuckets),
-		PeerLatency:       NewHistogramVec(LatencyBuckets),
+		PeerLatency:       NewHistogram(LatencyBuckets),
 		ChunkDownloadTime: NewHistogram(DurationBuckets),
 		DHTLookupDuration: NewHistogram(DurationBuckets),
 
@@ -386,7 +398,9 @@ func (m *Metrics) Handler() http.Handler {
 		// Counters
 		writeCounter(w, "debswarm_cache_hits_total", m.CacheHits.Value())
 		writeCounter(w, "debswarm_cache_misses_total", m.CacheMisses.Value())
+		writeCounter(w, "debswarm_cache_evictions_total", m.CacheEvictions.Value())
 		writeCounter(w, "debswarm_verification_failures_total", m.VerificationFailures.Value())
+		writeCounter(w, "debswarm_peers_blacklisted_total", m.PeersBlacklisted.Value())
 		writeCounter(w, "debswarm_packages_served_uncached_total", m.PackagesServedUncached.Value())
 
 		// Resume metrics
@@ -403,8 +417,9 @@ func (m *Metrics) Handler() http.Handler {
 		for label, value := range m.BytesDownloaded.Values() {
 			writeCounterWithLabel(w, "debswarm_bytes_downloaded_total", "source", label, value)
 		}
-		for label, value := range m.BytesUploaded.Values() {
-			writeCounterWithLabel(w, "debswarm_bytes_uploaded_total", "peer", label, value)
+		writeCounter(w, "debswarm_bytes_uploaded_total", m.BytesUploaded.Value())
+		for label, value := range m.DHTQueries.Values() {
+			writeCounterWithLabel(w, "debswarm_dht_queries_total", "operation", label, value)
 		}
 		// Error breakdown
 		for label, value := range m.Errors.Values() {
@@ -415,6 +430,7 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(w, "debswarm_connected_peers", m.ConnectedPeers.Value())
 		writeGauge(w, "debswarm_routing_table_size", m.RoutingTableSize.Value())
 		writeGauge(w, "debswarm_cache_size_bytes", m.CacheSize.Value())
+		writeGauge(w, "debswarm_cache_max_size_bytes", m.CacheMaxSize.Value())
 		writeGauge(w, "debswarm_cache_count", m.CacheCount.Value())
 		writeGauge(w, "debswarm_active_downloads", m.ActiveDownloads.Value())
 		writeGauge(w, "debswarm_active_uploads", m.ActiveUploads.Value())
@@ -446,7 +462,15 @@ func (m *Metrics) Handler() http.Handler {
 		}
 		writeGauge(w, "debswarm_fleet_in_flight", m.FleetInFlight.Value())
 
+		// Multi-source verification metrics
+		for label, value := range m.VerificationResults.Values() {
+			writeCounterWithLabel(w, "debswarm_verification_results_total", "status", label, value)
+		}
+		writeHistogram(w, "debswarm_verification_providers", m.VerificationProviders)
+		writeHistogram(w, "debswarm_verification_duration_seconds", m.VerificationDuration)
+
 		// Histograms
+		writeHistogram(w, "debswarm_peer_latency_milliseconds", m.PeerLatency)
 		writeHistogram(w, "debswarm_chunk_download_seconds", m.ChunkDownloadTime)
 		writeHistogram(w, "debswarm_dht_lookup_seconds", m.DHTLookupDuration)
 

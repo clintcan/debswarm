@@ -68,6 +68,12 @@ type Cache struct {
 	flushStop       chan struct{}
 	flushDone       chan struct{}
 	closeOnce       sync.Once
+
+	// onEvict, when set, is called once per successfully evicted package so
+	// callers can count evictions (sustained eviction pressure means the
+	// cache is undersized). Called with the cache lock held — must not call
+	// back into the cache.
+	onEvict func()
 }
 
 // New creates a new cache instance
@@ -902,6 +908,8 @@ func (c *Cache) ensureSpace(needed int64) error {
 		if err := c.deleteUnlocked(hash, size); err != nil {
 			// Log but continue - file might be in use, try next candidate
 			c.logger.Warn("Failed to evict package", zap.Error(err))
+		} else if c.onEvict != nil {
+			c.onEvict()
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -939,9 +947,58 @@ func (c *Cache) CleanPartialDir(hash string) error {
 	return os.RemoveAll(dir)
 }
 
+// SweepStalePartials removes partial-download directories older than maxAge
+// whose hash has no live download state (per the active callback). Partial
+// assembly files are deliberately kept on failure so downloads can resume,
+// but once the retry window has passed and the state row is gone they only
+// leak disk. Returns the number of directories removed.
+func (c *Cache) SweepStalePartials(maxAge time.Duration, active func(hash string) bool) (int, error) {
+	partialRoot := filepath.Join(c.basePath, "packages", "partial")
+	entries, err := os.ReadDir(partialRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	removed := 0
+	cutoff := time.Now().Add(-maxAge)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		if active != nil && active(e.Name()) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(partialRoot, e.Name())); err != nil {
+			c.logger.Warn("Failed to remove stale partial directory",
+				zap.String("hash", e.Name()), zap.Error(err))
+			continue
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // BasePath returns the cache base path
 func (c *Cache) BasePath() string {
 	return c.basePath
+}
+
+// MaxSize returns the configured cache capacity in bytes.
+func (c *Cache) MaxSize() int64 {
+	return c.maxSize
+}
+
+// SetOnEvict registers a callback invoked once per evicted package. Must be
+// set before the cache is in use (not synchronized with concurrent stores).
+func (c *Cache) SetOnEvict(fn func()) {
+	c.onEvict = fn
 }
 
 // ListByPackageName returns all cached versions of a package by name.

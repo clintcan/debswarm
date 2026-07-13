@@ -38,8 +38,8 @@ func TestNew(t *testing.T) {
 	}
 
 	// Check histograms are initialized
-	if m.DownloadDuration == nil {
-		t.Error("DownloadDuration not initialized")
+	if m.PeerLatency == nil {
+		t.Error("PeerLatency not initialized")
 	}
 	if m.DHTLookupDuration == nil {
 		t.Error("DHTLookupDuration not initialized")

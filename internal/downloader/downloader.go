@@ -694,6 +694,9 @@ func (d *Downloader) downloadRacing(
 				if res.source.Type() == SourceTypePeer && d.scorer != nil {
 					if ps, ok := res.source.(*PeerSource); ok {
 						d.scorer.Blacklist(ps.Info.ID, "hash mismatch", 24*time.Hour)
+						if d.metrics != nil {
+							d.metrics.PeersBlacklisted.Inc()
+						}
 					}
 				}
 				lastErr = ErrHashMismatch

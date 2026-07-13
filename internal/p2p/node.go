@@ -898,7 +898,7 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	if n.metrics != nil {
 		n.metrics.BytesDownloaded.WithLabel("peer").Add(size)
 		n.metrics.DownloadsTotal.WithLabel("peer").Inc()
-		n.metrics.PeerLatency.WithLabel(peerInfo.ID.String()).Observe(latencyMs)
+		n.metrics.PeerLatency.Observe(latencyMs)
 	}
 
 	return data, nil
@@ -1073,7 +1073,7 @@ func (n *Node) handleTransferRequest(stream network.Stream, rangeSupport bool) {
 	// Update metrics
 	n.scorer.RecordUpload(peerID, written)
 	if n.metrics != nil {
-		n.metrics.BytesUploaded.WithLabel(peerID.String()).Add(written)
+		n.metrics.BytesUploaded.Add(written)
 	}
 
 	// Audit log upload complete

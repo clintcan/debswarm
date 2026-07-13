@@ -4,6 +4,7 @@ package index
 import (
 	"bufio"
 	"bytes"
+	"compress/bzip2"
 	"compress/gzip"
 	"context"
 	"fmt"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zstd"
+	"github.com/pierrec/lz4/v4"
 	"github.com/ulikunitz/xz"
 	"go.uber.org/zap"
 
@@ -96,14 +99,49 @@ func (idx *Index) HasIndexFile(urlOrPath string) bool {
 // indexFileKey derives a stable identity for a Packages index file from its
 // URL or filesystem path. By-hash digests change on every repository update,
 // so they collapse to the index directory; compression extensions are ignored
-// so Packages, Packages.gz, and Packages.xz of the same index share one key.
+// so compressed variants of the same index share one key.
 func indexFileKey(s string) string {
 	if i := strings.Index(s, "/by-hash/"); i >= 0 {
 		return s[:i]
 	}
-	s = strings.TrimSuffix(s, ".gz")
-	s = strings.TrimSuffix(s, ".xz")
+	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2", ".zst"} {
+		s = strings.TrimSuffix(s, ext)
+	}
 	return s
+}
+
+// decompressByName wraps r with the decompressor matching the file/URL name's
+// extension, applying the decompression-bomb size limit. APT writes lists as
+// .gz, .xz, .lz4 (Ubuntu minimized/cloud images default to lz4 via
+// Acquire::GzipIndexes), .bz2, or .zst — an unsupported one used to be
+// scanned as raw binary, silently contributing zero index entries.
+func decompressByName(r io.Reader, name string) (io.Reader, error) {
+	switch {
+	case strings.HasSuffix(name, ".gz"):
+		gzReader, err := gzip.NewReader(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+		}
+		return io.LimitReader(gzReader, maxDecompressedBytes), nil
+	case strings.HasSuffix(name, ".xz"):
+		xzReader, err := xz.NewReader(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create xz reader: %w", err)
+		}
+		return io.LimitReader(xzReader, maxDecompressedBytes), nil
+	case strings.HasSuffix(name, ".lz4"):
+		return io.LimitReader(lz4.NewReader(r), maxDecompressedBytes), nil
+	case strings.HasSuffix(name, ".bz2"):
+		return io.LimitReader(bzip2.NewReader(r), maxDecompressedBytes), nil
+	case strings.HasSuffix(name, ".zst"):
+		zstReader, err := zstd.NewReader(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create zstd reader: %w", err)
+		}
+		return io.LimitReader(zstReader.IOReadCloser(), maxDecompressedBytes), nil
+	default:
+		return r, nil
+	}
 }
 
 // LoadFromFile loads and parses a Packages file
@@ -114,22 +152,10 @@ func (idx *Index) LoadFromFile(path string) error {
 	}
 	defer f.Close()
 
-	var reader io.Reader = f
-
 	// Handle compression (limit decompressed size to prevent decompression bombs)
-	if strings.HasSuffix(path, ".gz") {
-		gzReader, err := gzip.NewReader(f)
-		if err != nil {
-			return fmt.Errorf("failed to create gzip reader: %w", err)
-		}
-		defer func() { _ = gzReader.Close() }()
-		reader = io.LimitReader(gzReader, maxDecompressedBytes)
-	} else if strings.HasSuffix(path, ".xz") {
-		xzReader, err := xz.NewReader(f)
-		if err != nil {
-			return fmt.Errorf("failed to create xz reader: %w", err)
-		}
-		reader = io.LimitReader(xzReader, maxDecompressedBytes)
+	reader, err := decompressByName(f, path)
+	if err != nil {
+		return err
 	}
 
 	// Use filename as repo identifier for local files
@@ -145,22 +171,10 @@ func (idx *Index) LoadFromFileWithRepo(path, repo string) error {
 	}
 	defer f.Close()
 
-	var reader io.Reader = f
-
 	// Handle compression based on extension (limit decompressed size)
-	if strings.HasSuffix(path, ".gz") {
-		gzReader, err := gzip.NewReader(f)
-		if err != nil {
-			return fmt.Errorf("failed to create gzip reader: %w", err)
-		}
-		defer func() { _ = gzReader.Close() }()
-		reader = io.LimitReader(gzReader, maxDecompressedBytes)
-	} else if strings.HasSuffix(path, ".xz") {
-		xzReader, err := xz.NewReader(f)
-		if err != nil {
-			return fmt.Errorf("failed to create xz reader: %w", err)
-		}
-		reader = io.LimitReader(xzReader, maxDecompressedBytes)
+	reader, err := decompressByName(f, path)
+	if err != nil {
+		return err
 	}
 
 	return idx.parseForRepo(reader, repo, indexFileKey(path))
@@ -193,22 +207,10 @@ func (idx *Index) LoadFromURL(url string) error {
 		return fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
 	}
 
-	var reader io.Reader = resp.Body
-
 	// Handle compression based on URL (limit decompressed size)
-	if strings.HasSuffix(url, ".gz") {
-		gzReader, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to create gzip reader: %w", err)
-		}
-		defer func() { _ = gzReader.Close() }()
-		reader = io.LimitReader(gzReader, maxDecompressedBytes)
-	} else if strings.HasSuffix(url, ".xz") {
-		xzReader, err := xz.NewReader(resp.Body)
-		if err != nil {
-			return fmt.Errorf("failed to create xz reader: %w", err)
-		}
-		reader = io.LimitReader(xzReader, maxDecompressedBytes)
+	reader, err := decompressByName(resp.Body, url)
+	if err != nil {
+		return err
 	}
 
 	// Extract repo base URL
@@ -236,6 +238,16 @@ func (idx *Index) LoadFromData(data []byte, url string) error {
 			return fmt.Errorf("failed to create xz reader: %w", err)
 		}
 		reader = io.LimitReader(xzReader, maxDecompressedBytes)
+	} else if len(data) >= 4 && data[0] == 0x28 && data[1] == 0xb5 && data[2] == 0x2f && data[3] == 0xfd {
+		// zstd magic
+		zstReader, err := zstd.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return fmt.Errorf("failed to create zstd reader: %w", err)
+		}
+		reader = io.LimitReader(zstReader.IOReadCloser(), maxDecompressedBytes)
+	} else if len(data) >= 4 && data[0] == 0x04 && data[1] == 0x22 && data[2] == 0x4d && data[3] == 0x18 {
+		// lz4 frame magic
+		reader = io.LimitReader(lz4.NewReader(bytes.NewReader(data)), maxDecompressedBytes)
 	}
 	// Otherwise assume uncompressed
 
