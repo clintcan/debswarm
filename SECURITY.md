@@ -2,12 +2,14 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.11.x  | :white_check_mark: |
-| 1.10.x  | :white_check_mark: |
-| 1.9.x   | :x:                |
-| < 1.9   | :x:                |
+Security fixes ship in a new release rather than as backports to older lines, so
+the latest release is the supported one. If you are on an older version, upgrade
+to the newest release to receive security updates.
+
+| Version  | Supported          |
+| -------- | ------------------ |
+| 1.34.x   | :white_check_mark: |
+| < 1.34.0 | :x:                |
 
 ## Reporting a Vulnerability
 
