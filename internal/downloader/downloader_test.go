@@ -596,20 +596,17 @@ func TestDownloadChunked_ResumeFromPartial(t *testing.T) {
 	cache := &mockPartialCache{baseDir: tmpDir}
 	stateManager := NewStateManager(db)
 
-	// Pre-populate some chunks on disk to simulate partial download
+	// Simulate an interrupted download in the current layout: the first two
+	// chunks are already in the assembly file at their offsets (the rest of
+	// the preallocated file is zeros), with matching state rows.
 	partialDir := cache.PartialDir(hash)
 	if err := cache.EnsurePartialDir(hash); err != nil {
 		t.Fatalf("Failed to create partial dir: %v", err)
 	}
-
-	// Write first 2 chunks to disk
-	for i := 0; i < 2; i++ {
-		start := int64(i) * chunkSize
-		end := start + chunkSize
-		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		if err := os.WriteFile(chunkFile, data[start:end], 0644); err != nil {
-			t.Fatalf("Failed to write chunk %d: %v", i, err)
-		}
+	assembled := make([]byte, len(data))
+	copy(assembled[:2*chunkSize], data[:2*chunkSize])
+	if err := os.WriteFile(filepath.Join(partialDir, "assembled"), assembled, 0600); err != nil {
+		t.Fatalf("Failed to write assembly file: %v", err)
 	}
 
 	// Create download state in DB
@@ -640,7 +637,7 @@ func TestDownloadChunked_ResumeFromPartial(t *testing.T) {
 		MinChunkedSize: 1, // Enable chunked download for small test files
 	})
 
-	// Resume download - should only download chunks 2 and 3
+	// Resume download - must only download chunks 2 and 3
 	result, err := d.Download(context.Background(), hash, int64(len(data)), []Source{source}, nil)
 	if err != nil {
 		t.Fatalf("Resume download failed: %v", err)
@@ -650,9 +647,92 @@ func TestDownloadChunked_ResumeFromPartial(t *testing.T) {
 		t.Errorf("Hash mismatch: expected %s, got %s", hash, result.Hash)
 	}
 
-	// Verify the source was only called for the missing chunks (chunks 2 and 3)
-	// Note: Due to the way chunks are named (chunk_0, chunk_1, etc), we check call count
-	if source.callCount < 2 {
-		t.Errorf("Expected at least 2 source calls for missing chunks, got %d", source.callCount)
+	// The recovered chunks must NOT be re-downloaded: exactly the two missing
+	// chunks hit the source. (A full re-download would pass the hash check
+	// too, so the call count is what proves resume actually resumed.)
+	if got := atomic.LoadInt32(&source.callCount); got != 2 {
+		t.Errorf("source calls = %d, want exactly 2 (chunks 2 and 3)", got)
+	}
+
+	assembledData, err := os.ReadFile(result.FilePath)
+	if err != nil {
+		t.Fatalf("Failed to read assembly file: %v", err)
+	}
+	if !bytes.Equal(assembledData, data) {
+		t.Error("assembled content doesn't match expected data")
+	}
+}
+
+// TestDownloadChunked_LegacyChunkFilesRedownloaded covers upgrading mid-download:
+// older versions persisted chunk_N files instead of writing into the assembly
+// file, so their state rows say "completed" but no assembly file exists. Those
+// chunks must be re-downloaded (not trusted), and the download must succeed.
+func TestDownloadChunked_LegacyChunkFilesRedownloaded(t *testing.T) {
+	chunkSize := int64(1024)
+	numChunks := 4
+	data := testData(int(chunkSize) * numChunks)
+	hash := hashBytes(data)
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	tmpDir := t.TempDir()
+	cache := &mockPartialCache{baseDir: tmpDir}
+	stateManager := NewStateManager(db)
+
+	// Old-layout leftovers: chunk_N files plus completed state rows, but no
+	// assembly file.
+	partialDir := cache.PartialDir(hash)
+	if err := cache.EnsurePartialDir(hash); err != nil {
+		t.Fatalf("Failed to create partial dir: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		start := int64(i) * chunkSize
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		if err := os.WriteFile(chunkFile, data[start:start+chunkSize], 0600); err != nil {
+			t.Fatalf("Failed to write legacy chunk %d: %v", i, err)
+		}
+	}
+	if err := stateManager.CreateDownload(hash, "", int64(len(data)), chunkSize); err != nil {
+		t.Fatalf("Failed to create download state: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := stateManager.UpdateChunk(hash, i, "completed"); err != nil {
+			t.Fatalf("Failed to update chunk %d: %v", i, err)
+		}
+	}
+
+	source := &mockSource{
+		id:           "peer1",
+		sourceType:   SourceTypePeer,
+		data:         data,
+		rangeSupport: true,
+	}
+
+	d := New(&Config{
+		ChunkSize:      chunkSize,
+		MaxConcurrent:  2,
+		StateManager:   stateManager,
+		Cache:          cache,
+		MinChunkedSize: 1,
+	})
+
+	result, err := d.Download(context.Background(), hash, int64(len(data)), []Source{source}, nil)
+	if err != nil {
+		t.Fatalf("Download with legacy layout failed: %v", err)
+	}
+	if result.Hash != hash {
+		t.Errorf("Hash mismatch: expected %s, got %s", hash, result.Hash)
+	}
+	// All four chunks re-downloaded (legacy chunk files are not trusted)
+	if got := atomic.LoadInt32(&source.callCount); got != 4 {
+		t.Errorf("source calls = %d, want 4 (legacy chunks must be re-downloaded)", got)
+	}
+	// The stray legacy chunk files are cleaned up on success
+	for i := 0; i < 2; i++ {
+		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
+		if _, err := os.Stat(chunkFile); !os.IsNotExist(err) {
+			t.Errorf("legacy chunk_%d still present after successful download", i)
+		}
 	}
 }
