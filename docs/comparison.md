@@ -202,13 +202,14 @@ debswarm (P2P):
 
 | Feature | apt-cacher-ng | debswarm |
 |---------|---------------|----------|
-| **Architecture** | Client-server | Peer-to-peer |
+| **Architecture** | Client-server | Peer-to-peer (or a shared LAN cache) |
 | **Single Point of Failure** | Yes | No |
 | **Scales With Users** | No (server bottleneck) | Yes (more peers = faster) |
 | **Cross-Site Sharing** | No | Yes |
+| **Shared LAN cache mode** | Yes | Yes (v1.34+: `proxy_bind` + client CIDR allowlist) |
 | **Setup Complexity** | Medium | Low |
 | **Bandwidth Distribution** | Server pays all | Distributed |
-| **Works Offline** | If cached | If any peer has it |
+| **Works Offline** | If cached | If any peer has it (metadata served from cache since v1.34) |
 
 #### When to Use Each
 

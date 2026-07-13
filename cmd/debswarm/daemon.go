@@ -63,6 +63,7 @@ downloads packages from P2P peers when available, falling back to mirrors.`,
 	}
 
 	cmd.Flags().IntVarP(&proxyPort, "proxy-port", "p", 9977, "HTTP proxy port")
+	cmd.Flags().StringVar(&proxyBind, "proxy-bind", "127.0.0.1", "HTTP proxy bind address (SECURITY: a non-loopback address requires network.proxy_allowed_cidrs)")
 	cmd.Flags().IntVar(&p2pPort, "p2p-port", 4001, "P2P listen port")
 	cmd.Flags().IntVar(&metricsPort, "metrics-port", 9978, "Metrics endpoint port (0 to disable)")
 	cmd.Flags().StringVar(&metricsBind, "metrics-bind", "127.0.0.1", "Metrics endpoint bind address (SECURITY: 0.0.0.0 exposes stats externally)")
@@ -96,15 +97,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		logger.Warn("Security warning", zap.String("message", warn.Message), zap.String("file", warn.File))
 	}
 
-	// Validate configuration - fail fast on invalid settings
-	if validateErr := cfg.Validate(); validateErr != nil {
-		return fmt.Errorf("invalid configuration: %w", validateErr)
-	}
-
 	// Override with command-line flags (use Changed() to detect explicit flags,
-	// so --proxy-port 9977 correctly overrides a config file value)
+	// so --proxy-port 9977 correctly overrides a config file value). Applied
+	// BEFORE Validate() so the effective configuration is what gets checked — in
+	// particular so a --proxy-bind passed on the command line is still subject to
+	// the fail-closed proxy_allowed_cidrs rule.
 	if cmd.Flags().Changed("proxy-port") {
 		cfg.Network.ProxyPort = proxyPort
+	}
+	if cmd.Flags().Changed("proxy-bind") {
+		cfg.Network.ProxyBind = proxyBind
 	}
 	if cmd.Flags().Changed("p2p-port") {
 		cfg.Network.ListenPort = p2pPort
@@ -114,6 +116,11 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("metrics-bind") {
 		cfg.Metrics.Bind = metricsBind
+	}
+
+	// Validate configuration - fail fast on invalid settings
+	if validateErr := cfg.Validate(); validateErr != nil {
+		return fmt.Errorf("invalid configuration: %w", validateErr)
 	}
 
 	// Determine data directory for persistent identity
@@ -433,9 +440,19 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	defer func() { _ = verifier.Close() }()
 	logger.Debug("Multi-source verifier initialized")
 
+	// Parse the inbound client allowlist for LAN server mode. Validate() has
+	// already rejected malformed entries (and enforced the fail-closed rule), so
+	// this should not error, but treat any error as fatal rather than binding
+	// unguarded.
+	allowedClientCIDRs, err := cfg.Network.ParsedAllowedCIDRs()
+	if err != nil {
+		return fmt.Errorf("invalid network.proxy_allowed_cidrs: %w", err)
+	}
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
-		Addr:                       fmt.Sprintf("127.0.0.1:%d", cfg.Network.ProxyPort),
+		Addr:                       net.JoinHostPort(cfg.Network.ProxyBind, strconv.Itoa(cfg.Network.ProxyPort)),
+		AllowedClientCIDRs:         allowedClientCIDRs,
 		P2PTimeout:                 5 * time.Second,
 		DHTLookupLimit:             10,
 		MetricsPort:                cfg.Metrics.Port,

@@ -16,6 +16,24 @@ listen_port = 4001
 # APT connects to http://127.0.0.1:<port> via /etc/apt/apt.conf.d/90debswarm.conf
 proxy_port = 9977
 
+# HTTP proxy bind address (LAN server mode).
+# Default "127.0.0.1" serves only this machine. Set a LAN interface IP (or
+# "0.0.0.0" for all interfaces) to let other hosts use this box as their APT
+# cache — e.g. one cache per office/lab/CI fleet.
+#
+# SECURITY: a non-loopback bind REQUIRES proxy_allowed_cidrs below (fail-closed —
+# the daemon refuses to start otherwise). Upstream fetches stay restricted to
+# known Debian mirrors, and clients still get APT's own GPG verification, so a LAN
+# client is no less safe than a local one; the allowlist controls WHO may connect.
+proxy_bind = "127.0.0.1"
+
+# Client networks (CIDR) permitted to use the proxy when proxy_bind is
+# non-loopback. Loopback is always allowed. Required for a non-loopback bind.
+# If proxy_bind is also a non-loopback metrics.bind, this list additionally gates
+# the admin read endpoints (stats/dashboard/cache inventory).
+# proxy_allowed_cidrs = ["192.168.1.0/24", "10.42.0.0/16"]
+proxy_allowed_cidrs = []
+
 # Maximum concurrent P2P connections
 # Prevents resource exhaustion; libp2p connection manager enforces this limit
 max_connections = 100

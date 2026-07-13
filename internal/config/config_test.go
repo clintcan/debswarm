@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -381,6 +382,66 @@ func TestValidate_InvalidPort(t *testing.T) {
 
 	if !contains(err.Error(), "listen_port") {
 		t.Errorf("Error should mention listen_port, got: %s", err.Error())
+	}
+}
+
+func TestValidate_ProxyBindFailClosed(t *testing.T) {
+	tests := []struct {
+		name    string
+		bind    string
+		cidrs   []string
+		wantErr bool
+		field   string // substring expected in the error, when wantErr
+	}{
+		{"loopback default needs no allowlist", "127.0.0.1", nil, false, ""},
+		{"empty bind treated as loopback", "", nil, false, ""},
+		{"localhost is loopback", "localhost", nil, false, ""},
+		{"ipv6 loopback", "::1", nil, false, ""},
+		{"0.0.0.0 without allowlist fails closed", "0.0.0.0", nil, true, "proxy_allowed_cidrs"},
+		{"specific LAN IP without allowlist fails closed", "192.168.1.10", nil, true, "proxy_allowed_cidrs"},
+		{"only-empty allowlist entries still fail closed", "0.0.0.0", []string{""}, true, "proxy_allowed_cidrs"},
+		{"non-loopback with allowlist is allowed", "0.0.0.0", []string{"192.168.1.0/24"}, false, ""},
+		{"ipv6 unspecified with ipv6 allowlist", "::", []string{"fd00::/8"}, false, ""},
+		{"invalid bind address", "not-an-ip", []string{"192.168.1.0/24"}, true, "proxy_bind"},
+		{"invalid cidr entry", "0.0.0.0", []string{"192.168.1.0/33"}, true, "proxy_allowed_cidrs[0]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Network.ProxyBind = tt.bind
+			cfg.Network.ProxyAllowedCIDRs = tt.cidrs
+			err := cfg.Validate()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected validation error, got nil")
+				}
+				if tt.field != "" && !contains(err.Error(), tt.field) {
+					t.Errorf("error should mention %q, got: %s", tt.field, err.Error())
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_ParsedAllowedCIDRs(t *testing.T) {
+	n := &NetworkConfig{ProxyAllowedCIDRs: []string{"10.0.0.0/8", "", "fd00::/8"}}
+	nets, err := n.ParsedAllowedCIDRs()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nets) != 2 {
+		t.Fatalf("expected 2 parsed nets (empty entry skipped), got %d", len(nets))
+	}
+	// The parsed nets should actually match the ranges.
+	if !nets[0].Contains(net.ParseIP("10.1.2.3")) {
+		t.Error("10.0.0.0/8 should contain 10.1.2.3")
+	}
+	if _, err := (&NetworkConfig{ProxyAllowedCIDRs: []string{"nope"}}).ParsedAllowedCIDRs(); err == nil {
+		t.Error("expected error for invalid CIDR")
 	}
 }
 

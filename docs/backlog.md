@@ -48,16 +48,18 @@ narrower: concrete, verified gaps in what exists today.
   the GPG signature and `Valid-Until`, so this is not a trust regression.
   `[cache] serve_stale_metadata` (default on); metric
   `debswarm_metadata_cache_stale_served_total`.
+- **LAN cache-server mode** (resolves former product gap #1): the proxy can bind
+  to a LAN interface (`[network] proxy_bind`) so a fleet shares one cache. The
+  trust story is fail-closed — a non-loopback bind requires an explicit client
+  CIDR allowlist (`[network] proxy_allowed_cidrs`) or the daemon refuses to start;
+  the allowlist matches the client's real connection address (X-Forwarded-For is
+  never trusted) and loopback is always allowed. When set it also gates the admin
+  read surface, closing robustness/security #6 for opted-in operators. Design:
+  `docs/design/lan-server-mode.md`.
 
 ## Product gaps (ranked by user value)
 
-1. **No LAN cache-server mode.** The proxy bind is hardcoded to `127.0.0.1`
-   (`cmd/debswarm/daemon.go`); only the metrics endpoint is configurable.
-   Other machines/containers/CI runners cannot use a debswarm box as their
-   APT cache, foreclosing the one-cache-per-office/lab/CI-fleet deployment
-   and any Kubernetes DaemonSet story. Needs a bind option plus a hard think
-   about the trust story for remote clients.
-2. **Offline / `lan_only` mode: metadata done, package path remaining.** Serving
+1. **Offline / `lan_only` mode: metadata done, package path remaining.** Serving
    cached *metadata* offline landed in PR #99 and the in-memory index now
    re-warms from the cache after a restart (PR #98), so `apt-get update` survives
    an outage. What's still unwired: the `.deb` **download** path never consults
@@ -65,7 +67,7 @@ narrower: concrete, verified gaps in what exists today.
    fails even when every needed `.deb` is cached, and there is no explicit
    `lan_only` gating (mirror fallback is simply attempted and allowed to fail).
    Re-check `docs/comparison.md` once the package path is wired.
-3. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
+2. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
    transport and hole punching are enabled — no AutoRelay reservation logic,
    and no debswarm node ever runs the relay service, so DCUtR has no relayed
    connection to coordinate through. Two NAT'd peers can never connect.
@@ -73,15 +75,15 @@ narrower: concrete, verified gaps in what exists today.
    `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
    publicly reachable nodes) — and until then, `docs/comparison.md`
    ("Relay Fallback: Yes") should be corrected.
-4. **No apt repository or container image for debswarm itself.** Distribution
+3. **No apt repository or container image for debswarm itself.** Distribution
    is GitHub releases + `curl | bash`. No signed apt repo means no
    `unattended-upgrades` and no fleet-wide upgrade path — ironic for an APT
    tool. No Dockerfile/OCI image/Helm chart exists.
-5. **Source packages get zero benefit.** Sources indices are deliberately not
+4. **Source packages get zero benefit.** Sources indices are deliberately not
    parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
    Sources carrying SHA256s that would make verification identical to the
    `.deb` path. Build farms are a natural audience.
-6. **Smaller**: `rollback fetch` from P2P is a stub while the README
+5. **Smaller**: `rollback fetch` from P2P is a stub while the README
    advertises it; no mirror remapping/failover (per-mirror stats are
    collected but never used for selection); no per-repo cache stats or
    quotas; cache pinning is by SHA256 prefix only.

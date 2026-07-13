@@ -64,6 +64,8 @@ Network settings for P2P communication and the HTTP proxy.
 |-------|------|---------|-------------|
 | `listen_port` | integer | `4001` | P2P listen port for incoming connections. Uses both UDP (QUIC) and TCP. |
 | `proxy_port` | integer | `9977` | HTTP proxy port for APT requests. APT connects to `http://127.0.0.1:<port>`. |
+| `proxy_bind` | string | `"127.0.0.1"` | HTTP proxy bind address. Default serves only this host; a non-loopback address (LAN interface IP or `0.0.0.0`) enables **LAN server mode** and **requires** `proxy_allowed_cidrs`. (v1.34+) |
+| `proxy_allowed_cidrs` | string[] | `[]` | Client networks (CIDR) permitted to use the proxy when `proxy_bind` is non-loopback. Loopback is always allowed. (v1.34+) |
 | `max_connections` | integer | `100` | Maximum number of concurrent P2P connections. Prevents resource exhaustion. |
 | `bootstrap_peers` | string[] | libp2p defaults | List of bootstrap peer multiaddrs for DHT initialization. |
 | `connectivity_mode` | string | `"auto"` | Connectivity mode: `"auto"`, `"lan_only"`, or `"online_only"`. |
@@ -96,6 +98,33 @@ bootstrap_peers = [
   "/dnsaddr/bootstrap.libp2p.io/p2p/QmcZf59bWwK5XFi76CZX8cbJ4BhTzzA3gU1ZjYZcYW3dwt",
 ]
 ```
+
+**LAN server mode (v1.34+):** By default the proxy binds to `127.0.0.1` and
+serves only the local machine. Set `proxy_bind` to a LAN interface IP (or
+`0.0.0.0` for all interfaces) to let other hosts use this box as their shared APT
+cache — one cache per office, lab, or CI fleet. Point those clients' APT proxy at
+`http://<this-host>:9977`.
+
+```toml
+[network]
+proxy_bind = "0.0.0.0"
+proxy_allowed_cidrs = ["192.168.1.0/24", "10.42.0.0/16"]
+```
+
+Security is fail-closed: a non-loopback `proxy_bind` **requires** an explicit
+`proxy_allowed_cidrs`, and the daemon refuses to start without one — exposing the
+cache is always a deliberate, validated act. The allowlist is matched against the
+client's real connection address (a spoofed `X-Forwarded-For` header cannot grant
+access), and loopback is always permitted so local APT keeps working. This does
+not change the trust model: the proxy still only fetches from allow-listed Debian
+mirrors, and each client's own APT still verifies the GPG signature end-to-end, so
+serving a LAN client is no less safe than serving localhost — the allowlist only
+governs *who* may connect.
+
+If you also bind the metrics/admin server (`[metrics] bind`) to a non-loopback
+address, the same `proxy_allowed_cidrs` gates its read endpoints (`/stats`,
+`/dashboard`, cache inventory), so those are not exposed to the whole network.
+Mutating cache-management API routes remain loopback-only regardless.
 
 **Connectivity Modes (v1.8+):**
 | Mode | Description |
