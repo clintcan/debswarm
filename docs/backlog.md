@@ -56,6 +56,17 @@ narrower: concrete, verified gaps in what exists today.
   never trusted) and loopback is always allowed. When set it also gates the admin
   read surface, closing robustness/security #6 for opted-in operators. Design:
   `docs/design/lan-server-mode.md`.
+- **Daemon-side upstream GPG verification** (resolves the code half of
+  robustness/security #1): the daemon can verify each repository's GPG-signed
+  `Release` against a trusted keyring and each `Packages` index against it,
+  anchoring every `.deb` hash to GPG rather than the mirror. `[security]
+  verify_upstream_signatures`: `off`, `warn` (default — verify and report via
+  `debswarm_upstream_verify_total`, a log, and an `X-Debswarm-Unverified` header,
+  but always serve, so APT sees identical behavior), or `enforce` (refuse an
+  unverified index). Keys auto-discovered from APT's keyrings; reads the signed
+  `Release` from the metadata cache, so it needs `[cache] cache_metadata`. Closes
+  the `[trusted=yes]` / `dpkg -i` / P2P-seed gap. Design:
+  `docs/design/upstream-gpg-verification.md`. Dependency `ProtonMail/go-crypto`.
 
 ## Product gaps (ranked by user value)
 
@@ -92,18 +103,19 @@ narrower: concrete, verified gaps in what exists today.
 
 ## Robustness / security
 
-1. **Trust model: docs corrected (this pass); daemon-side hardening remains.**
-   The overstated claims were reworded across README, SECURITY.md, the docs,
-   config examples, and code comments — so the model is now stated accurately.
-   What's left is the *optional code* work below. The daemon performs no GPG
-   verification: the SHA256 it verifies against comes from a Packages index
-   fetched over the same (usually `http://`) upstream leg as the package
-   bytes, so the proxy's own check provides no MITM resistance upstream. The
-   end-to-end guarantee is APT's client-side GPG verification — which holds —
-   but `[trusted=yes]` repos, `Acquire::AllowInsecureRepositories`, or
-   `dpkg -i` of proxy-fetched files inherit attacker-controlled bytes.
-   Remaining options: verify Packages against the signed Release in the daemon
-   (openpgp), and default more hosts to HTTPS upstream. (The doc reword is done.)
+1. **Trust model: docs corrected and daemon-side verification shipped; defaults
+   remain.** The overstated claims were reworded across README, SECURITY.md, the
+   docs, config examples, and code comments, and the daemon can now verify the
+   signed `Release` and each `Packages` index itself (`[security]
+   verify_upstream_signatures`, see Recently addressed). By default the SHA256 it
+   verifies against still comes from a Packages index fetched over the same
+   (usually `http://`) upstream leg as the bytes, so with verification `off`/`warn`
+   the proxy's own check provides no upstream-MITM resistance — the end-to-end
+   guarantee stays APT's client-side GPG verification. `enforce` closes that gap
+   for any repo whose signing key debswarm can discover. What's left is opt-in
+   posture: `enforce` is not the default (back-compat), verification needs a
+   cached signed `Release` (no live on-demand mirror fetch yet), and more hosts
+   could default to HTTPS upstream.
 2. **Peer blacklisting is in-memory and Sybil-trivial.** A restart clears all
    blacklists; an offender reconnects under a fresh peer ID. Verification
    prevents poisoning, so this is a deterrence gap, not a correctness one.

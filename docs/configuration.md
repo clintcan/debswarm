@@ -338,6 +338,58 @@ than making APT wait out the download timeouts.
 
 ---
 
+### [security]
+
+Daemon-side upstream signature verification (v1.34+). debswarm can verify each
+repository's GPG-signed `Release` against a trusted keyring, and each `Packages`
+index against that signed `Release`, before trusting the SHA256 it lists. This
+anchors the hash debswarm checks to GPG rather than to the mirror's word.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `verify_upstream_signatures` | string | `"warn"` | `"off"`, `"warn"`, or `"enforce"` (see below). |
+| `keyring_path` | string | `""` | Optional file/dir of extra trusted public keys (binary `.gpg` or armored `.asc`), added to the auto-discovered APT keyrings. |
+| `verify_exempt_hosts` | string[] | `[]` | Hosts served even when unverifiable; applies only in `enforce` mode. |
+
+**Why:** APT's own client-side GPG verification already protects a normal
+`apt-get install`. Daemon-side verification hardens the cases APT does **not**
+cover: `[trusted=yes]` / `AllowInsecureRepositories` repositories, `dpkg -i` of a
+file pulled from debswarm's cache, and the packages debswarm caches and seeds to
+P2P peers (whose only anchor is otherwise "the mirror said so").
+
+**Modes:**
+
+| Mode | Behavior |
+|------|----------|
+| `off` | No verification. Unchanged behavior. |
+| `warn` (default) | Verify and report — on failure, increment `debswarm_upstream_verify_total`, log, and set an `X-Debswarm-Unverified: <reason>` response header — but **always serve**. Identical to `off` from APT's point of view (nothing is refused); it only adds visibility. |
+| `enforce` | Refuse to parse/serve an index whose `Release` fails signature or hash verification (fresh fetch → `502`; a cached index is simply not loaded into the in-memory index). Fail-closed. |
+
+APT's end-to-end GPG verification is unaffected in every mode; this is defense
+for the bypass cases above, not a replacement for it.
+
+**Keys:** trusted keys are auto-discovered from the host's APT keyrings
+(`/etc/apt/trusted.gpg{,.d}`, `/usr/share/keyrings`, `/etc/apt/keyrings`), so on a
+normal Debian/Ubuntu host debswarm trusts **exactly what APT trusts** — including
+third-party repos configured with `signed-by=` — with no configuration. Set
+`keyring_path` on a dedicated cache-server whose own APT keyrings are empty
+(it never runs `apt-get update` locally); in `enforce` mode such a host requires it.
+
+**Requirements & fail-fast:** verification reads the signed `Release` from the
+metadata cache, so it needs `[cache] cache_metadata = true`. The daemon refuses to
+start if `enforce` is set with no trusted keys, or with `cache_metadata` disabled;
+in `warn` those conditions log a warning instead.
+
+**Freshness:** debswarm verifies the `Release` **signature** but does not enforce
+its `Valid-Until` — that is left to APT — so serving an expired-but-signed
+`Release` offline (see `serve_stale_metadata`) still works.
+
+**Flat repositories** (e.g. `pkgs.k8s.io`, which have no `dists/` tree) are not
+covered by this dist-based scheme in v1; in `warn` they are served and reported
+`no-dist`, and in `enforce` they require `verify_exempt_hosts`.
+
+---
+
 ### [transfer]
 
 Settings for upload/download behavior and rate limiting.

@@ -63,6 +63,16 @@ metadata_max_size = "1GB"
 # signature and Valid-Until. Set false to make an unreachable mirror a hard error.
 serve_stale_metadata = true
 
+[security]
+# Verify each repository's GPG-signed Release against a trusted keyring (and each
+# Packages index against that Release) before trusting its hashes. "off" | "warn"
+# | "enforce". Default "warn": verify and report failures but serve unchanged
+# (identical to old behavior for APT; APT still verifies GPG end-to-end). Set
+# "enforce" for fail-closed protection. Keys are auto-discovered from the host's
+# APT keyrings; requires cache_metadata above. See docs/configuration.md.
+verify_upstream_signatures = "warn"
+# keyring_path = "/etc/debswarm/keyrings"   # extra keys (needed on an apt-less cache-server in enforce)
+
 [transfer]
 max_upload_rate = "0"
 max_download_rate = "0"

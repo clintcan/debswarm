@@ -150,6 +150,39 @@ metadata_max_size = "1GB"
 serve_stale_metadata = true
 
 #─────────────────────────────────────────────────────────────────────────────
+# [security] - Daemon-side upstream signature verification
+#─────────────────────────────────────────────────────────────────────────────
+[security]
+# Verify each repository's GPG-signed Release against a trusted keyring, and each
+# Packages index against that signed Release, before trusting the SHA256 it lists.
+# This anchors the hash debswarm checks to GPG instead of "the mirror said so",
+# hardening the cases APT's own check does not cover: [trusted=yes] repos,
+# dpkg -i of a cached file, and the packages debswarm seeds to P2P peers.
+#
+#   "off"     - no verification (unchanged behavior).
+#   "warn"    - verify and report (metric + log + X-Debswarm-Unverified header on
+#               failure) but always serve. Identical to "off" from APT's point of
+#               view — nothing is refused. This is the default.
+#   "enforce" - refuse to parse/serve an index whose Release fails signature or
+#               hash verification (fail-closed).
+#
+# APT's own end-to-end GPG verification is unaffected in every mode. Verification
+# reads the signed Release from the metadata cache, so it requires cache_metadata
+# above; enforce additionally requires at least one trusted key (below).
+verify_upstream_signatures = "warn"
+
+# Optional file or directory of extra trusted public keys (binary .gpg or armored
+# .asc), in addition to the host's APT keyrings which are discovered automatically
+# (/etc/apt/trusted.gpg{,.d}, /usr/share/keyrings, /etc/apt/keyrings). On a normal
+# Debian/Ubuntu host debswarm then trusts exactly what APT trusts with no config.
+# Set this on a dedicated cache-server whose own APT keyrings are empty.
+# keyring_path = "/etc/debswarm/keyrings"
+
+# Hosts served even when their index cannot be verified — an escape hatch that
+# applies only in enforce mode, for a repo whose signing key cannot be provisioned.
+# verify_exempt_hosts = ["internal-repo.example.com"]
+
+#─────────────────────────────────────────────────────────────────────────────
 # [transfer] - Upload/download settings
 #─────────────────────────────────────────────────────────────────────────────
 [transfer]
