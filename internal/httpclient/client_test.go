@@ -146,11 +146,14 @@ func TestNew_ZeroValuesUseDefaults(t *testing.T) {
 			},
 		},
 		{
-			name: "negative timeout uses default",
+			// A negative Timeout is the documented sentinel for "no
+			// whole-request timeout": callers transferring large bodies on
+			// slow links bound stalls per-read instead (see mirror.Fetcher).
+			name: "negative timeout disables the whole-request timeout",
 			cfg:  &Config{Timeout: -1 * time.Second},
 			expect: func(t *testing.T, c *http.Client) {
-				if c.Timeout != DefaultTimeout {
-					t.Errorf("expected default timeout, got %v", c.Timeout)
+				if c.Timeout != 0 {
+					t.Errorf("expected no client timeout, got %v", c.Timeout)
 				}
 			},
 		},

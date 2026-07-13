@@ -332,6 +332,14 @@ func createTables(db *sql.DB) error {
 	_, _ = db.Exec(`ALTER TABLE packages ADD COLUMN pinned INTEGER DEFAULT 0`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_name ON packages(package_name)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_pinned ON packages(pinned)`)
+	// Matches ensureSpace's eviction ORDER BY so candidate ranking is an index
+	// scan instead of a full-table sort on every over-budget Put. Created after
+	// the pinned migration above because the partial-index predicate needs the
+	// column to exist on databases from older versions.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_packages_evict
+		ON packages((last_accessed + access_count * 86400)) WHERE pinned = 0`); err != nil {
+		return fmt.Errorf("failed to create eviction index: %w", err)
+	}
 
 	return nil
 }
@@ -627,12 +635,14 @@ func (c *Cache) Delete(sha256Hash string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.deleteUnlocked(sha256Hash)
+	return c.deleteUnlocked(sha256Hash, -1)
 }
 
 var ErrFileInUse = errors.New("file is currently being read")
 
-func (c *Cache) deleteUnlocked(sha256Hash string) error {
+// deleteUnlocked removes a package. sizeHint avoids a per-candidate SELECT
+// when the caller (eviction) already knows the size; pass -1 to look it up.
+func (c *Cache) deleteUnlocked(sha256Hash string, sizeHint int64) error {
 	// Check if file is currently being read
 	c.activeReadersMu.Lock()
 	readers := c.activeReaders[sha256Hash]
@@ -643,10 +653,13 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 	}
 
 	// Get size before deleting
-	var size int64
-	err := c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", sha256Hash).Scan(&size)
-	if err != nil && err != sql.ErrNoRows {
-		return err
+	size := sizeHint
+	if size < 0 {
+		size = 0
+		err := c.db.QueryRow("SELECT size FROM packages WHERE sha256 = ?", sha256Hash).Scan(&size)
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
 	}
 
 	// Remove the on-disk file first. If it can't be removed — e.g. another process
@@ -663,7 +676,7 @@ func (c *Cache) deleteUnlocked(sha256Hash string) error {
 	}
 
 	// File is gone (or was already absent) — now drop the DB row and adjust size.
-	if _, err = c.db.Exec("DELETE FROM packages WHERE sha256 = ?", sha256Hash); err != nil {
+	if _, err := c.db.Exec("DELETE FROM packages WHERE sha256 = ?", sha256Hash); err != nil {
 		return err
 	}
 	c.currentSize -= size
@@ -886,7 +899,7 @@ func (c *Cache) ensureSpace(needed int64) error {
 			zap.String("hash", hash[:16]+"..."),
 			zap.Int64("size", size))
 
-		if err := c.deleteUnlocked(hash); err != nil {
+		if err := c.deleteUnlocked(hash, size); err != nil {
 			// Log but continue - file might be in use, try next candidate
 			c.logger.Warn("Failed to evict package", zap.Error(err))
 		}

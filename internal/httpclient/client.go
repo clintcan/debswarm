@@ -15,8 +15,16 @@ const (
 
 // Config holds HTTP client configuration options.
 type Config struct {
-	// Timeout is the maximum time for the entire request (default: 60s)
+	// Timeout is the maximum time for the entire request (default: 60s).
+	// Set to a negative value for NO whole-request timeout — callers that
+	// legitimately transfer large bodies on slow links (e.g. the mirror
+	// fetcher) must bound stalls per-read instead, because a blanket timeout
+	// kills a healthy transfer mid-body once it simply takes long enough.
 	Timeout time.Duration
+
+	// ResponseHeaderTimeout bounds the wait for upstream response headers
+	// (time to first byte) at the transport level. Zero means no bound.
+	ResponseHeaderTimeout time.Duration
 
 	// MaxIdleConnsPerHost controls the maximum idle connections per host (default: 10)
 	MaxIdleConnsPerHost int
@@ -37,8 +45,10 @@ func New(cfg *Config) *http.Client {
 	}
 
 	timeout := cfg.Timeout
-	if timeout <= 0 {
+	if timeout == 0 {
 		timeout = DefaultTimeout
+	} else if timeout < 0 {
+		timeout = 0 // negative sentinel: no whole-request timeout
 	}
 
 	maxIdleConns := cfg.MaxIdleConnsPerHost
@@ -52,8 +62,9 @@ func New(cfg *Config) *http.Client {
 	}
 
 	transport := &http.Transport{
-		MaxIdleConnsPerHost: maxIdleConns,
-		IdleConnTimeout:     idleConnTimeout,
+		MaxIdleConnsPerHost:   maxIdleConns,
+		IdleConnTimeout:       idleConnTimeout,
+		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
 	}
 
 	return &http.Client{

@@ -35,10 +35,16 @@ type Fetcher struct {
 	userAgent       string
 	maxRetries      int
 	maxResponseSize int64
+	stallWindow     time.Duration
 }
 
 // Config holds mirror fetcher configuration
 type Config struct {
+	// Timeout bounds LACK OF PROGRESS, not the whole transfer: it is the
+	// response-header wait and the per-read stall window. A whole-request
+	// deadline was used historically, but it killed any healthy download that
+	// simply took longer than the limit (a large package on a slow link),
+	// then re-downloaded it from byte zero on each retry.
 	Timeout         time.Duration
 	MaxRetries      int
 	UserAgent       string
@@ -68,14 +74,20 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 	}
 
 	client := httpclient.New(&httpclient.Config{
-		Timeout:             cfg.Timeout,
-		MaxIdleConnsPerHost: cfg.MaxIdleConn,
-		CheckRedirect:       checkRedirectSafety,
+		Timeout:               -1, // no whole-request deadline; stalls are bounded per-read below
+		ResponseHeaderTimeout: cfg.Timeout,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConn,
+		CheckRedirect:         checkRedirectSafety,
 	})
 
 	maxResponseSize := cfg.MaxResponseSize
 	if maxResponseSize <= 0 {
 		maxResponseSize = DefaultMaxResponseSize
+	}
+
+	stallWindow := cfg.Timeout
+	if stallWindow <= 0 {
+		stallWindow = 60 * time.Second
 	}
 
 	return &Fetcher{
@@ -85,7 +97,60 @@ func NewFetcher(cfg *Config, logger *zap.Logger) *Fetcher {
 		userAgent:       cfg.UserAgent,
 		maxRetries:      cfg.MaxRetries,
 		maxResponseSize: maxResponseSize,
+		stallWindow:     stallWindow,
 	}
+}
+
+// stallReader aborts a transfer that stops making progress: every successful
+// read re-arms a timer, and if no bytes arrive within the stall window the
+// request context is canceled, unblocking the pending read with an error.
+// Close releases the derived context.
+type stallReader struct {
+	r      io.ReadCloser
+	timer  *time.Timer
+	window time.Duration
+	cancel context.CancelFunc
+}
+
+func newStallReader(body io.ReadCloser, window time.Duration, cancel context.CancelFunc) *stallReader {
+	return &stallReader{
+		r:      body,
+		timer:  time.AfterFunc(window, cancel),
+		window: window,
+		cancel: cancel,
+	}
+}
+
+func (sr *stallReader) Read(p []byte) (int, error) {
+	n, err := sr.r.Read(p)
+	if err == nil {
+		sr.timer.Reset(sr.window)
+	} else {
+		sr.timer.Stop()
+	}
+	return n, err
+}
+
+func (sr *stallReader) Close() error {
+	sr.timer.Stop()
+	sr.cancel()
+	return sr.r.Close()
+}
+
+// doStallGuarded issues the request on a cancelable child context and replaces
+// the response body with a stall-guarded reader, so a transfer that makes no
+// progress for the stall window is aborted (and, being retryable, re-attempted
+// by callers that retry) instead of hanging or — with the old whole-request
+// timeout — killing healthy long transfers.
+func (f *Fetcher) doStallGuarded(req *http.Request) (*http.Response, error) {
+	guardCtx, cancel := context.WithCancel(req.Context())
+	resp, err := f.client.Do(req.WithContext(guardCtx))
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp.Body = newStallReader(resp.Body, f.stallWindow, cancel)
+	return resp, nil
 }
 
 // checkRedirectSafety validates each redirect hop before it is followed.
@@ -120,7 +185,7 @@ func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 		MaxAttempts: f.maxRetries,
 		Backoff:     retry.Exponential(time.Second),
 	}, func() ([]byte, error) {
-		resp, err := f.client.Do(req)
+		resp, err := f.doStallGuarded(req)
 		if err != nil {
 			f.recordError(url)
 			return nil, err
@@ -183,7 +248,7 @@ func (f *Fetcher) FetchToWriter(ctx context.Context, url string, w io.Writer) (i
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
-	resp, err := f.client.Do(req)
+	resp, err := f.doStallGuarded(req)
 	if err != nil {
 		f.recordError(url)
 		return 0, err
@@ -226,7 +291,7 @@ func (f *Fetcher) Stream(ctx context.Context, url string) (io.ReadCloser, int64,
 	}
 	req.Header.Set("User-Agent", f.userAgent)
 
-	resp, err := f.client.Do(req)
+	resp, err := f.doStallGuarded(req)
 	if err != nil {
 		f.recordError(url)
 		return nil, 0, err
@@ -241,6 +306,71 @@ func (f *Fetcher) Stream(ctx context.Context, url string) (io.ReadCloser, int64,
 	}
 
 	return resp.Body, resp.ContentLength, nil
+}
+
+// ConditionalResult carries the outcome of a conditional GET. On upstream 304
+// Body is nil and NotModified is true; on 200 Body streams the content.
+// LastModified and ETag are relayed so clients can revalidate next time.
+type ConditionalResult struct {
+	Body         io.ReadCloser
+	Size         int64
+	NotModified  bool
+	LastModified string
+	ETag         string
+}
+
+// StreamConditional performs a GET forwarding the given revalidation values
+// (empty strings are omitted). It lets APT's If-Modified-Since/If-None-Match
+// reach the mirror, so unchanged index and Release files cost a 304 instead of
+// a full re-download on every apt-get update.
+func (f *Fetcher) StreamConditional(ctx context.Context, url, ifModifiedSince, ifNoneMatch string) (*ConditionalResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", f.userAgent)
+	if ifModifiedSince != "" {
+		req.Header.Set("If-Modified-Since", ifModifiedSince)
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
+
+	resp, err := f.doStallGuarded(req)
+	if err != nil {
+		f.recordError(url)
+		return nil, err
+	}
+
+	result := &ConditionalResult{
+		Size:         resp.ContentLength,
+		LastModified: resp.Header.Get("Last-Modified"),
+		ETag:         resp.Header.Get("ETag"),
+	}
+
+	switch resp.StatusCode {
+	case http.StatusNotModified:
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
+		}
+		result.NotModified = true
+		return result, nil
+	case http.StatusOK:
+		result.Body = resp.Body
+		return result, nil
+	default:
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			f.logger.Debug("Failed to close response body", zap.Error(closeErr))
+		}
+		f.recordError(url)
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, resp.Status)
+	}
+}
+
+// MaxResponseSize returns the configured response size cap, for callers that
+// buffer a streamed body and need to enforce the same bound as Fetch.
+func (f *Fetcher) MaxResponseSize() int64 {
+	return f.maxResponseSize
 }
 
 // Head performs a HEAD request to get content info without downloading
@@ -283,7 +413,7 @@ func (f *Fetcher) FetchRange(ctx context.Context, url string, rangeStart, rangeE
 		MaxAttempts: f.maxRetries,
 		Backoff:     retry.Exponential(time.Second),
 	}, func() ([]byte, error) {
-		resp, err := f.client.Do(req)
+		resp, err := f.doStallGuarded(req)
 		if err != nil {
 			f.recordError(url)
 			return nil, err
