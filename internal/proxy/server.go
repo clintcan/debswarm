@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -367,18 +368,29 @@ func (s *Server) startMetricsServer() {
 		mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	}
 
-	addr := fmt.Sprintf("%s:%d", s.metricsBind, s.metricsPort)
+	addr := net.JoinHostPort(s.metricsBind, strconv.Itoa(s.metricsPort))
 	s.logger.Info("Starting metrics server", zap.String("addr", addr))
 
-	// Warn if binding to non-localhost
-	if s.metricsBind != "127.0.0.1" && s.metricsBind != "localhost" {
-		s.logger.Warn("Metrics server bound to non-localhost address - ensure firewall is configured",
-			zap.String("bind", s.metricsBind))
+	// When a client allowlist is configured, apply it to the admin read surface as
+	// well (loopback always allowed), so binding the admin server to the LAN does
+	// not expose stats/dashboard/cache-inventory to every reachable host. With no
+	// allowlist set we keep the historical warn-only behavior so existing
+	// non-loopback deployments are not broken on upgrade — only warned.
+	handler := http.Handler(mux)
+	if !bindIsLoopback(s.metricsBind) {
+		if len(s.allowedClientNets) > 0 {
+			handler = s.gateClient(mux)
+			s.logger.Warn("Metrics/admin server bound to a non-loopback address; read endpoints are restricted to network.proxy_allowed_cidrs",
+				zap.String("bind", s.metricsBind))
+		} else {
+			s.logger.Warn("Metrics/admin server bound to a non-loopback address with no network.proxy_allowed_cidrs set - stats, dashboard, and cache inventory are readable by any reachable host; set proxy_allowed_cidrs to restrict access",
+				zap.String("bind", s.metricsBind))
+		}
 	}
 
 	server := &http.Server{
 		Addr:           addr,
-		Handler:        mux,
+		Handler:        handler,
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   30 * time.Second,
 		IdleTimeout:    60 * time.Second,
