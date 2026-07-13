@@ -1159,7 +1159,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 
 	body, _, err := s.fetcher.Stream(ctx, mirrorURL)
 	if err != nil {
-		log.Error("Mirror fetch failed", zap.Error(err))
+		logFetchFailure(ctx, log, "Mirror fetch failed", err)
 		// Audit log download failure
 		s.audit.Log(audit.NewDownloadFailedEvent(expectedHash, path, err.Error()).WithRequestID(reqID))
 		return nil, fmt.Errorf("mirror fetch failed: %w", err)
@@ -1607,16 +1607,71 @@ func (s *Server) retryDownload(expectedHash, url string, expectedSize int64, pat
 		zap.Int("size", len(downloadResult.data)))
 }
 
+// logFetchFailure logs an upstream fetch failure at the appropriate level:
+// when the request context is already canceled, the CLIENT hung up — APT
+// routinely abandons redundant index requests during apt-get update — which is
+// not a server error and used to put an ERROR line in the log on every update.
+func logFetchFailure(ctx context.Context, log *zap.Logger, msg string, err error) {
+	if ctx.Err() != nil {
+		log.Debug(msg, zap.Error(err), zap.String("cause", "client canceled request"))
+		return
+	}
+	log.Error(msg, zap.Error(err))
+}
+
+// relayValidators forwards upstream revalidation headers so APT can send
+// conditional requests next time.
+func relayValidators(w http.ResponseWriter, cond *mirror.ConditionalResult) {
+	if cond.LastModified != "" {
+		w.Header().Set("Last-Modified", cond.LastModified)
+	}
+	if cond.ETag != "" {
+		w.Header().Set("ETag", cond.ETag)
+	}
+}
+
 func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url string) {
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
 	log.Debug("Fetching index", zap.String("url", sanitize.URL(url)))
 
-	data, err := s.fetcher.Fetch(ctx, s.upstreamFetchURL(url))
+	// Forward APT's revalidation headers only when our in-memory index already
+	// holds this file's entries: relaying an upstream 304 is only correct when
+	// we too have the content. After a daemon restart APT's cache is warm but
+	// ours is empty — a 304 then would leave every package unverifiable.
+	var ims, inm string
+	if s.index.HasIndexFile(url) {
+		ims = r.Header.Get("If-Modified-Since")
+		inm = r.Header.Get("If-None-Match")
+	}
+
+	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url), ims, inm)
 	if err != nil {
-		log.Error("Failed to fetch index", zap.Error(err))
+		logFetchFailure(ctx, log, "Failed to fetch index", err)
 		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
+		return
+	}
+
+	if cond.NotModified {
+		// Upstream confirmed the index is unchanged: skip the re-download and
+		// the full re-parse entirely.
+		log.Debug("Index not modified upstream", zap.String("url", sanitize.URL(url)))
+		relayValidators(w, cond)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	defer func() { _ = cond.Body.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(cond.Body, s.fetcher.MaxResponseSize()+1))
+	if err != nil {
+		logFetchFailure(ctx, log, "Failed to fetch index", err)
+		http.Error(w, "Failed to fetch index", http.StatusBadGateway)
+		return
+	}
+	if int64(len(data)) > s.fetcher.MaxResponseSize() {
+		log.Error("Index response exceeds maximum allowed size")
+		http.Error(w, "Index too large", http.StatusBadGateway)
 		return
 	}
 
@@ -1641,6 +1696,7 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+	relayValidators(w, cond)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -1654,14 +1710,26 @@ func (s *Server) handlePassthrough(w http.ResponseWriter, r *http.Request, url s
 	log := requestid.LoggerFromContext(ctx, s.logger)
 
 	// Stream the upstream body straight to the client instead of buffering the
-	// whole response in memory. Stream validates the status before returning the
-	// body, so an upstream failure still yields a 502 before any bytes are sent.
-	body, size, err := s.fetcher.Stream(ctx, s.upstreamFetchURL(url))
+	// whole response in memory, forwarding APT's revalidation headers so an
+	// unchanged Release/InRelease costs a 304 instead of a full download on
+	// every apt-get update. (Unlike Packages files there is no local parse
+	// state to guard — APT's own cache is the only consumer.) An upstream
+	// failure still yields a 502 before any bytes are sent.
+	cond, err := s.fetcher.StreamConditional(ctx, s.upstreamFetchURL(url),
+		r.Header.Get("If-Modified-Since"), r.Header.Get("If-None-Match"))
 	if err != nil {
-		log.Error("Passthrough fetch failed", zap.Error(err))
+		logFetchFailure(ctx, log, "Passthrough fetch failed", err)
 		http.Error(w, "Failed to fetch", http.StatusBadGateway)
 		return
 	}
+
+	if cond.NotModified {
+		relayValidators(w, cond)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	body, size := cond.Body, cond.Size
+	relayValidators(w, cond)
 	defer func() { _ = body.Close() }()
 
 	if size >= 0 {
@@ -1690,7 +1758,7 @@ func (s *Server) streamUncachedPackage(w http.ResponseWriter, r *http.Request, u
 
 	body, size, err := s.fetcher.Stream(ctx, s.upstreamFetchURL(url))
 	if err != nil {
-		log.Error("Mirror fetch failed", zap.Error(err))
+		logFetchFailure(ctx, log, "Mirror fetch failed", err)
 		s.audit.Log(audit.NewDownloadFailedEvent("", path, err.Error()).WithRequestID(reqID))
 		http.Error(w, "Failed to fetch package", http.StatusBadGateway)
 		return

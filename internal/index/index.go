@@ -81,6 +81,18 @@ func New(cachePath string, logger *zap.Logger) *Index {
 	}
 }
 
+// HasIndexFile reports whether a parse of the given index URL (or path) is
+// currently loaded. The proxy uses this to decide whether it may forward a
+// client's revalidation headers upstream: a 304 is only safe to relay when the
+// in-memory index already holds this file's entries (e.g. NOT right after a
+// daemon restart, when the client's cache is warm but ours is empty).
+func (idx *Index) HasIndexFile(urlOrPath string) bool {
+	key := indexFileKey(urlOrPath)
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return len(idx.byIndexFile[key]) > 0
+}
+
 // indexFileKey derives a stable identity for a Packages index file from its
 // URL or filesystem path. By-hash digests change on every repository update,
 // so they collapse to the index directory; compression extensions are ignored
