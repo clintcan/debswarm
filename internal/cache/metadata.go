@@ -133,6 +133,32 @@ func (c *Cache) MetadataValidators(url string) (etag, lastModified string, ok bo
 	return e, lm, true
 }
 
+// ListMetadataURLs returns the URLs of every cached metadata file. It lets the
+// proxy warm its in-memory package index from cached Packages indices after a
+// restart (so a cached .deb resolves offline without a fresh apt-get update).
+// Returns an empty slice when metadata caching is disabled.
+func (c *Cache) ListMetadataURLs() ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.metadataMaxSize <= 0 {
+		return nil, nil
+	}
+	rows, err := c.db.QueryContext(context.Background(), "SELECT url FROM indices")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var urls []string
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		urls = append(urls, u)
+	}
+	return urls, rows.Err()
+}
+
 // HasMetadata reports whether a URL has a cached body on disk.
 func (c *Cache) HasMetadata(url string) bool {
 	c.mu.RLock()

@@ -127,6 +127,12 @@ type Server struct {
 	// staleHostsSeen tracks repository hosts for which we have already logged an
 	// INFO-level "serving stale metadata" notice (once per host).
 	staleHostsSeen sync.Map
+
+	// indexWarmOnce guards a one-shot warm of the in-memory index from cached
+	// Packages metadata, so a cached .deb resolves to its SHA256 after a restart
+	// even when no apt-get update has run this session (the case that otherwise
+	// breaks offline installs of already-cached packages).
+	indexWarmOnce sync.Once
 }
 
 // Config holds proxy server configuration
@@ -1010,6 +1016,28 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 		}
 	}
 
+	// A cold in-memory index cannot resolve a cached .deb's hash. The index is
+	// populated at startup by the aptlists watcher (from /var/lib/apt/lists) and
+	// lazily by live Packages requests through the proxy — but neither fires on a
+	// host that never runs `apt-get update` locally, e.g. a dedicated debswarm
+	// cache-server whose /var/lib/apt/lists is empty. There the only record of the
+	// package's hash is debswarm's own metadata cache, so warm the index from it
+	// once and retry; otherwise an already-cached package falls through to an
+	// uncached passthrough that fails when the mirror is unreachable. On a normal
+	// host (apt lists present) the warm is a no-op — the index is already warm.
+	if expectedHash == "" {
+		s.warmIndexFromCacheOnce()
+		if pkg := s.index.GetByURLPath(url); pkg != nil && len(pkg.SHA256) == 64 {
+			if _, err := hex.DecodeString(pkg.SHA256); err == nil {
+				expectedHash = pkg.SHA256
+				expectedSize = pkg.Size
+				path = pkg.Filename
+				log.Debug("Resolved package after warming index from cache",
+					zap.String("hash", expectedHash[:16]+"..."))
+			}
+		}
+	}
+
 	// No signed index entry: the package cannot be verified, cached, or shared
 	// over P2P. Stream it straight from the mirror to the client instead of
 	// buffering the whole file in memory (it can be hundreds of MB). This path
@@ -1047,6 +1075,16 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	s.metrics.CacheMisses.Inc()
 
+	// Offline fast-fail: the package is not cached and there is genuinely nothing
+	// to reach — ModeOffline means no internet AND no mDNS peers. Skip the doomed
+	// fleet -> DHT -> P2P -> mirror chain and tell APT immediately instead of
+	// making it wait out the download timeouts.
+	if s.connectivity != nil && s.connectivity.GetMode() == connectivity.ModeOffline {
+		log.Debug("Package not cached and node is offline", zap.String("url", sanitize.URL(url)))
+		http.Error(w, "package not cached and node is offline", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Use singleflight to coalesce concurrent requests for the same package
 	// This prevents duplicate downloads when multiple clients request the same package
 	coalescingKey := expectedHash
@@ -1070,6 +1108,49 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 	// Serve the result
 	downloadResult := result.(*packageDownloadResult)
 	s.servePackageResult(w, downloadResult)
+}
+
+// warmIndexFromCacheOnce loads every cached Packages index into the in-memory
+// index, exactly once per daemon session. It lets the proxy resolve a .deb URL to
+// its SHA256 (and thus serve the package from cache) on a host that never runs
+// `apt-get update` locally — a dedicated cache-server with an empty
+// /var/lib/apt/lists, where the aptlists watcher warms nothing at startup and the
+// package's hash lives only in debswarm's metadata cache. Where apt's lists are
+// present this is a no-op (the aptlists watcher already warmed the index).
+// Best-effort: individual read/parse failures are logged and skipped.
+func (s *Server) warmIndexFromCacheOnce() {
+	s.indexWarmOnce.Do(func() {
+		if s.cache == nil || s.index == nil || !s.cache.MetadataEnabled() {
+			return
+		}
+		urls, err := s.cache.ListMetadataURLs()
+		if err != nil {
+			s.logger.Debug("Index warm: failed to list cached metadata", zap.Error(err))
+			return
+		}
+		warmed := 0
+		for _, u := range urls {
+			if !isPackagesIndexURL(u) || s.index.HasIndexFile(u) {
+				continue
+			}
+			entry, rc, gerr := s.cache.GetMetadata(u)
+			if gerr != nil {
+				continue
+			}
+			data, rerr := io.ReadAll(io.LimitReader(rc, entry.Size))
+			_ = rc.Close()
+			if rerr != nil {
+				continue
+			}
+			if lerr := s.index.LoadFromData(data, u); lerr == nil {
+				warmed++
+			}
+		}
+		if warmed > 0 {
+			s.logger.Info("Warmed in-memory index from cached metadata",
+				zap.Int("files", warmed), zap.Int("totalPackages", s.index.Count()))
+		}
+	})
 }
 
 // packageDownloadResult holds the result of a package download

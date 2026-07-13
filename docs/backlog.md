@@ -59,14 +59,16 @@ narrower: concrete, verified gaps in what exists today.
 
 ## Product gaps (ranked by user value)
 
-1. **Offline / `lan_only` mode: metadata done, package path remaining.** Serving
-   cached *metadata* offline landed in PR #99 and the in-memory index now
-   re-warms from the cache after a restart (PR #98), so `apt-get update` survives
-   an outage. What's still unwired: the `.deb` **download** path never consults
-   the connectivity monitor's `GetMode()`, so a package *install* offline still
-   fails even when every needed `.deb` is cached, and there is no explicit
-   `lan_only` gating (mirror fallback is simply attempted and allowed to fail).
-   Re-check `docs/comparison.md` once the package path is wired.
+1. **`lan_only` mode: mirror suppression in the download racing path.** Offline
+   `.deb` serving now works — cached metadata serves offline (PR #99), the
+   in-memory index re-warms from cache after a restart, `apt-get install` of an
+   already-cached package is served from disk offline, and a genuine miss while
+   offline fails fast with 503 (all shipped). What remains is explicit `lan_only`
+   gating: `downloadPackage` still builds a mirror source and runs the final
+   mirror fallback even in `ModeLANOnly`, so a LAN-only node can still reach the
+   WAN. The fix belongs inside `downloadPackage` (nil the mirror source for the
+   parallel downloader and skip the final mirror `Stream`), but it touches the
+   racing path — deferred to keep the offline change low-risk.
 2. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
    transport and hole punching are enabled — no AutoRelay reservation logic,
    and no debswarm node ever runs the relay service, so DCUtR has no relayed

@@ -49,6 +49,42 @@ func getMetaBody(t *testing.T, c *Cache, url string) ([]byte, *MetadataEntry) {
 	return b, entry
 }
 
+func TestMetadata_ListMetadataURLs(t *testing.T) {
+	c := enabledCache(t, 1<<20)
+	// Disabled cache lists nothing.
+	if urls, err := (func() ([]string, error) {
+		d, _ := testCache(t)
+		return d.ListMetadataURLs()
+	})(); err != nil || len(urls) != 0 {
+		t.Fatalf("disabled cache: urls=%v err=%v, want empty", urls, err)
+	}
+
+	want := []string{
+		"http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages",
+		"http://deb.debian.org/debian/dists/bookworm/InRelease",
+	}
+	for _, u := range want {
+		putMeta(t, c, u, "", "", "", []byte("body-"+u))
+	}
+
+	got, err := c.ListMetadataURLs()
+	if err != nil {
+		t.Fatalf("ListMetadataURLs: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d urls, want %d (%v)", len(got), len(want), got)
+	}
+	seen := map[string]bool{}
+	for _, u := range got {
+		seen[u] = true
+	}
+	for _, u := range want {
+		if !seen[u] {
+			t.Errorf("missing url %q in %v", u, got)
+		}
+	}
+}
+
 func TestMetadata_DisabledByDefault(t *testing.T) {
 	c, _ := testCache(t) // New() leaves metadata budget at 0
 	if c.MetadataEnabled() {
