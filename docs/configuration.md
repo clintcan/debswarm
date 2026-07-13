@@ -315,6 +315,13 @@ served, so a genuinely expired `Release` file is rejected by APT itself. Set
 `serve_stale_metadata = false` to make an unreachable mirror a hard error even
 when a cached copy exists.
 
+Offline serving extends to packages, not just metadata: `apt-get install` of an
+already-cached `.deb` succeeds while offline even after a daemon restart with no
+`apt-get update` this session — the proxy warms its package index from cached
+metadata to resolve the package's hash, then serves it from disk. A package that
+is genuinely not cached while offline fails fast (HTTP 503) rather than making
+APT wait out the download timeouts.
+
 **Size Format:**
 - Supports suffixes: `KB`, `K`, `MB`, `M`, `GB`, `G`, `TB`, `T`
 - Examples: `"10GB"`, `"500MB"`, `"1TB"`
