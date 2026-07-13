@@ -187,7 +187,7 @@ func (c *NetworkConfig) GetConnectivityMode() string {
 // the first one for callers that parse after validation has passed. The result is
 // used to gate inbound proxy clients in LAN server mode.
 func (c *NetworkConfig) ParsedAllowedCIDRs() ([]*net.IPNet, error) {
-	var nets []*net.IPNet
+	nets := make([]*net.IPNet, 0, len(c.ProxyAllowedCIDRs))
 	for _, cidr := range c.ProxyAllowedCIDRs {
 		if cidr == "" {
 			continue
