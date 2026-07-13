@@ -1,3 +1,24 @@
+debswarm (1.32.0-1) stable; urgency=low
+
+  * Fleet: cold-package downloads no longer stall for the 5s claim window
+    (explicit don't-have replies end it at LAN round-trip; only genuinely
+    mDNS-discovered LAN peers count as fleet peers, not public-DHT strangers)
+  * Cache SQLite now actually runs in WAL mode (the journal-mode DSN parameter
+    was silently ignored by the driver); reads no longer serialize behind
+    writes or per-hit fsyncs; eviction ranking is indexed
+  * Mirror downloads stream through the cache instead of buffering whole
+    packages in memory (a 96MB package no longer spikes memory by ~300MB);
+    each download is hashed once; racing losers stop transferring promptly
+  * Conditional index revalidation: If-Modified-Since/If-None-Match are
+    forwarded and 304s relayed, so a repeat apt-get update against unchanged
+    repositories transfers zero bytes from the mirror
+  * Mirror timeouts bound lack of progress instead of whole transfers, so
+    large downloads on slow links complete instead of dying at 60s
+  * Index re-parses no longer leak ~20-30MB per apt-get update; client
+    disconnects are no longer logged as server errors
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 13 Jul 2026 00:00:00 +0000
+
 debswarm (1.31.0-1) stable; urgency=low
 
   * Uncached-serve observability: a packages_served_uncached metric (also in
