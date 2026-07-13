@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -65,7 +66,7 @@ func (c *Cache) MetadataCount() int64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	var n int64
-	_ = c.db.QueryRow("SELECT COUNT(*) FROM indices").Scan(&n)
+	_ = c.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM indices").Scan(&n)
 	return n
 }
 
@@ -80,7 +81,7 @@ func (c *Cache) metadataPath(url string) string {
 // byHashSHA256 extracts the content hash from an APT by-hash URL of the form
 // .../by-hash/SHA256/<64-hex>. by-hash files are immutable and self-describing,
 // so the hash lets us verify on store and skip revalidation on read. Only
-// SHA256 is recognised; other digests (SHA512/MD5Sum) return ("", false) and
+// SHA256 is recognized; other digests (SHA512/MD5Sum) return ("", false) and
 // take the normal revalidated path.
 func byHashSHA256(rawURL string) (string, bool) {
 	const marker = "/by-hash/sha256/"
@@ -125,7 +126,7 @@ func (c *Cache) MetadataValidators(url string) (etag, lastModified string, ok bo
 		return "", "", false
 	}
 	var e, lm string
-	err := c.db.QueryRow("SELECT COALESCE(etag,''), COALESCE(last_modified,'') FROM indices WHERE url = ?", url).Scan(&e, &lm)
+	err := c.db.QueryRowContext(context.Background(), "SELECT COALESCE(etag,''), COALESCE(last_modified,'') FROM indices WHERE url = ?", url).Scan(&e, &lm)
 	if err != nil {
 		return "", "", false
 	}
@@ -156,7 +157,7 @@ func (c *Cache) GetMetadata(url string) (*MetadataEntry, io.ReadCloser, error) {
 
 	entry := &MetadataEntry{URL: url}
 	var fetchedAt, lastValidated int64
-	err := c.db.QueryRow(`
+	err := c.db.QueryRowContext(context.Background(), `
 		SELECT COALESCE(etag,''), COALESCE(last_modified,''), size,
 		       COALESCE(content_type,''), fetched_at, last_validated
 		FROM indices WHERE url = ?`, url).Scan(
@@ -187,7 +188,7 @@ func (c *Cache) GetMetadata(url string) (*MetadataEntry, io.ReadCloser, error) {
 // touchMetadata records an access for LRU ranking. Best-effort; a failed update
 // only means slightly staler eviction ordering.
 func (c *Cache) touchMetadata(url string) {
-	_, _ = c.db.Exec(
+	_, _ = c.db.ExecContext(context.Background(),
 		"UPDATE indices SET last_accessed = ?, access_count = access_count + 1 WHERE url = ?",
 		time.Now().Unix(), url)
 }
@@ -204,7 +205,7 @@ func (c *Cache) RevalidateMetadata(url, etag, lastModified string) {
 	now := time.Now().Unix()
 	// Only overwrite a validator when upstream actually sent one, so a 304
 	// without headers doesn't blank a previously-known ETag/Last-Modified.
-	_, _ = c.db.Exec(`
+	_, _ = c.db.ExecContext(context.Background(), `
 		UPDATE indices
 		SET etag = CASE WHEN ? <> '' THEN ? ELSE etag END,
 		    last_modified = CASE WHEN ? <> '' THEN ? ELSE last_modified END,
@@ -218,8 +219,8 @@ func (c *Cache) dropMetadataRow(url string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var size int64
-	if err := c.db.QueryRow("SELECT size FROM indices WHERE url = ?", url).Scan(&size); err == nil {
-		if _, err := c.db.Exec("DELETE FROM indices WHERE url = ?", url); err == nil {
+	if err := c.db.QueryRowContext(context.Background(), "SELECT size FROM indices WHERE url = ?", url).Scan(&size); err == nil {
+		if _, err := c.db.ExecContext(context.Background(), "DELETE FROM indices WHERE url = ?", url); err == nil {
 			c.metadataSize -= size
 			if c.metadataSize < 0 {
 				c.metadataSize = 0
@@ -332,7 +333,7 @@ func (mw *MetadataWriter) Commit() error {
 
 	// Account for replacing an existing entry (its bytes free up).
 	var oldSize int64
-	haveOld := c.db.QueryRow("SELECT size FROM indices WHERE url = ?", mw.url).Scan(&oldSize) == nil
+	haveOld := c.db.QueryRowContext(context.Background(), "SELECT size FROM indices WHERE url = ?", mw.url).Scan(&oldSize) == nil
 
 	if err := c.ensureMetadataSpace(mw.size - oldSizeIf(haveOld, oldSize)); err != nil {
 		_ = os.Remove(mw.tmpPath)
@@ -357,7 +358,7 @@ func (mw *MetadataWriter) Commit() error {
 	}
 
 	now := time.Now().Unix()
-	_, err := c.db.Exec(`
+	_, err := c.db.ExecContext(context.Background(), `
 		INSERT INTO indices (url, etag, last_modified, fetched_at, path, size, content_type, last_accessed, access_count, last_validated)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		ON CONFLICT(url) DO UPDATE SET
@@ -396,28 +397,31 @@ func (c *Cache) ensureMetadataSpace(needed int64) error {
 		return nil
 	}
 
-	rows, err := c.db.Query(`SELECT url, size FROM indices ORDER BY last_accessed ASC, access_count ASC`)
-	if err != nil {
-		return err
-	}
 	type victim struct {
 		url  string
 		size int64
 	}
-	var victims []victim
-	for rows.Next() {
-		var v victim
-		if err := rows.Scan(&v.url, &v.size); err != nil {
-			continue
+	// Read all candidates up front (deferred Close) so the delete loop below is
+	// not iterating an open cursor.
+	victims, err := func() ([]victim, error) {
+		rows, err := c.db.QueryContext(context.Background(),
+			`SELECT url, size FROM indices ORDER BY last_accessed ASC, access_count ASC`)
+		if err != nil {
+			return nil, err
 		}
-		victims = append(victims, v)
-	}
-	closeErr := rows.Close()
-	if err := rows.Err(); err != nil {
+		defer func() { _ = rows.Close() }()
+		var vs []victim
+		for rows.Next() {
+			var v victim
+			if err := rows.Scan(&v.url, &v.size); err != nil {
+				continue
+			}
+			vs = append(vs, v)
+		}
+		return vs, rows.Err()
+	}()
+	if err != nil {
 		return fmt.Errorf("error iterating metadata eviction candidates: %w", err)
-	}
-	if closeErr != nil {
-		return closeErr
 	}
 
 	for _, v := range victims {
@@ -446,7 +450,7 @@ func (c *Cache) deleteMetadataUnlocked(url string, size int64) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if _, err := c.db.Exec("DELETE FROM indices WHERE url = ?", url); err != nil {
+	if _, err := c.db.ExecContext(context.Background(), "DELETE FROM indices WHERE url = ?", url); err != nil {
 		return err
 	}
 	c.metadataSize -= size
