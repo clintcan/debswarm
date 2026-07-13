@@ -453,6 +453,8 @@ func TestSecurityConfig_GetVerifyMode(t *testing.T) {
 		"  warn ": VerifyWarn,
 		"off":     VerifyOff,
 		"Off":     VerifyOff,
+		"auto":    VerifyAuto,
+		"AUTO":    VerifyAuto,
 		"enforce": VerifyEnforce,
 		"ENFORCE": VerifyEnforce,
 		"bogus":   VerifyWarn, // unrecognized defaults to warn (Validate rejects it separately)
@@ -475,7 +477,7 @@ func TestDefaultConfig_VerifyModeWarn(t *testing.T) {
 }
 
 func TestValidate_VerifyUpstreamSignatures(t *testing.T) {
-	for _, mode := range []string{"", "off", "warn", "enforce", "ENFORCE"} {
+	for _, mode := range []string{"", "off", "warn", "auto", "AUTO", "enforce", "ENFORCE"} {
 		cfg := DefaultConfig()
 		cfg.Security.VerifyUpstreamSignatures = mode
 		if err := cfg.Validate(); err != nil {

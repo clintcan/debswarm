@@ -163,8 +163,14 @@ serve_stale_metadata = true
 #   "warn"    - verify and report (metric + log + X-Debswarm-Unverified header on
 #               failure) but always serve. Identical to "off" from APT's point of
 #               view — nothing is refused. This is the default.
-#   "enforce" - refuse to parse/serve an index whose Release fails signature or
-#               hash verification (fail-closed).
+#   "auto"    - refuse an index only when it CAN be verified and fails (a signed
+#               Release exists for the repo but the index does not match it), and
+#               behave like "warn" when verification is not possible (no trusted
+#               key for the repo, a flat/no-dists repo, or no cached Release). Real
+#               protection for every repo whose key is discoverable, without
+#               breaking repos that cannot be verified.
+#   "enforce" - refuse to parse/serve an index whenever it is not verified,
+#               including when verification could not be attempted (fail-closed).
 #
 # APT's own end-to-end GPG verification is unaffected in every mode. Verification
 # reads the signed Release from the metadata cache, so it requires cache_metadata
