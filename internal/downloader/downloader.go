@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -134,7 +133,6 @@ type Downloader struct {
 	stateManager   *StateManager
 	cache          PartialCache
 	minChunkedSize int64
-	bufferPool     *sync.Pool // Reusable buffers for chunk I/O
 }
 
 // Config holds downloader configuration
@@ -174,14 +172,6 @@ func New(cfg *Config) *Downloader {
 		d.metrics = cfg.Metrics
 		d.stateManager = cfg.StateManager
 		d.cache = cfg.Cache
-	}
-
-	// Initialize buffer pool for chunk I/O operations
-	d.bufferPool = &sync.Pool{
-		New: func() interface{} {
-			buf := make([]byte, d.chunkSize)
-			return &buf
-		},
 	}
 
 	return d
@@ -283,28 +273,72 @@ func (d *Downloader) downloadChunked(
 		}
 	}
 
-	// Build list of chunks to download
-	chunks := make([]*Chunk, 0, numChunks)
-	completedFromDisk := make(map[int]bool)
-	chunksRecovered := 0
+	// Open the assembly file up front: chunks are written straight into it at
+	// their offsets as they complete. Previously every chunk was written to
+	// its own chunk_N file, then re-read and re-written into the assembly
+	// file, and the assembled file re-read once more for hashing — twice the
+	// writes and twice the reads for every byte, which matters on the
+	// SD-card-class storage fleet nodes often run on.
+	//
+	// When resume is disabled, partialDir is empty — use a temp directory to
+	// avoid creating files in the daemon's current working directory. The
+	// caller owns the returned FilePath on success; we clean up on error.
+	var tempAssemblyDir string
+	if partialDir == "" {
+		tmpDir, tmpErr := os.MkdirTemp("", "debswarm-assembly-*")
+		if tmpErr != nil {
+			return nil, fmt.Errorf("failed to create temp dir for assembly: %w", tmpErr)
+		}
+		partialDir = tmpDir
+		tempAssemblyDir = tmpDir
+	}
+	assemblyFile := filepath.Join(partialDir, "assembled")
+	cleanupTempDir := func() {
+		if tempAssemblyDir != "" {
+			_ = os.RemoveAll(tempAssemblyDir)
+		}
+	}
 
+	// Resume: chunks recorded as completed in the state database are already
+	// in the assembly file at their offsets — trustworthy only while that
+	// file exists at the expected size and the chunk grid is unchanged.
+	// (Older versions persisted separate chunk_N files; those chunks are
+	// simply re-downloaded, and stray files removed on success below.)
+	completedFromDisk := make(map[int]bool)
+	if resumeEnabled && existingState != nil && existingState.ChunkSize == d.chunkSize {
+		if info, err := os.Stat(assemblyFile); err == nil && info.Size() == expectedSize {
+			for _, cs := range existingState.Chunks {
+				if cs.Status == "completed" && cs.Index < numChunks {
+					completedFromDisk[cs.Index] = true
+				}
+			}
+		}
+	}
+	chunksRecovered := len(completedFromDisk)
+
+	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		cleanupTempDir()
+		return nil, fmt.Errorf("failed to create assembly file: %w", err)
+	}
+	// Pre-allocate so out-of-order WriteAt calls land in a right-sized file
+	if err := f.Truncate(expectedSize); err != nil {
+		f.Close()
+		cleanupTempDir()
+		return nil, fmt.Errorf("failed to allocate assembly file: %w", err)
+	}
+
+	// Build list of chunks still to download
+	chunks := make([]*Chunk, 0, numChunks)
 	for i := 0; i < numChunks; i++ {
+		if completedFromDisk[i] {
+			continue
+		}
 		start := int64(i) * d.chunkSize
 		end := start + d.chunkSize
 		if end > expectedSize {
 			end = expectedSize
 		}
-
-		// Check if chunk already exists on disk (resume)
-		if resumeEnabled && existingState != nil {
-			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-			if info, err := os.Stat(chunkFile); err == nil && info.Size() == end-start {
-				completedFromDisk[i] = true
-				chunksRecovered++
-				continue // Skip this chunk
-			}
-		}
-
 		chunks = append(chunks, &Chunk{
 			Index: i,
 			Start: start,
@@ -318,221 +352,145 @@ func (d *Downloader) downloadChunked(
 		d.metrics.ChunksRecovered.Add(int64(chunksRecovered))
 	}
 
-	// If all chunks exist, just assemble
-	if len(chunks) == 0 && len(completedFromDisk) == numChunks {
-		return d.assembleFromDisk(expectedHash, expectedSize, numChunks, partialDir, startTime)
-	}
-
-	// Create work queue with only pending chunks
-	pendingChunks := make(chan *Chunk, len(chunks))
-	for _, c := range chunks {
-		pendingChunks <- c
-	}
-	close(pendingChunks)
-
-	// Results channel
-	results := make(chan *Chunk, len(chunks))
-
-	// Track source performance for adaptive assignment
-	sourceStats := &sourceTracker{
-		stats: make(map[string]*sourceStats),
-	}
-
-	// All sources (peers + mirror)
-	allSources := make([]Source, 0, len(peerSources)+1)
-	allSources = append(allSources, peerSources...)
-	if mirrorSource != nil {
-		allSources = append(allSources, mirrorSource)
-	}
-
-	if len(allSources) == 0 {
-		return nil, ErrNoSources
-	}
-
-	// Update status to in_progress
-	if resumeEnabled {
-		_ = d.stateManager.UpdateDownloadStatus(expectedHash, "in_progress")
-	}
-
-	// Start workers
-	var wg sync.WaitGroup
-	workerCount := d.maxConc
-	if workerCount > len(allSources) {
-		workerCount = len(allSources)
-	}
-	if workerCount > len(chunks) {
-		workerCount = len(chunks)
-	}
-	if workerCount == 0 {
-		workerCount = 1
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
-		go func(workerID int) {
-			defer wg.Done()
-			d.chunkWorker(ctx, workerID, pendingChunks, results, allSources, sourceStats, expectedHash)
-		}(i)
-	}
-
-	// Wait for completion in separate goroutine
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results and persist chunks
-	completedChunks := make([]*Chunk, numChunks)
 	var peerBytes, mirrorBytes int64
 	var chunksFromP2P int
-	var firstError error
 
-	for chunk := range results {
-		if chunk.Error != nil {
-			if firstError == nil {
-				firstError = fmt.Errorf("chunk %d failed: %w", chunk.Index, chunk.Error)
-				cancel() // Cancel other downloads on failure
-			}
-			continue // Drain remaining results to allow goroutines to exit
+	if len(chunks) > 0 {
+		// Create work queue with only pending chunks
+		pendingChunks := make(chan *Chunk, len(chunks))
+		for _, c := range chunks {
+			pendingChunks <- c
+		}
+		close(pendingChunks)
+
+		// Results channel
+		results := make(chan *Chunk, len(chunks))
+
+		// Track source performance for adaptive assignment
+		sourceStats := &sourceTracker{
+			stats: make(map[string]*sourceStats),
 		}
 
-		completedChunks[chunk.Index] = chunk
-
-		// Count bytes first (before potentially clearing data)
-		chunkLen := int64(len(chunk.Data))
-		if chunk.Source.Type() == SourceTypePeer {
-			peerBytes += chunkLen
-			chunksFromP2P++
-		} else {
-			mirrorBytes += chunkLen
+		// All sources (peers + mirror)
+		allSources := make([]Source, 0, len(peerSources)+1)
+		allSources = append(allSources, peerSources...)
+		if mirrorSource != nil {
+			allSources = append(allSources, mirrorSource)
 		}
 
-		// Persist chunk to disk and release memory early
-		if resumeEnabled && partialDir != "" {
-			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", chunk.Index))
-			if err := os.WriteFile(chunkFile, chunk.Data, 0600); err == nil {
-				_ = d.stateManager.UpdateChunk(expectedHash, chunk.Index, "completed")
-				chunk.Data = nil // Release chunk memory after persisting to disk
-			}
+		if len(allSources) == 0 {
+			f.Close()
+			cleanupTempDir()
+			return nil, ErrNoSources
 		}
-	}
 
-	// Return error after all goroutines have finished
-	if firstError != nil {
+		// Update status to in_progress
 		if resumeEnabled {
-			_ = d.stateManager.FailDownload(expectedHash, firstError.Error())
+			_ = d.stateManager.UpdateDownloadStatus(expectedHash, "in_progress")
 		}
-		return nil, firstError
-	}
 
-	// Verify all chunks received (including from disk)
-	for i := 0; i < numChunks; i++ {
-		if completedChunks[i] == nil && !completedFromDisk[i] {
-			return nil, fmt.Errorf("chunk %d missing", i)
+		// Start workers. Concurrency is capped by the chunk count and the
+		// configured maximum — NOT by the source count: sourceTracker lets
+		// several workers share a source, and an HTTP mirror serves parallel
+		// range requests happily, so capping at len(sources) used to leave
+		// large downloads at two in-flight chunks in the common
+		// one-peer-plus-mirror topology.
+		var wg sync.WaitGroup
+		workerCount := d.maxConc
+		if workerCount > len(chunks) {
+			workerCount = len(chunks)
 		}
-	}
-
-	// Create temp file for assembly (streaming to disk, not memory).
-	// When resume is disabled, partialDir is empty — use a temp directory
-	// to avoid creating files in the daemon's current working directory.
-	// The caller owns the returned FilePath on success; we clean up on error.
-	var tempAssemblyDir string
-	if partialDir == "" {
-		tmpDir, tmpErr := os.MkdirTemp("", "debswarm-assembly-*")
-		if tmpErr != nil {
-			return nil, fmt.Errorf("failed to create temp dir for assembly: %w", tmpErr)
+		if workerCount <= 0 {
+			workerCount = 1
 		}
-		partialDir = tmpDir
-		tempAssemblyDir = tmpDir
-	}
-	assemblyFile := filepath.Join(partialDir, "assembled")
-	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		if tempAssemblyDir != "" {
-			_ = os.RemoveAll(tempAssemblyDir)
+
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+
+		for i := 0; i < workerCount; i++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+				d.chunkWorker(ctx, workerID, pendingChunks, results, allSources, sourceStats, expectedHash)
+			}(i)
 		}
-		return nil, fmt.Errorf("failed to create assembly file: %w", err)
-	}
 
-	// Pre-allocate file size for efficient writes
-	if err := f.Truncate(expectedSize); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("failed to allocate assembly file: %w", err)
-	}
+		// Wait for completion in separate goroutine
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
 
-	// Write chunks from memory directly to file at correct offsets
-	// If chunk.Data is nil (was cleared after disk persist), read from chunk file
-	for _, c := range completedChunks {
-		if c != nil {
-			if c.Data != nil {
-				// Chunk still in memory - write directly
-				if _, err := f.WriteAt(c.Data, c.Start); err != nil {
-					f.Close()
-					return nil, fmt.Errorf("failed to write chunk %d: %w", c.Index, err)
+		// Collect results, writing each chunk straight into place
+		received := make([]bool, numChunks)
+		var firstError error
+
+		for chunk := range results {
+			if chunk.Error != nil {
+				if firstError == nil {
+					firstError = fmt.Errorf("chunk %d failed: %w", chunk.Index, chunk.Error)
+					cancel() // Cancel other downloads on failure
 				}
-				c.Data = nil // Release chunk memory immediately
-			} else if resumeEnabled {
-				// Chunk was persisted to disk and cleared - read from file
-				chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", c.Index))
-				chunkData, err := os.ReadFile(chunkFile)
-				if err != nil {
-					f.Close()
-					return nil, fmt.Errorf("failed to read persisted chunk %d: %w", c.Index, err)
+				continue // Drain remaining results to allow goroutines to exit
+			}
+
+			if _, err := f.WriteAt(chunk.Data, chunk.Start); err != nil {
+				if firstError == nil {
+					firstError = fmt.Errorf("failed to write chunk %d: %w", chunk.Index, err)
+					cancel()
 				}
-				if _, err := f.WriteAt(chunkData, c.Start); err != nil {
-					f.Close()
-					return nil, fmt.Errorf("failed to write chunk %d: %w", c.Index, err)
-				}
+				continue
+			}
+
+			chunkLen := int64(len(chunk.Data))
+			if chunk.Source.Type() == SourceTypePeer {
+				peerBytes += chunkLen
+				chunksFromP2P++
+			} else {
+				mirrorBytes += chunkLen
+			}
+			chunk.Data = nil // Release chunk memory; it is on disk now
+			received[chunk.Index] = true
+
+			// The chunk is in the assembly file — the state row is what makes
+			// it resumable after a crash.
+			if resumeEnabled {
+				_ = d.stateManager.UpdateChunk(expectedHash, chunk.Index, "completed")
 			}
 		}
-	}
 
-	// Copy resumed chunks from partial files to assembly file
-	for i := range completedFromDisk {
-		start := int64(i) * d.chunkSize
-		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		chunkF, err := os.Open(chunkFile)
-		if err != nil {
+		// Return error after all goroutines have finished. The partially
+		// assembled file is kept when resume is enabled — completed chunks
+		// are recorded in the state database and picked up by the next try.
+		if firstError != nil {
 			f.Close()
-			return nil, fmt.Errorf("failed to open resumed chunk %d: %w", i, err)
+			if resumeEnabled {
+				_ = d.stateManager.FailDownload(expectedHash, firstError.Error())
+			}
+			cleanupTempDir()
+			return nil, firstError
 		}
-		// Calculate chunk size, handling last chunk which may be smaller
-		chunkEnd := start + d.chunkSize
-		if chunkEnd > expectedSize {
-			chunkEnd = expectedSize
-		}
-		chunkSize := chunkEnd - start
 
-		// Read chunk and write to assembly file at correct offset
-		// Use pooled buffer to reduce allocations
-		bufPtr := d.bufferPool.Get().(*[]byte)
-		buf := (*bufPtr)[:chunkSize] // Slice to actual chunk size
-		_, err = io.ReadFull(chunkF, buf)
-		chunkF.Close()
-		if err != nil && err != io.ErrUnexpectedEOF {
-			d.bufferPool.Put(bufPtr)
-			f.Close()
-			return nil, fmt.Errorf("failed to read resumed chunk %d: %w", i, err)
+		// Verify all chunks received (including from disk)
+		for i := 0; i < numChunks; i++ {
+			if !received[i] && !completedFromDisk[i] {
+				f.Close()
+				cleanupTempDir()
+				return nil, fmt.Errorf("chunk %d missing", i)
+			}
 		}
-		if _, err := f.WriteAt(buf, start); err != nil {
-			d.bufferPool.Put(bufPtr)
-			f.Close()
-			return nil, fmt.Errorf("failed to write resumed chunk %d: %w", i, err)
-		}
-		d.bufferPool.Put(bufPtr)
 	}
 
 	// Verify hash by streaming read (no memory allocation for full file)
 	if _, err := f.Seek(0, 0); err != nil {
 		f.Close()
+		cleanupTempDir()
 		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
 	}
 	actualHashHex, err := hashutil.HashReader(f)
 	if err != nil {
 		f.Close()
+		cleanupTempDir()
 		return nil, fmt.Errorf("failed to compute hash: %w", err)
 	}
 	f.Close()
@@ -557,7 +515,7 @@ func (d *Downloader) downloadChunked(
 	if resumeEnabled {
 		_ = d.stateManager.CompleteDownload(expectedHash)
 		_ = d.stateManager.DeleteDownload(expectedHash)
-		// Clean up chunk files but not assembly file
+		// Remove any chunk_N files left behind by an older version's resume
 		for i := 0; i < numChunks; i++ {
 			chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
 			_ = os.Remove(chunkFile)
@@ -566,7 +524,9 @@ func (d *Downloader) downloadChunked(
 
 	// Determine source type
 	sourceType := SourceTypeMixed
-	if peerBytes == 0 && len(completedFromDisk) == 0 {
+	if len(chunks) == 0 {
+		sourceType = "resumed" // full resume: nothing was downloaded
+	} else if peerBytes == 0 && chunksRecovered == 0 {
 		sourceType = SourceTypeMirror
 	} else if mirrorBytes == 0 {
 		sourceType = SourceTypePeer
@@ -582,112 +542,6 @@ func (d *Downloader) downloadChunked(
 		MirrorBytes:   mirrorBytes,
 		ChunksTotal:   numChunks,
 		ChunksFromP2P: chunksFromP2P,
-	}, nil
-}
-
-// assembleFromDisk assembles a file from all chunks on disk (full resume)
-func (d *Downloader) assembleFromDisk(
-	expectedHash string,
-	expectedSize int64,
-	numChunks int,
-	partialDir string,
-	startTime time.Time,
-) (*DownloadResult, error) {
-	// Create temp file for assembly (streaming to disk, not memory)
-	assemblyFile := filepath.Join(partialDir, "assembled")
-	f, err := os.OpenFile(assemblyFile, os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create assembly file: %w", err)
-	}
-
-	// Pre-allocate file size
-	if err := f.Truncate(expectedSize); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("failed to allocate assembly file: %w", err)
-	}
-
-	// Copy chunks to assembly file at correct offsets
-	for i := 0; i < numChunks; i++ {
-		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		chunkF, err := os.Open(chunkFile)
-		if err != nil {
-			f.Close()
-			return nil, fmt.Errorf("failed to open chunk %d: %w", i, err)
-		}
-
-		start := int64(i) * d.chunkSize
-		// Calculate chunk size, handling last chunk
-		chunkEnd := start + d.chunkSize
-		if chunkEnd > expectedSize {
-			chunkEnd = expectedSize
-		}
-		chunkSize := chunkEnd - start
-
-		// Use pooled buffer to reduce allocations
-		bufPtr := d.bufferPool.Get().(*[]byte)
-		buf := (*bufPtr)[:chunkSize] // Slice to actual chunk size
-		_, err = io.ReadFull(chunkF, buf)
-		chunkF.Close()
-		if err != nil && err != io.ErrUnexpectedEOF {
-			d.bufferPool.Put(bufPtr)
-			f.Close()
-			return nil, fmt.Errorf("failed to read chunk %d: %w", i, err)
-		}
-		if _, err := f.WriteAt(buf, start); err != nil {
-			d.bufferPool.Put(bufPtr)
-			f.Close()
-			return nil, fmt.Errorf("failed to write chunk %d: %w", i, err)
-		}
-		d.bufferPool.Put(bufPtr)
-	}
-
-	// Verify hash by streaming read
-	if _, err := f.Seek(0, 0); err != nil {
-		f.Close()
-		return nil, fmt.Errorf("failed to seek for hash verification: %w", err)
-	}
-	actualHashHex, err := hashutil.HashReader(f)
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("failed to compute hash: %w", err)
-	}
-	f.Close()
-
-	if actualHashHex != expectedHash {
-		if d.metrics != nil {
-			d.metrics.VerificationFailures.Inc()
-		}
-		if d.stateManager != nil {
-			_ = d.stateManager.FailDownload(expectedHash, "hash mismatch")
-		}
-		if d.cache != nil {
-			_ = d.cache.CleanPartialDir(expectedHash)
-		}
-		_ = os.Remove(assemblyFile)
-		return nil, ErrHashMismatch
-	}
-
-	// Success - clean up state (but keep assembly file for cache)
-	if d.stateManager != nil {
-		_ = d.stateManager.CompleteDownload(expectedHash)
-		_ = d.stateManager.DeleteDownload(expectedHash)
-	}
-	// Clean up chunk files but not assembly file
-	for i := 0; i < numChunks; i++ {
-		chunkFile := filepath.Join(partialDir, fmt.Sprintf("chunk_%d", i))
-		_ = os.Remove(chunkFile)
-	}
-
-	return &DownloadResult{
-		FilePath:      assemblyFile,
-		Hash:          actualHashHex,
-		Size:          expectedSize,
-		Duration:      time.Since(startTime),
-		Source:        "resumed",
-		PeerBytes:     0,
-		MirrorBytes:   0,
-		ChunksTotal:   numChunks,
-		ChunksFromP2P: 0,
 	}, nil
 }
 

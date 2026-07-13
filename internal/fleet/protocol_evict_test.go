@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -13,14 +14,15 @@ import (
 )
 
 // failingStream is a network.Stream whose Write always errors, simulating a dead
-// stream. Only Write and Reset are exercised.
+// stream. Only Write, Reset, and SetWriteDeadline are exercised.
 type failingStream struct {
 	network.Stream
 	resetCalled atomic.Bool
 }
 
-func (f *failingStream) Write(_ []byte) (int, error) { return 0, errors.New("stream reset by peer") }
-func (f *failingStream) Reset() error                { f.resetCalled.Store(true); return nil }
+func (f *failingStream) Write(_ []byte) (int, error)        { return 0, errors.New("stream reset by peer") }
+func (f *failingStream) Reset() error                       { f.resetCalled.Store(true); return nil }
+func (f *failingStream) SetWriteDeadline(_ time.Time) error { return nil }
 
 // When a send fails, the dead stream must be evicted from the cache and reset, so
 // the next send dials a fresh stream instead of reusing the broken one forever.

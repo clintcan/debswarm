@@ -23,10 +23,20 @@ type peerStream struct {
 	sendM sync.Mutex
 }
 
+// sendTimeout bounds a single fleet message write. Without a deadline, one
+// peer with a full flow-control window (crashed, suspended, or overloaded)
+// blocks the sender indefinitely — and fleet sends happen inline in the
+// download path and from the single inbound-message handler goroutine, so one
+// stuck peer stalled coordination with everyone.
+const sendTimeout = 5 * time.Second
+
 // send serializes a single message onto the stream.
 func (ps *peerStream) send(msg *Message) error {
 	ps.sendM.Lock()
 	defer ps.sendM.Unlock()
+	if err := ps.s.SetWriteDeadline(time.Now().Add(sendTimeout)); err != nil {
+		return err
+	}
 	return msg.Encode(ps.s)
 }
 
