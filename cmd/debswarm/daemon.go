@@ -25,6 +25,7 @@ import (
 	"github.com/debswarm/debswarm/internal/connectivity"
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/fleet"
+	"github.com/debswarm/debswarm/internal/gpg"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
@@ -449,6 +450,38 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid network.proxy_allowed_cidrs: %w", err)
 	}
 
+	// Load the trusted keyring and resolve the upstream signature-verification
+	// mode. Verification reads the signed Release from the metadata cache, so it
+	// needs cache_metadata; and enforce cannot function with no trusted keys.
+	// Fail fast on those misconfigurations rather than silently refusing every
+	// index (enforce) or doing nothing (warn).
+	verifyMode := cfg.Security.GetVerifyMode()
+	var keyring *gpg.Keyring
+	if cfg.Security.VerificationEnabled() {
+		kr, kerr := gpg.LoadAPT(logger, cfg.Security.KeyringPath)
+		if kerr != nil {
+			return fmt.Errorf("failed to load trusted keyring: %w", kerr)
+		}
+		keyring = kr
+		if !cfg.Cache.MetadataCachingEnabled() {
+			if verifyMode == config.VerifyEnforce {
+				return fmt.Errorf("security.verify_upstream_signatures=enforce requires cache.cache_metadata (the signed Release is read from the metadata cache)")
+			}
+			logger.Warn("upstream signature verification is inactive without metadata caching; set [cache] cache_metadata = true",
+				zap.String("mode", verifyMode))
+		}
+		if keyring.Empty() {
+			if verifyMode == config.VerifyEnforce {
+				return fmt.Errorf("security.verify_upstream_signatures=enforce but no trusted keys were found; set [security] keyring_path or install repository keyrings (e.g. under /etc/apt/keyrings)")
+			}
+			logger.Warn("upstream signature verification found no trusted keys; upstream metadata will be reported unverified. Set [security] keyring_path or install APT keyrings")
+		} else {
+			logger.Info("upstream signature verification enabled",
+				zap.String("mode", verifyMode),
+				zap.Int("trustedKeys", keyring.Count()))
+		}
+	}
+
 	// Initialize proxy server
 	proxyCfg := &proxy.Config{
 		Addr:                       net.JoinHostPort(cfg.Network.ProxyBind, strconv.Itoa(cfg.Network.ProxyPort)),
@@ -473,6 +506,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		AllowedHosts:               cfg.Proxy.EffectiveAllowedHosts(),
 		HTTPSUpstreamHosts:         cfg.Proxy.EffectiveHTTPSUpstreamHosts(),
 		MetadataServeStale:         cfg.Cache.ServesStaleMetadata(),
+		VerifyMode:                 verifyMode,
+		Keyring:                    keyring,
+		VerifyExemptHosts:          cfg.Security.VerifyExemptHosts,
 	}
 
 	proxyServer := proxy.NewServer(proxyCfg, pkgCache, idx, p2pNode, fetcher, logger)

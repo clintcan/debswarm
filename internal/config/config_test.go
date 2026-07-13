@@ -445,6 +445,68 @@ func TestNetworkConfig_ParsedAllowedCIDRs(t *testing.T) {
 	}
 }
 
+func TestSecurityConfig_GetVerifyMode(t *testing.T) {
+	cases := map[string]string{
+		"":        VerifyWarn, // unset defaults to warn
+		"warn":    VerifyWarn,
+		"WARN":    VerifyWarn,
+		"  warn ": VerifyWarn,
+		"off":     VerifyOff,
+		"Off":     VerifyOff,
+		"enforce": VerifyEnforce,
+		"ENFORCE": VerifyEnforce,
+		"bogus":   VerifyWarn, // unrecognized defaults to warn (Validate rejects it separately)
+	}
+	for in, want := range cases {
+		sc := &SecurityConfig{VerifyUpstreamSignatures: in}
+		if got := sc.GetVerifyMode(); got != want {
+			t.Errorf("GetVerifyMode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDefaultConfig_VerifyModeWarn(t *testing.T) {
+	if got := DefaultConfig().Security.GetVerifyMode(); got != VerifyWarn {
+		t.Fatalf("default verify mode = %q, want warn", got)
+	}
+	if !DefaultConfig().Security.VerificationEnabled() {
+		t.Fatal("verification should be enabled by default (warn)")
+	}
+}
+
+func TestValidate_VerifyUpstreamSignatures(t *testing.T) {
+	for _, mode := range []string{"", "off", "warn", "enforce", "ENFORCE"} {
+		cfg := DefaultConfig()
+		cfg.Security.VerifyUpstreamSignatures = mode
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("mode %q should validate, got: %v", mode, err)
+		}
+	}
+	cfg := DefaultConfig()
+	cfg.Security.VerifyUpstreamSignatures = "sometimes"
+	err := cfg.Validate()
+	if err == nil || !contains(err.Error(), "security.verify_upstream_signatures") {
+		t.Fatalf("invalid mode should error mentioning the field, got: %v", err)
+	}
+}
+
+func TestValidate_KeyringPath(t *testing.T) {
+	cfg := DefaultConfig()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unset keyring_path should validate: %v", err)
+	}
+	dir := t.TempDir()
+	cfg.Security.KeyringPath = dir
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("existing keyring_path should validate: %v", err)
+	}
+	cfg.Security.KeyringPath = filepath.Join(dir, "does-not-exist.gpg")
+	err := cfg.Validate()
+	if err == nil || !contains(err.Error(), "security.keyring_path") {
+		t.Fatalf("missing keyring_path should error mentioning the field, got: %v", err)
+	}
+}
+
 func TestValidate_MutuallyExclusivePSK(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Privacy.PSK = "some-hex-value"

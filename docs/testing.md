@@ -254,6 +254,31 @@ docker run -d --name node2 --network debswarm-soak debswarm:soak-fleet daemon --
 docker exec node2 curl -s http://127.0.0.1:9978/stats   # expect requests_p2p > 0, "fleet":{"PeerCount":1}
 ```
 
+### Upstream GPG verification soak
+
+Validates daemon-side `[security] verify_upstream_signatures` end-to-end against a
+real signed Debian repo — in particular the ordering the `enforce` gate depends on
+(APT fetches, and debswarm caches, `InRelease` *before* it requests `Packages`, so
+the index can be checked against a signed `Release` from the metadata cache). Unit
+tests cannot exercise a real APT client, by-hash index URLs, real archive keys, or
+the metadata-cache timing, so this is the check that confirms enabling verification
+does not break `apt-get update`. Run in one container (bookworm-slim + `gnupg` for
+a throwaway non-Debian key); all scenarios use `cache_metadata = true`:
+
+| Scenario | Config | Expected |
+|----------|--------|----------|
+| warn + real APT keyrings | `warn` | `apt-get update` succeeds; `debswarm_upstream_verify_total{result="verified"}` ≥ 1; no `hash_mismatch` |
+| enforce + real keys, **cold cache** | `enforce` | `apt-get update` succeeds (proves the InRelease-before-Packages order); `result="verified"` ≥ 1 |
+| enforce + bogus-only keyring (hide `/etc/apt/trusted.gpg*`, `/usr/share/keyrings`; `keyring_path` → a self-generated key) | `enforce` | a proxied `Packages.xz` fetch is refused **502**; `result="no_release"` |
+| warn + same bogus keyring | `warn` | same fetch is **served 200** with `X-Debswarm-Unverified` (warn never refuses) |
+| enforce + empty keyring | `enforce`, no keys | daemon **fails fast** at startup ("no trusted keys were found") |
+| enforce + `cache_metadata = false` | `enforce` | daemon **fails fast** at startup ("requires cache.cache_metadata") |
+
+Because debswarm auto-discovers exactly APT's keyrings, the "unverifiable" cases
+are produced by hiding the system keyrings and pointing `keyring_path` at a key
+that is not a Debian signer (or by leaving the keyring empty), then driving the
+proxy with `curl -x` rather than APT.
+
 ### Notes and gotchas
 
 - **Do not pass `--config /etc/...`**: rely on auto-detection of `/etc/debswarm/config.toml`. On Git Bash / MSYS (Windows), a leading-slash argument like `/etc/debswarm/config.toml` is silently rewritten to a Windows path (e.g. `C:/Program Files/Git/etc/...`) before Docker sees it; use `MSYS_NO_PATHCONV=1`, a `//etc/...` prefix, or auto-detection.

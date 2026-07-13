@@ -32,6 +32,7 @@ import (
 	"github.com/debswarm/debswarm/internal/dashboard"
 	"github.com/debswarm/debswarm/internal/downloader"
 	"github.com/debswarm/debswarm/internal/fleet"
+	"github.com/debswarm/debswarm/internal/gpg"
 	"github.com/debswarm/debswarm/internal/index"
 	"github.com/debswarm/debswarm/internal/metrics"
 	"github.com/debswarm/debswarm/internal/mirror"
@@ -119,6 +120,17 @@ type Server struct {
 	metadataServeStale bool         // serve cached metadata when the mirror is unreachable
 	allowedClientNets  []*net.IPNet // inbound client allowlist for LAN server mode (empty = loopback only)
 
+	// Upstream GPG verification: verify a Packages index against the GPG-signed
+	// Release before trusting its hashes. verifyMode is "off" (default; disabled),
+	// "warn" (verify + observe, serve unchanged), or "enforce" (refuse an
+	// unverified/mismatched index). keyring holds the trusted public keys;
+	// verifyExempt lists hosts served even when unverifiable (enforce only);
+	// releaseStore caches verified, parsed Release files per dist.
+	verifyMode   string
+	keyring      *gpg.Keyring
+	verifyExempt map[string]bool
+	releaseStore *releaseStore
+
 	// uncachedHostsSeen tracks repository hosts for which we have already logged
 	// an INFO-level "served uncached" notice, so the log is emitted once per host
 	// (the packages_served_uncached_total metric carries the full count).
@@ -176,6 +188,15 @@ type Config struct {
 	// request, so apt-get update keeps working offline. APT still verifies the
 	// signature and Valid-Until of whatever is served.
 	MetadataServeStale bool
+
+	// VerifyMode controls daemon-side upstream signature verification: "" or "off"
+	// (disabled, unchanged behavior), "warn" (verify + observe, serve unchanged),
+	// or "enforce" (refuse an unverified/mismatched index). Keyring holds the
+	// trusted public keys (nil disables verification). VerifyExemptHosts lists
+	// repository hosts served even when unverifiable (enforce only).
+	VerifyMode        string
+	Keyring           *gpg.Keyring
+	VerifyExemptHosts []string
 }
 
 // DefaultConfig returns default configuration
@@ -258,6 +279,22 @@ func NewServer(
 		httpsUpstreamHosts: cfg.HTTPSUpstreamHosts,
 		metadataServeStale: cfg.MetadataServeStale,
 		allowedClientNets:  cfg.AllowedClientCIDRs,
+	}
+
+	// Upstream GPG verification setup (default off preserves existing behavior).
+	s.verifyMode = cfg.VerifyMode
+	if s.verifyMode == "" {
+		s.verifyMode = verifyOff
+	}
+	s.keyring = cfg.Keyring
+	s.releaseStore = newReleaseStore()
+	if len(cfg.VerifyExemptHosts) > 0 {
+		s.verifyExempt = make(map[string]bool, len(cfg.VerifyExemptHosts))
+		for _, h := range cfg.VerifyExemptHosts {
+			if h = strings.TrimSpace(strings.ToLower(h)); h != "" {
+				s.verifyExempt[h] = true
+			}
+		}
 	}
 
 	// Create context for announcement worker that will be canceled on shutdown
@@ -1142,6 +1179,11 @@ func (s *Server) warmIndexFromCacheOnce() {
 			if rerr != nil {
 				continue
 			}
+			// Enforce mode: do not warm an index that does not verify against the
+			// signed Release. warn/off warm it as before.
+			if !s.checkIndexVerification(nil, u, data, s.logger) {
+				continue
+			}
 			if lerr := s.index.LoadFromData(data, u); lerr == nil {
 				warmed++
 			}
@@ -1850,6 +1892,14 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 }
 
 func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, url string) {
+	// A Release/InRelease/Release.gpg request means the suite may have changed;
+	// drop any cached verified Release for its dist so the next index request
+	// re-verifies against the copy about to be (re)fetched and cached.
+	if s.verificationEnabled() {
+		if dist := distBaseURL(url); dist != "" {
+			s.releaseStore.invalidate(dist)
+		}
+	}
 	s.handlePassthrough(w, r, url)
 }
 
@@ -1969,6 +2019,14 @@ func (s *Server) serveFreshBody(w http.ResponseWriter, r *http.Request, url stri
 		if int64(len(data)) > s.fetcher.MaxResponseSize() {
 			log.Error("Index response exceeds maximum allowed size")
 			http.Error(w, "Index too large", http.StatusBadGateway)
+			return
+		}
+		// Verify the index against the signed Release before trusting/serving it.
+		// In enforce mode an unverified or mismatched index is refused; in warn
+		// mode it is served with an X-Debswarm-Unverified header (APT still checks
+		// GPG). Must run before any header/body is written.
+		if !s.checkIndexVerification(w, url, data, log) {
+			http.Error(w, "index failed upstream signature verification", http.StatusBadGateway)
 			return
 		}
 		if isPackagesIndexURL(url) {
@@ -2092,8 +2150,13 @@ func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url
 			return
 		}
 		if warmIndex {
-			if err := s.index.LoadFromData(data, url); err != nil {
-				log.Debug("Failed to parse cached index file", zap.Error(err))
+			// Only load a cached index into the in-memory index if it verifies
+			// against the signed Release (enforce). warn loads it and flags the
+			// response; the cached bytes are still served either way (APT verifies).
+			if s.checkIndexVerification(w, url, data, log) {
+				if err := s.index.LoadFromData(data, url); err != nil {
+					log.Debug("Failed to parse cached index file", zap.Error(err))
+				}
 			}
 		}
 		if clientHas {
