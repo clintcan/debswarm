@@ -1016,11 +1016,15 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 		}
 	}
 
-	// Cold index after a restart cannot resolve a cached .deb's hash: the index is
-	// warmed lazily by Packages requests, which `apt-get install` (unlike
-	// `apt-get update`) never makes. Warm the index once from cached metadata,
-	// then retry — otherwise an already-cached package would fall through to an
-	// uncached passthrough that fails when the mirror is unreachable.
+	// A cold in-memory index cannot resolve a cached .deb's hash. The index is
+	// populated at startup by the aptlists watcher (from /var/lib/apt/lists) and
+	// lazily by live Packages requests through the proxy — but neither fires on a
+	// host that never runs `apt-get update` locally, e.g. a dedicated debswarm
+	// cache-server whose /var/lib/apt/lists is empty. There the only record of the
+	// package's hash is debswarm's own metadata cache, so warm the index from it
+	// once and retry; otherwise an already-cached package falls through to an
+	// uncached passthrough that fails when the mirror is unreachable. On a normal
+	// host (apt lists present) the warm is a no-op — the index is already warm.
 	if expectedHash == "" {
 		s.warmIndexFromCacheOnce()
 		if pkg := s.index.GetByURLPath(url); pkg != nil && len(pkg.SHA256) == 64 {
@@ -1108,9 +1112,11 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 // warmIndexFromCacheOnce loads every cached Packages index into the in-memory
 // index, exactly once per daemon session. It lets the proxy resolve a .deb URL to
-// its SHA256 (and thus serve the package from cache) after a restart even when no
-// apt-get update has run this session — otherwise a cached package would be
-// unresolvable and fail on an uncached passthrough when the mirror is unreachable.
+// its SHA256 (and thus serve the package from cache) on a host that never runs
+// `apt-get update` locally — a dedicated cache-server with an empty
+// /var/lib/apt/lists, where the aptlists watcher warms nothing at startup and the
+// package's hash lives only in debswarm's metadata cache. Where apt's lists are
+// present this is a no-op (the aptlists watcher already warmed the index).
 // Best-effort: individual read/parse failures are logged and skipped.
 func (s *Server) warmIndexFromCacheOnce() {
 	s.indexWarmOnce.Do(func() {
