@@ -123,9 +123,14 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+# Type=notify requires debswarm >= 1.33.0 (sd_notify support); this script
+# always installs the latest release, which satisfies that.
+Type=notify
 ExecStart=/usr/local/bin/debswarm daemon
 Restart=on-failure
+# The daemon pings the watchdog only while its HTTP loop answers /health, so
+# a deadlocked-but-alive daemon is restarted instead of hanging APT.
+WatchdogSec=90
 DynamicUser=yes
 StateDirectory=debswarm
 CacheDirectory=debswarm
