@@ -8,6 +8,11 @@
 [network]
 listen_port = 4001
 proxy_port = 9977
+# HTTP proxy bind. Default 127.0.0.1 (local only). A non-loopback bind (LAN
+# server mode) REQUIRES proxy_allowed_cidrs (fail-closed). APT's GPG verification
+# is unchanged; the allowlist only controls which clients may connect.
+proxy_bind = "127.0.0.1"
+# proxy_allowed_cidrs = ["192.168.0.0/16"]  # required if proxy_bind is non-loopback
 max_connections = 100
 # connectivity_mode = "auto"  # "auto", "lan_only", "online_only"
 
