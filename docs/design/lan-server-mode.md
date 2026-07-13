@@ -41,12 +41,15 @@ default: exposure must be an explicit, validated operator decision.
    deliberate act, never a side effect of setting a bind address. (A "default to RFC1918
    ranges" alternative is safe and lower-friction, but fail-closed is the secure-by-default
    choice and was selected because security is the priority.)
-2. **Gate the admin read surface too.** The metrics/admin server (`/stats`,
-   `/dashboard`, `GET /api/cache/*`, `/metrics`) binds independently and stays
-   loopback-only by default. If it is ever bound non-loopback, the same client allowlist
-   applies to its read endpoints — closing the known unauthenticated-inventory-leak gap
-   (backlog robustness/security #6) in the same change. Mutating endpoints stay
-   loopback-only.
+2. **Gate the admin read surface too — opt-in, backward-compatible.** The metrics/admin
+   server (`/stats`, `/dashboard`, `GET /api/cache/*`, `/metrics`) binds independently and
+   stays loopback-only by default. When an allowlist is configured, it is applied to the
+   admin read endpoints as well, closing the known unauthenticated-inventory-leak gap
+   (backlog robustness/security #6). Unlike `proxy_bind`, a non-loopback `metrics.bind` is
+   **not** fail-closed: it already exists today with warn-only behavior, so hard-failing it
+   would break existing deployments on upgrade. With no allowlist set it keeps that
+   behavior (strengthened warning); operators close the gap by opting into
+   `proxy_allowed_cidrs`. Mutating endpoints stay loopback-only regardless.
 3. **CIDR allowlist as the mechanism (v1).** Enforced against the real TCP peer address
    (never `X-Forwarded-For`). This is the right security/complexity balance for a LAN
    cache and matches apt-cacher-ng's model. Token/mTLS auth is a stronger but heavier
@@ -83,7 +86,13 @@ already in `Validate()`:
 - **Loud WARN** (not an error) if any allowlisted CIDR covers public IP space — allowed
   for the operator who really means it, but never silent. Reuse the `net.IP` classifier
   idiom behind `security.IsBlockedIP` to decide "is this range private".
-- Apply the same non-loopback-requires-allowlist rule to `metrics.bind` (decision #2).
+- `metrics.bind` is **not** fail-closed (backward compatibility). Unlike `proxy_bind`
+  (brand-new config surface), the admin server already supports non-loopback binds today
+  with warn-only behavior — the config wizard even offers a `0.0.0.0` profile. Hard-failing
+  it would break existing deployments on upgrade. Instead, the admin read surface is gated
+  *only when* an allowlist is configured (see "Admin read-surface gating"); a non-loopback
+  `metrics.bind` with no allowlist keeps today's warn-only behavior, with the warning
+  strengthened to recommend setting `proxy_allowed_cidrs`.
 - Requires adding `"net"` to the `config.go` imports.
 
 ### Enforcement — the client gate
@@ -110,13 +119,19 @@ clientAllowed(remoteAddr):
 
 ### Admin read-surface gating
 
-- Wrap the entire metrics mux handler in `startMetricsServer` with the same
-  `gateClient`. When the admin server is bound to loopback (the default), the gate is a
-  no-op (every client is loopback), so **default behavior is unchanged**.
+- When an allowlist **is** configured, wrap the entire metrics mux handler in
+  `startMetricsServer` with the same `gateClient`. Loopback is always allowed, so the
+  default (loopback-bound) admin server is unaffected, and an operator who binds it to the
+  LAN gets the same allowlist protection as the proxy port.
+- When the allowlist is **empty** and `metrics.bind` is non-loopback, the reads are **not**
+  gated — this preserves the existing warn-only behavior so current deployments keep
+  working after upgrade (backward compatibility). The existing non-loopback warning is
+  strengthened to recommend setting `proxy_allowed_cidrs` to close the exposure.
 - Mutating routes keep their inner `requireLoopback` wrappers as defense-in-depth — they
-  remain loopback-only even for allowlisted LAN clients.
+  remain loopback-only regardless, even for allowlisted LAN clients.
 - Net effect: cache inventory, peer IDs, and Prometheus metrics stop being
-  world-readable if an operator binds the admin server to the LAN.
+  world-readable **for operators who opt into the allowlist**; existing exposed setups are
+  not broken, only warned.
 
 ### Out of scope for v1 (with rationale)
 
@@ -139,8 +154,9 @@ numbers drift); the patterns to copy are named.
     `ProxyAllowedCIDRs []string \`toml:"proxy_allowed_cidrs"\``.
   - Set `ProxyBind: "127.0.0.1"` in the `Network` block of `DefaultConfig()` (mirrors how
     `Metrics.Bind` is defaulted).
-  - Extend `Validate()` with the fail-closed rule and CIDR parsing (copy the port-range
-    block and the `bootstrap_peers` indexed-loop block); add the `metrics.bind` coupling.
+  - Extend `Validate()` with the `proxy_bind` fail-closed rule and CIDR parsing (copy the
+    port-range block and the `bootstrap_peers` indexed-loop block). `metrics.bind` is *not*
+    fail-closed (backward compatibility — see Design decision #2).
   - Add a helper `(*NetworkConfig) ParsedAllowedCIDRs() ([]*net.IPNet, error)` (or parse
     in the daemon) so the proxy receives ready-to-use `*net.IPNet` values.
   - Add `"net"` import.
@@ -167,9 +183,12 @@ numbers drift); the patterns to copy are named.
 
 ### Phase 4 — admin read gating
 - `internal/proxy/server.go`: in `startMetricsServer`, wrap the mux handler with
-  `s.gateClient(...)`; keep `requireLoopback` on the mutating API routes.
+  `s.gateClient(...)` **only when an allowlist is configured** (`len(allowedClientNets) >
+  0`); otherwise leave reads ungated and strengthen the existing non-loopback warning to
+  recommend `proxy_allowed_cidrs` (backward compatibility). Keep `requireLoopback` on the
+  mutating API routes regardless.
 - `internal/proxy/api.go`: no route changes required (mutating routes already
-  loopback-gated); confirm the read routes now sit behind the outer gate.
+  loopback-gated); confirm the read routes sit behind the outer gate when it is active.
 
 ### Phase 5 — docs & examples
 - `packaging/config.example.toml` + `packaging/config.system.toml`: add `proxy_bind` and
