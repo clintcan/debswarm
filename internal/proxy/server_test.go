@@ -194,6 +194,10 @@ func TestClassifyRequest(t *testing.T) {
 		// by-hash URLs that should NOT be classified as index (translations, commands)
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/i18n/by-hash/SHA256/abc123", requestTypeUnknown},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/cnf/by-hash/SHA256/def456", requestTypeUnknown},
+		// Flat-layout repo (no /dists/): by-hash directly under the base is a Packages index.
+		{"http://pkgs.k8s.io/core:/stable:/v1.30/deb/by-hash/SHA256/abc123", requestTypeIndex},
+		// ...but a flat repo's i18n/cnf by-hash is still not a Packages index.
+		{"http://repo.example.com/flat/i18n/by-hash/SHA256/abc123", requestTypeUnknown},
 	}
 
 	for _, tc := range tests {
@@ -203,6 +207,26 @@ func TestClassifyRequest(t *testing.T) {
 				t.Errorf("classifyRequest(%q) = %d, want %d", tc.url, result, tc.expected)
 			}
 		})
+	}
+}
+
+func TestIsPackagesIndexURL(t *testing.T) {
+	cases := map[string]bool{
+		"http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.gz":        true,
+		"http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/by-hash/SHA256/abc": true,
+		// Flat-layout repo: by-hash directly under the base is a Packages index.
+		"http://pkgs.k8s.io/core:/stable:/v1.30/deb/by-hash/SHA256/abc": true,
+		"http://pkgs.k8s.io/core:/stable:/v1.30/deb/Packages":           true,
+		// Not Packages: translations, and dist source by-hash (Sources, not parsed here).
+		"http://deb.debian.org/debian/dists/bookworm/main/i18n/Translation-en":       false,
+		"http://deb.debian.org/debian/dists/bookworm/main/source/by-hash/SHA256/def": false,
+		"http://repo.example.com/flat/i18n/by-hash/SHA256/abc":                       false,
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-2_amd64.deb":      false,
+	}
+	for url, want := range cases {
+		if got := isPackagesIndexURL(url); got != want {
+			t.Errorf("isPackagesIndexURL(%q) = %v, want %v", url, got, want)
+		}
 	}
 }
 

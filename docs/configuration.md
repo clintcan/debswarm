@@ -393,6 +393,12 @@ start only in `enforce` with no trusted keys, or `enforce` with `cache_metadata`
 disabled — the fail-closed mode must be able to function. In `warn` and `auto`
 those conditions log a warning and verification degrades gracefully: an `auto` node
 with no keys or no metadata cache simply serves everything with a flag, like `warn`.
+In the common case APT fetches the `Release` before any `Packages` request, so it
+is already cached; if it is not (a client's APT held a current `InRelease`, so the
+conditional GET relayed a `304` with no body, or the cache was cleared), `enforce`
+fetches the `Release` from the mirror on demand rather than refuse a verifiable
+index. That on-demand fetch is `enforce`-only, so the default `auto` serving path
+never takes on extra network I/O.
 
 **Freshness:** debswarm verifies the `Release` **signature** but does not enforce
 its `Valid-Until` — that is left to APT — so serving an expired-but-signed

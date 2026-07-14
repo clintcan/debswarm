@@ -3,9 +3,11 @@ package proxy
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
@@ -465,5 +467,110 @@ func TestVerifyIndex_FlatRepo(t *testing.T) {
 	byHash := verFlatBase + "by-hash/SHA256/" + sha256Hex(pkgBody)
 	if ok, reason := srv.verifyIndex(byHash, nil); !ok {
 		t.Fatalf("flat by-hash should verify, got reason=%q", reason)
+	}
+}
+
+// --- On-demand Release fetch (enforce mode) ---
+
+// clearsignBody clearsigns a Release body with e's private key.
+func clearsignBody(t *testing.T, e *openpgp.Entity, body string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w, err := clearsign.Encode(&buf, e.PrivateKey, nil)
+	if err != nil {
+		t.Fatalf("clearsign.Encode: %v", err)
+	}
+	if _, err := w.Write([]byte(body)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("clearsign close: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// freshMetaCache returns a metadata-enabled cache with nothing cached.
+func freshMetaCache(t *testing.T) *cache.Cache {
+	t.Helper()
+	c, err := cache.New(t.TempDir(), 100*1024*1024, newTestLogger())
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	c.SetMetadataMaxSize(10 * 1024 * 1024)
+	return c
+}
+
+func TestObtainRelease_OnDemandFetch(t *testing.T) {
+	pkgBody := []byte("Package: hello\nVersion: 2.10\nArchitecture: amd64\n\n")
+	e, kr := genKeyAndKeyring(t)
+	inrel := clearsignBody(t, e, fmt.Sprintf("Origin: Test\nSuite: stable\nSHA256:\n %s %d Packages\n", sha256Hex(pkgBody), len(pkgBody)))
+
+	var served int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deb/InRelease", func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&served, 1)
+		_, _ = w.Write(inrel)
+	})
+	// /deb/Release and /deb/Release.gpg default to 404 (no handler).
+	up := httptest.NewServer(mux)
+	defer up.Close()
+
+	base := up.URL + "/deb/"
+	pkgURL := base + "Packages"
+
+	// enforce with an empty metadata cache: the signed Release is fetched on demand.
+	s := serverWith(t, freshMetaCache(t), index.New(t.TempDir(), newTestLogger()))
+	s.keyring = kr
+	s.verifyMode = verifyEnforce
+	if ok, reason := s.verifyIndex(pkgURL, pkgBody); !ok {
+		t.Fatalf("enforce should on-demand fetch + verify the Release, got reason=%q", reason)
+	}
+	if got := atomic.LoadInt32(&served); got != 1 {
+		t.Fatalf("expected exactly one InRelease fetch, got %d", got)
+	}
+	// The verified Release is now cached in the store: no second fetch.
+	if ok, _ := s.verifyIndex(pkgURL, pkgBody); !ok {
+		t.Fatal("second verify should hit the release store")
+	}
+	if got := atomic.LoadInt32(&served); got != 1 {
+		t.Fatalf("second verify re-fetched the Release (served=%d, want 1)", got)
+	}
+
+	// auto/warn must NOT fetch on demand — the extra network I/O is enforce-only.
+	// A fresh auto server sees the same reachable InRelease but still reports
+	// no-release (and serves, since no-release is indecisive).
+	before := atomic.LoadInt32(&served)
+	sa := serverWith(t, freshMetaCache(t), index.New(t.TempDir(), newTestLogger()))
+	sa.keyring = kr
+	sa.verifyMode = verifyAuto
+	if ok, reason := sa.verifyIndex(pkgURL, pkgBody); ok || reason != verifyReasonNoRelease {
+		t.Fatalf("auto must not on-demand fetch: ok=%v reason=%q, want no-release", ok, reason)
+	}
+	if got := atomic.LoadInt32(&served); got != before {
+		t.Fatalf("auto fetched the Release on demand (served %d -> %d)", before, got)
+	}
+}
+
+func TestObtainRelease_OnDemandFetchUnreachable(t *testing.T) {
+	pkgBody := []byte("Package: hello\n\n")
+	_, kr := genKeyAndKeyring(t)
+
+	// An upstream that 404s every metadata file.
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer up.Close()
+
+	s := serverWith(t, freshMetaCache(t), index.New(t.TempDir(), newTestLogger()))
+	s.keyring = kr
+	s.verifyMode = verifyEnforce
+	// No obtainable Release -> no-release, and the failure is negative-cached
+	// (a second call must not panic or hang).
+	if ok, reason := s.verifyIndex(up.URL+"/deb/Packages", pkgBody); ok || reason != verifyReasonNoRelease {
+		t.Fatalf("unreachable Release: ok=%v reason=%q, want no-release", ok, reason)
+	}
+	if ok, reason := s.verifyIndex(up.URL+"/deb/Packages", pkgBody); ok || reason != verifyReasonNoRelease {
+		t.Fatalf("second attempt: ok=%v reason=%q, want no-release", ok, reason)
 	}
 }
