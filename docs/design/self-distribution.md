@@ -1,7 +1,9 @@
 # Self-distribution: container image and signed apt repository
 
 **Status:** Phase A (container image) shipped in v1.37.0. Phase B (signed apt
-repository) planned for v1.38.0, gated on operator key/secrets/Pages setup.
+repository) infrastructure is committed but **inert** — the `apt-repo` CI job runs
+only when the repository variable `APT_REPO_ENABLED=true`, so it goes live on the
+first stable tag after the operator completes the key/secret/Pages setup below.
 
 ## Motivation
 
@@ -88,34 +90,82 @@ and unlinked — set it **Public** and **link to the repository** once.
 
 ---
 
-## Phase B — Signed apt repository (planned v1.38.0)
+## Phase B — Signed apt repository (infra landed, inert until enabled)
 
 Host the repo on **GitHub Pages** (a `gh-pages` branch holding the reprepro
-`dists/`+`pool/` tree + the public key), served at
+`dists/`+`pool/` tree + the published public key), served at
 `https://clintcan.github.io/debswarm/`. Tooling: **reprepro** — the smallest
 correct tool for a single-suite pool repo; one `includedeb` builds and signs
 `Release`/`InRelease` and prunes superseded `.deb`s so `pool/` stays small.
 
+The CI job and the reprepro config (`packaging/apt/conf/distributions`) are
+committed but **inert**: the `apt-repo` job runs only when the repository
+variable `APT_REPO_ENABLED` is `true`, so merging it cannot affect releases
+until the operator opts in after completing the setup below.
+
+### Design decisions
+- **CI never hardcodes the key id.** The job derives the signing key's
+  fingerprint from the imported `APT_GPG_PRIVATE_KEY` and substitutes it into the
+  committed `conf/distributions` template (`SignWith: __FINGERPRINT__`).
+- **CI publishes the public key** (armored `.asc` + dearmored `.gpg`) exported
+  from the secret, so the operator does **not** commit a public key.
+- **Passphrase-optional.** A passphrase-less key needs no signing setup; if
+  `APT_GPG_PASSPHRASE` is set, the job presets it via loopback pinentry so
+  reprepro's gpgme signing does not prompt. A passphrase-less dedicated,
+  revocable repo key is recommended (GH secrets are encrypted at rest).
+
 ### Operator prerequisites (CI never generates or embeds a private key)
-1. Generate a dedicated sign-only key (`gpg --full-generate-key`, RSA 4096).
-   Consider a **passphrase-less** key (`%no-protection`) to keep CI signing
-   trivial — it is a revocable repo-only key and GH secrets are encrypted at rest.
-2. Export private → GitHub Actions secret `APT_GPG_PRIVATE_KEY` (+ `APT_GPG_PASSPHRASE`
-   only if the key has one); public → commit `packaging/apt/debswarm-archive-keyring.asc`.
+1. Generate a dedicated sign-only key — passphrase-less recommended:
+   ```
+   gpg --batch --gen-key <<EOF
+   %no-protection
+   Key-Type: RSA
+   Key-Length: 4096
+   Key-Usage: sign
+   Name-Real: debswarm apt repository
+   Name-Email: apt@debswarm
+   Expire-Date: 0
+   %commit
+   EOF
+   gpg --armor --export-secret-keys <KEYID> > debswarm-apt-private.asc   # secret; do NOT commit
+   ```
+2. Add the private key as Actions secret **`APT_GPG_PRIVATE_KEY`** (+ `APT_GPG_PASSPHRASE`
+   only if the key has one).
 3. Create an orphan `gh-pages` branch; enable Settings → Pages → Deploy from
    branch → `gh-pages` / root.
+4. Set the repository **variable** `APT_REPO_ENABLED` = `true` (Settings → Secrets
+   and variables → Actions → Variables). The next stable tag then publishes the repo.
 
-### CI job
-A new `apt-repo` job (gated to stable tags), `needs: [check-branch, release, build-deb]`,
-`contents: write`: checkout `gh-pages` (persistent reprepro `conf/`+`db/`+`dists/`+`pool/`),
-`apt-get install reprepro`, import the key, `gh release download "$TAG" --pattern '*.deb'`,
-`reprepro includedeb stable *.deb` (idempotent; supersede+prune), publish the
-dearmored `debswarm-archive-keyring.gpg` at the Pages root, commit/push. Cap
+### CI job (`apt-repo` in `release.yml`)
+`needs: [check-branch, release, build-deb]`, `contents: write`, gated on
+`vars.APT_REPO_ENABLED == 'true'` and stable tags (no `-` in the tag),
+`concurrency: apt-repo`: checkout `main` (for the template) + `gh-pages`
+(persistent `conf/`+`db/`+`dists/`+`pool/`), `apt-get install reprepro`, import the
+key + derive the fingerprint, write `conf/distributions`, `gh release download
+"$TAG" --pattern '*.deb'`, `reprepro includedeb stable *.deb` (idempotent;
+supersede+prune), export the public key to the Pages root, commit/push. Cap
 `gh-pages` history with a periodic orphan-squash — only the current tree is served.
 
-### User-facing
-deb822 source with `Signed-By` the keyring, then `apt-get install debswarm`, plus
-an `unattended-upgrades` drop-in keyed on `origin=debswarm,codename=stable`.
+### User-facing install (add to README once the repo is live)
+```bash
+curl -fsSL https://clintcan.github.io/debswarm/debswarm-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/debswarm-archive-keyring.gpg > /dev/null
+```
+```
+# /etc/apt/sources.list.d/debswarm.sources
+Types: deb
+URIs: https://clintcan.github.io/debswarm
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/debswarm-archive-keyring.gpg
+```
+Then `sudo apt-get update && sudo apt-get install debswarm`. For automatic
+upgrades, drop in `/etc/apt/apt.conf.d/52debswarm-unattended`:
+```
+Unattended-Upgrade::Origins-Pattern {
+  "origin=debswarm,codename=stable";
+};
+```
 
 ---
 

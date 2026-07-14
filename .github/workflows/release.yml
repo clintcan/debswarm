@@ -148,3 +148,101 @@ jobs:
             echo "Uploading $deb and its checksum..."
             gh release upload "$RELEASE_TAG" "$deb" "$deb.sha256" --clobber
           done
+
+  # Publish the release .debs into a signed apt repository on the gh-pages branch
+  # (served via GitHub Pages). INERT until the operator opts in by setting the
+  # repository variable APT_REPO_ENABLED=true, after completing the one-time setup
+  # (signing key + APT_GPG_PRIVATE_KEY secret + orphan gh-pages branch + Pages).
+  # See docs/design/self-distribution.md. Stable tags only (skips prereleases).
+  apt-repo:
+    runs-on: ubuntu-latest
+    needs: [check-branch, release, build-deb]
+    if: >-
+      needs.check-branch.outputs.on_main == 'true' &&
+      vars.APT_REPO_ENABLED == 'true' &&
+      !contains(github.ref_name, '-')
+    permissions:
+      contents: write
+    concurrency:
+      group: apt-repo
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Checkout gh-pages (persistent reprepro tree)
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: gh-pages
+          path: pages
+          fetch-depth: 1
+
+      - name: Install reprepro
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Import signing key
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          GNUPGHOME="$(mktemp -d)"; chmod 700 "$GNUPGHOME"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          export GNUPGHOME
+          printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          FPR=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')
+          echo "APT_GPG_FPR=$FPR" >> "$GITHUB_ENV"
+          # Non-interactive signing for reprepro (which signs via gpgme). A
+          # passphrase-less key needs nothing; a protected key is preset once via
+          # loopback pinentry so signing does not prompt.
+          if [ -n "${APT_GPG_PASSPHRASE:-}" ]; then
+            printf 'allow-loopback-pinentry\n' > "$GNUPGHOME/gpg-agent.conf"
+            printf 'pinentry-mode loopback\n' > "$GNUPGHOME/gpg.conf"
+            gpgconf --kill gpg-agent || true
+            KEYGRIP=$(gpg --with-keygrip --list-secret-keys --with-colons | awk -F: '/^grp:/{print $10; exit}')
+            HEXPP=$(printf '%s' "$APT_GPG_PASSPHRASE" | od -A n -t x1 | tr -d ' \n')
+            gpg-connect-agent "PRESET_PASSPHRASE $KEYGRIP -1 $HEXPP" /bye
+          fi
+
+      - name: Build reprepro basedir from the committed config
+        run: |
+          set -euo pipefail
+          mkdir -p pages/conf
+          sed "s/__FINGERPRINT__/${APT_GPG_FPR}/" packaging/apt/conf/distributions > pages/conf/distributions
+
+      - name: Download release .debs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          mkdir -p debs
+          gh release download "$RELEASE_TAG" --pattern '*.deb' --dir debs
+
+      - name: Include .debs (idempotent; supersede+prune old versions)
+        run: |
+          set -euo pipefail
+          for d in debs/*.deb; do
+            reprepro -b pages includedeb stable "$d"
+          done
+
+      - name: Publish signing public key
+        run: |
+          set -euo pipefail
+          gpg --armor --export "$APT_GPG_FPR" > pages/debswarm-archive-keyring.asc
+          gpg --export "$APT_GPG_FPR" > pages/debswarm-archive-keyring.gpg
+
+      - name: Commit and push gh-pages
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          set -euo pipefail
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "apt repo unchanged; nothing to publish"
+            exit 0
+          fi
+          git commit -m "apt-repo: publish ${RELEASE_TAG}"
+          git push

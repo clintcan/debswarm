@@ -1,0 +1,14 @@
+# reprepro distribution config for the debswarm apt repository.
+#
+# The `apt-repo` job in .github/workflows/release.yml copies this into the
+# gh-pages reprepro basedir and replaces __FINGERPRINT__ with the signing key's
+# fingerprint, derived from the imported APT_GPG_PRIVATE_KEY secret — so no key
+# id is hardcoded in the repository. See docs/design/self-distribution.md.
+Origin: debswarm
+Label: debswarm
+Suite: stable
+Codename: stable
+Architectures: amd64 arm64 armhf
+Components: main
+Description: debswarm apt repository (self-distribution)
+SignWith: __FINGERPRINT__
