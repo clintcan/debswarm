@@ -1,3 +1,29 @@
+debswarm (1.36.0-1) stable; urgency=low
+
+  * Flat-layout repositories are now GPG-verified. Signature verification
+    previously covered only dist-layout repos; a flat repo (Release/InRelease
+    beside the index, files listed by bare name) was reported "no-dist" and
+    never verified. debswarm now anchors a flat repo's index to the
+    signature-verified Release in the same directory, so a flat repo whose
+    Release carries a modern (v4) OpenPGP signature gets full auto/enforce
+    protection with no extra config. (pkgs.k8s.io signs InRelease with a legacy
+    v3 signature the Go OpenPGP library does not accept, so it stays served-and-
+    flagged "no-release" under auto and needs verify_exempt_hosts under enforce.)
+  * Flat-layout Acquire-By-Hash indices (by-hash/SHA256/<hash> with no binary-*/
+    path) are now recognized as Packages indices and verified against the signed
+    Release; i18n/cnf/dep11 by-hash remain excluded as non-Packages.
+  * enforce now fetches a missing Release from the mirror on demand (deduplicated
+    and briefly negative-cached on failure) instead of falsely refusing a
+    verifiable index when the metadata cache has no Release. enforce-only, so
+    auto/warn take on no extra network I/O.
+  * The default https_upstream_hosts set now covers download.docker.com,
+    deb.nodesource.com, packages.microsoft.com, apt.releases.hashicorp.com, and
+    apt.postgresql.org (joining pkgs.k8s.io), so pointing a sources.list entry
+    for one of these at http:// lets debswarm fetch it over HTTPS and cache,
+    verify, and P2P-share it instead of tunneling it opaquely via CONNECT.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 14 Jul 2026 12:00:00 +0000
+
 debswarm (1.35.0-1) stable; urgency=low
 
   * Upstream signature verification now defaults to "auto" (was "warn"), and a
