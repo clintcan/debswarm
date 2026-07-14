@@ -20,16 +20,21 @@ import (
 const (
 	verifyOff     = "off"
 	verifyWarn    = "warn"
+	verifyAuto    = "auto"
 	verifyEnforce = "enforce"
 )
 
 // Verification-failure reasons, surfaced in the X-Debswarm-Unverified header and
-// (phase 5) in metrics/audit.
+// in metrics/audit. The reasons split into two classes that drive the auto-mode
+// decision: "decisive" failures mean verification was possible and the index is
+// bad (a signature-verified Release exists but the index does not match it);
+// "indecisive" failures mean verification could not be attempted at all.
 const (
-	verifyReasonNoKey        = "no-key"        // keyring empty — nothing can verify
-	verifyReasonNoDist       = "no-dist"       // URL has no /dists/ segment (flat repo)
-	verifyReasonNoRelease    = "no-release"    // no verified Release for this dist / file not listed
-	verifyReasonHashMismatch = "hash-mismatch" // index does not match the signed Release
+	verifyReasonNoKey        = "no-key"        // keyring empty / no trusted key — cannot verify (indecisive)
+	verifyReasonNoDist       = "no-dist"       // URL has no /dists/ segment, a flat repo — cannot verify (indecisive)
+	verifyReasonNoRelease    = "no-release"    // no signature-verified Release for this dist — cannot verify (indecisive)
+	verifyReasonNotListed    = "not-listed"    // Release verified but does not list this index file (decisive)
+	verifyReasonHashMismatch = "hash-mismatch" // index does not match the hash in the signed Release (decisive)
 )
 
 // releaseStore caches parsed, signature-verified Release files keyed by dist base
@@ -93,7 +98,25 @@ func byHashDigest(rawURL string) string {
 
 // verificationEnabled reports whether any verification work runs (mode != off).
 func (s *Server) verificationEnabled() bool {
-	return s.verifyMode == verifyWarn || s.verifyMode == verifyEnforce
+	return s.verifyMode == verifyWarn || s.verifyMode == verifyAuto || s.verifyMode == verifyEnforce
+}
+
+// modeRefuses reports whether the current mode refuses an index that failed
+// verification for the given reason (host exemption is handled by the caller):
+//
+//   - enforce refuses every failure, including "cannot verify" — fail-closed.
+//   - auto refuses only decisive failures (the signed Release exists but the index
+//     does not match it); "cannot verify" reasons fall back to warn (serve+flag).
+//   - warn (and any other mode) never refuses.
+func (s *Server) modeRefuses(reason string) bool {
+	switch s.verifyMode {
+	case verifyEnforce:
+		return true
+	case verifyAuto:
+		return reason == verifyReasonHashMismatch || reason == verifyReasonNotListed
+	default:
+		return false
+	}
 }
 
 // recordVerifyResult increments the upstream-verify counter, labeled by result
@@ -149,7 +172,9 @@ func (s *Server) verifyIndex(rawURL string, data []byte) (bool, string) {
 	relPath := strings.TrimPrefix(rawURL, dist)
 	fh, ok := rel.SHA256[relPath]
 	if !ok {
-		return false, verifyReasonNoRelease // Release does not list this index file
+		// The Release verified but does not vouch for this file — decisive (auto
+		// and enforce refuse), distinct from "no verified Release available".
+		return false, verifyReasonNotListed
 	}
 	sum := sha256.Sum256(data)
 	if hex.EncodeToString(sum[:]) != fh.SHA256 {
@@ -222,10 +247,12 @@ func (s *Server) readCachedMetadataBody(rawURL string) []byte {
 //
 //   - off, or a non-Packages URL: always allowed (no-op).
 //   - verified: allowed.
-//   - enforce + unverified (and host not exempt): refused (returns false); the
-//     caller responds 502 / skips the load.
-//   - warn (or enforce-exempt): allowed, with an X-Debswarm-Unverified header set
-//     on w (when non-nil) and a log line. APT's own GPG check still applies.
+//   - a refusing mode for this failure (enforce on any failure; auto on a decisive
+//     failure — hash-mismatch/not-listed) and host not exempt: refused (returns
+//     false); the caller responds 502 / skips the load.
+//   - otherwise (warn; auto on an indecisive failure; a refusing-but-exempt host):
+//     allowed, with an X-Debswarm-Unverified header set on w (when non-nil) and a
+//     log line. APT's own GPG check still applies.
 //
 // w may be nil for non-serving callers (the startup index warm), in which case
 // only the load decision matters.
@@ -239,20 +266,21 @@ func (s *Server) checkIndexVerification(w http.ResponseWriter, rawURL string, da
 		return true
 	}
 	s.recordVerifyResult(reason)
-	if s.verifyMode == verifyEnforce && !s.isExemptHost(rawURL) {
-		log.Warn("upstream index failed signature verification; refusing (enforce mode)",
-			zap.String("url", sanitize.URL(rawURL)), zap.String("reason", reason))
+	if s.modeRefuses(reason) && !s.isExemptHost(rawURL) {
+		log.Warn("upstream index failed signature verification; refusing",
+			zap.String("mode", s.verifyMode), zap.String("reason", reason), zap.String("url", sanitize.URL(rawURL)))
 		return false
 	}
-	// warn, or enforce with an exempt host: serve but flag.
+	// warn (or a refusing mode that either does not refuse this reason or exempts
+	// the host): serve but flag.
 	if w != nil {
 		w.Header().Set("X-Debswarm-Unverified", reason)
 	}
-	if reason == verifyReasonHashMismatch {
-		log.Warn("upstream index does not match the signed Release (serving in warn mode; APT will reject it)",
-			zap.String("url", sanitize.URL(rawURL)))
+	if reason == verifyReasonHashMismatch || reason == verifyReasonNotListed {
+		log.Warn("upstream index does not match the signed Release (serving; APT will reject it)",
+			zap.String("mode", s.verifyMode), zap.String("reason", reason), zap.String("url", sanitize.URL(rawURL)))
 	} else {
-		log.Debug("upstream index unverified", zap.String("reason", reason), zap.String("url", sanitize.URL(rawURL)))
+		log.Debug("upstream index unverified", zap.String("reason", reason), zap.String("mode", s.verifyMode), zap.String("url", sanitize.URL(rawURL)))
 	}
 	return true
 }

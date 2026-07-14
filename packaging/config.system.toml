@@ -65,12 +65,16 @@ serve_stale_metadata = true
 
 [security]
 # Verify each repository's GPG-signed Release against a trusted keyring (and each
-# Packages index against that Release) before trusting its hashes. "off" | "warn"
-# | "enforce". Default "warn": verify and report failures but serve unchanged
-# (identical to old behavior for APT; APT still verifies GPG end-to-end). Set
-# "enforce" for fail-closed protection. Keys are auto-discovered from the host's
-# APT keyrings; requires cache_metadata above. See docs/configuration.md.
-verify_upstream_signatures = "warn"
+# Packages index against that Release) before trusting its hashes.
+# "off" | "warn" | "auto" | "enforce". Default "auto": refuse an index only when a
+# repo CAN be verified and fails (a signed Release exists but the index does not
+# match it), and serve-and-report otherwise — real protection where a key is
+# discoverable without breaking repos that cannot be verified. "warn" only reports
+# (identical to old behavior for APT); "enforce" is fully fail-closed; "off"
+# disables it. APT still verifies GPG end-to-end in every mode. Keys are
+# auto-discovered from the host's APT keyrings; requires cache_metadata above
+# (auto/warn degrade gracefully if it or a keyring is missing). See docs/configuration.md.
+verify_upstream_signatures = "auto"
 # keyring_path = "/etc/debswarm/keyrings"   # extra keys (needed on an apt-less cache-server in enforce)
 
 [transfer]

@@ -38,7 +38,7 @@ EOF
 
 write_config(){
   mkdir -p /etc/debswarm /var/cache/debswarm
-  # cache_metadata on; upstream verification left at its default (warn) by
+  # cache_metadata on; upstream verification left at its default (auto) by
   # omitting [security]; fleet/mDNS off for a fast, deterministic single node.
   cat > /etc/debswarm/config.toml <<'EOF'
 [network]
@@ -92,7 +92,7 @@ say "start daemon"
 if start_daemon; then ok "daemon started and proxy is accepting connections"
 else bad "daemon did not become ready"; tail -20 /tmp/daemon.log; echo "PASS=$PASS FAIL=$FAIL"; exit 1; fi
 grep -q "upstream signature verification enabled" /tmp/daemon.log \
-  && ok "verification is on by default (warn) with an auto-discovered keyring" \
+  && ok "verification is on by default (auto) with an auto-discovered keyring" \
   || bad "default verification/keyring did not initialize"
 
 say "apt-get update through the proxy (pipelined large index — hang guard)"

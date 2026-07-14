@@ -68,19 +68,21 @@ narrower: concrete, verified gaps in what exists today.
   trust-model pass above, this is the code half): the daemon can verify each
   repository's GPG-signed `Release` against a trusted keyring and each `Packages`
   index against it, anchoring every `.deb` hash to GPG rather than the mirror.
-  `[security] verify_upstream_signatures`: `off`, `warn` (default — verify and
-  report via `debswarm_upstream_verify_total`, a log, and an `X-Debswarm-Unverified`
-  header, but always serve, so APT sees identical behavior), or `enforce` (refuse an
-  unverified index). Keys auto-discovered from APT's keyrings; reads the signed
-  `Release` from the metadata cache, so it needs `[cache] cache_metadata`. Closes
-  the `[trusted=yes]` / `dpkg -i` / P2P-seed gap. Design:
+  `[security] verify_upstream_signatures`: `off`, `warn` (verify and report via
+  `debswarm_upstream_verify_total`, a log, and an `X-Debswarm-Unverified` header,
+  but always serve), `auto` (**the default** — refuse an index only when a
+  signature-verified `Release` proves it was tampered with, and serve-and-report
+  like `warn` when verification cannot be attempted), or `enforce` (refuse every
+  unverified index, fail-closed). Keys auto-discovered from APT's keyrings; reads
+  the signed `Release` from the metadata cache, so it needs `[cache] cache_metadata`
+  (`auto`/`warn` degrade to serve-and-report if it or a keyring is missing; only
+  `enforce` fails startup). Closes the `[trusted=yes]` / `dpkg -i` / P2P-seed gap
+  for every repo whose key is discoverable, by default. Design:
   `docs/design/upstream-gpg-verification.md`. Dependency `ProtonMail/go-crypto`.
-  Follow-ups (smaller, tracked in Robustness/security below): `enforce` is opt-in
-  rather than the default (back-compat); verification needs a cached signed
-  `Release` (no live on-demand mirror fetch yet, and flat/no-`dists` repos such as
-  `pkgs.k8s.io` are uncovered in v1); an `auto` mode (enforce where a key is
-  discoverable, warn elsewhere) and wider default `https_upstream_hosts` would
-  strengthen the default posture.
+  Remaining follow-ups (smaller, tracked in Robustness/security below):
+  verification needs a cached signed `Release` (no live on-demand mirror fetch yet,
+  and flat/no-`dists` repos such as `pkgs.k8s.io` are uncovered in v1); wider
+  default `https_upstream_hosts` would let more repos be verified over HTTPS.
 
 ## Product gaps (ranked by user value)
 
@@ -137,15 +139,15 @@ narrower: concrete, verified gaps in what exists today.
    Mutating API routes are loopback-gated; `GET /api/cache/packages*`,
    `/stats`, and `/dashboard` are not. Binding to `0.0.0.0` is warned about
    in logs but exposes the full installed-package list.
-6. **Upstream verification: stronger default posture (follow-up to the shipped
-   feature).** Daemon-side GPG verification landed (see Recently addressed), but
-   the default is `warn` (observe-only) for back-compat, so out of the box the
-   proxy still provides no upstream-MITM resistance — the guarantee stays APT's
-   client-side check. Remaining, all smaller: an `auto` mode (enforce where a
-   signing key is discoverable, warn elsewhere) as a stronger default;
-   live on-demand `Release` fetch so `enforce` works before the metadata cache is
-   warm; flat/no-`dists` repo coverage (e.g. `pkgs.k8s.io`); and wider default
-   `https_upstream_hosts`.
+6. **Upstream verification: remaining coverage gaps (follow-up to the shipped
+   feature).** Daemon-side GPG verification landed and now defaults to `auto` (see
+   Recently addressed), so out of the box the proxy refuses an index a
+   signature-verified `Release` proves was tampered with, for every repo whose key
+   is discoverable. Remaining, all smaller: live on-demand `Release` fetch so
+   `enforce` works before the metadata cache is warm; flat/no-`dists` repo coverage
+   (e.g. `pkgs.k8s.io`, currently `no-dist` → served under `auto`, needs
+   `verify_exempt_hosts` under `enforce`); and wider default `https_upstream_hosts`
+   so more repos can be verified over HTTPS.
 
 ## Testing / operations
 
