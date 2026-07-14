@@ -55,6 +55,53 @@ debswarm accelerates APT package downloads by fetching packages from nearby peer
 
 ## Quick Start
 
+### Install from the apt repository
+
+The easiest way to install debswarm, and the only one that keeps it up to date automatically. Packages are signed and available for `amd64`, `arm64`, and `armhf`.
+
+Add the signing key and the repository:
+
+```bash
+curl -fsSL https://clintcan.github.io/debswarm/debswarm-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/debswarm-archive-keyring.gpg > /dev/null
+
+sudo tee /etc/apt/sources.list.d/debswarm.sources > /dev/null <<'EOF'
+Types: deb
+URIs: https://clintcan.github.io/debswarm
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/debswarm-archive-keyring.gpg
+EOF
+```
+
+Then install:
+
+```bash
+sudo apt-get update
+sudo apt-get install debswarm
+```
+
+That's the whole setup. The package creates the `debswarm` system user, enables and starts the systemd service, and drops in the APT proxy config — so APT starts going through debswarm immediately. Verify with:
+
+```bash
+systemctl status debswarm
+debswarm stats
+```
+
+To also pick up new versions via `unattended-upgrades`:
+
+```bash
+sudo tee /etc/apt/apt.conf.d/52debswarm-unattended > /dev/null <<'EOF'
+Unattended-Upgrade::Origins-Pattern {
+  "origin=debswarm,codename=stable";
+};
+EOF
+```
+
+Prefer not to add a third-party repository? Signed `.deb`s for each release are attached to the [GitHub releases](https://github.com/clintcan/debswarm/releases) and can be installed with `sudo apt-get install ./debswarm_<version>_<arch>.deb`.
+
+### Build from source
+
 ```bash
 # Build
 make build
