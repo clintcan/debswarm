@@ -83,7 +83,12 @@ var DefaultTrustedRepos = []string{
 // DefaultTrustedRepos); this list only controls the http->https scheme upgrade,
 // not whether the host is permitted.
 var DefaultHTTPSUpstreamHosts = []string{
-	"pkgs.k8s.io", // Kubernetes (HTTPS-only, flat-layout repository)
+	"pkgs.k8s.io",                // Kubernetes (HTTPS-only, flat-layout repository)
+	"download.docker.com",        // Docker
+	"deb.nodesource.com",         // NodeSource (Node.js, HTTPS-only)
+	"packages.microsoft.com",     // Microsoft (VS Code, .NET, etc.)
+	"apt.releases.hashicorp.com", // HashiCorp (HTTPS-only)
+	"apt.postgresql.org",         // PostgreSQL
 }
 
 // TrustsKnownRepos reports whether the curated DefaultTrustedRepos set is trusted.

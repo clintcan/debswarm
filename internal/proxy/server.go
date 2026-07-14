@@ -1893,11 +1893,12 @@ func (s *Server) handleIndexRequest(w http.ResponseWriter, r *http.Request, url 
 
 func (s *Server) handleReleaseRequest(w http.ResponseWriter, r *http.Request, url string) {
 	// A Release/InRelease/Release.gpg request means the suite may have changed;
-	// drop any cached verified Release for its dist so the next index request
-	// re-verifies against the copy about to be (re)fetched and cached.
+	// drop any cached verified Release for its base (dist- or flat-layout) so the
+	// next index request re-verifies against the copy about to be (re)fetched and
+	// cached.
 	if s.verificationEnabled() {
-		if dist := distBaseURL(url); dist != "" {
-			s.releaseStore.invalidate(dist)
+		if base := verificationBaseURL(url); base != "" {
+			s.releaseStore.invalidate(base)
 		}
 	}
 	s.handlePassthrough(w, r, url)

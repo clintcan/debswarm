@@ -79,10 +79,15 @@ narrower: concrete, verified gaps in what exists today.
   `enforce` fails startup). Closes the `[trusted=yes]` / `dpkg -i` / P2P-seed gap
   for every repo whose key is discoverable, by default. Design:
   `docs/design/upstream-gpg-verification.md`. Dependency `ProtonMail/go-crypto`.
-  Remaining follow-ups (smaller, tracked in Robustness/security below):
-  verification needs a cached signed `Release` (no live on-demand mirror fetch yet,
-  and flat/no-`dists` repos such as `pkgs.k8s.io` are uncovered in v1); wider
-  default `https_upstream_hosts` would let more repos be verified over HTTPS.
+  Follow-ups since done: flat/no-`dists` repos are now verified against the
+  `Release` in their own directory (any repo with a discoverable **v4**-signed
+  `Release`); the default `https_upstream_hosts` set was widened to the common
+  HTTPS repos. Remaining (smaller): verification still needs a cached signed
+  `Release` (no live on-demand mirror fetch yet). **`pkgs.k8s.io` cannot be
+  verified** — it signs `InRelease` with a **legacy v3 signature** that go-crypto
+  refuses (only GnuPG accepts v3); k8s is served-and-flagged `no-release` under
+  `auto`, needs `verify_exempt_hosts` under `enforce`. Not fixable without adding
+  v3 support (a security regression); a v4 re-sign is an upstream OBS matter.
 - **Real-APT end-to-end CI test** (PR #109, partially addresses testing/ops #2):
   a new `e2e` job drives a real apt client through the proxy against a real
   Debian repo in a `debian:bookworm-slim` container, guarding the pipelining /
@@ -150,11 +155,16 @@ narrower: concrete, verified gaps in what exists today.
    feature).** Daemon-side GPG verification landed and now defaults to `auto` (see
    Recently addressed), so out of the box the proxy refuses an index a
    signature-verified `Release` proves was tampered with, for every repo whose key
-   is discoverable. Remaining, all smaller: live on-demand `Release` fetch so
-   `enforce` works before the metadata cache is warm; flat/no-`dists` repo coverage
-   (e.g. `pkgs.k8s.io`, currently `no-dist` → served under `auto`, needs
-   `verify_exempt_hosts` under `enforce`); and wider default `https_upstream_hosts`
-   so more repos can be verified over HTTPS.
+   is discoverable — now including **flat/no-`dists` repos**, which are verified
+   against the `Release` in their own directory (for a v4-signed `Release`), and the
+   default `https_upstream_hosts` set was **widened** to the common HTTPS repos.
+   Remaining, smaller: **live on-demand `Release` fetch** so `enforce` works before
+   the metadata cache is warm (today it refuses a not-yet-cached `Release`);
+   flat-repo Acquire-By-Hash indices are classified as passthrough (not verified)
+   unless the repo uses plain `Packages` files; and **`pkgs.k8s.io` is unverifiable**
+   because it uses a **legacy v3 `InRelease` signature** go-crypto refuses (served
+   under `auto`, `verify_exempt_hosts` under `enforce`) — an upstream signature
+   format issue, not fixable without a security-regressing v3 code path.
 
 ## Testing / operations
 
