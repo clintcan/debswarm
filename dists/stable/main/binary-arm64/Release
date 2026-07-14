@@ -1,0 +1,6 @@
+Archive: stable
+Component: main
+Origin: debswarm
+Label: debswarm
+Architecture: arm64
+Description: debswarm apt repository (self-distribution)

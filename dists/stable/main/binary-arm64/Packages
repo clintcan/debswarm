@@ -1,0 +1,29 @@
+Package: debswarm
+Version: 1.39.0-1
+Architecture: arm64
+Maintainer: debswarm developers <debswarm@example.com>
+Installed-Size: 34111
+Depends: ca-certificates
+Homepage: https://github.com/debswarm/debswarm
+Priority: optional
+Section: net
+Filename: pool/main/d/debswarm/debswarm_1.39.0-1_arm64.deb
+Size: 10760936
+SHA256: 150ff699b75fa23f560eaca4319aa11b9d398735345c426f08713ad3197a6a2f
+SHA1: 08d14592432863da9eb1a61dfbbb5ff1188983c8
+MD5sum: 103cdfc857c5fb44306282df6670c7ec
+Description: Peer-to-peer package distribution for APT
+ debswarm accelerates APT package downloads by fetching packages from
+ nearby peers, without changing how apt verifies them.
+ It operates as a transparent HTTP proxy, requiring no changes to your
+ normal apt workflow.
+ .
+ Features:
+  * Transparent APT integration - just use apt install as usual
+  * P2P package sharing via libp2p and Kademlia DHT
+  * Parallel chunked downloads from multiple peers
+  * Hash verification of P2P downloads against the repository index
+  * Automatic fallback to official mirrors
+  * QUIC transport for better NAT traversal
+  * Prometheus metrics for monitoring
+

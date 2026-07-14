@@ -1,0 +1,38 @@
+Origin: debswarm
+Label: debswarm
+Suite: stable
+Codename: stable
+Date: Tue, 14 Jul 2026 18:44:09 UTC
+Architectures: amd64 arm64 armhf
+Components: main
+Description: debswarm apt repository (self-distribution)
+MD5Sum:
+ b34247c1f0dd058498be3903b11db6d4 1120 main/binary-amd64/Packages
+ 3b2364f36a3d76126db659f6c0749823 696 main/binary-amd64/Packages.gz
+ 4fd43f5325295dfb8563aac50d86cb2f 142 main/binary-amd64/Release
+ d00d9760eca5f47e59dab0f98ac7c137 1120 main/binary-arm64/Packages
+ 53600ccf324901ab022b6a5c920a7362 701 main/binary-arm64/Packages.gz
+ a50a53a0a18ed2c57fc8e5444525b45c 142 main/binary-arm64/Release
+ fffb92233c3e32c0e42a5bf190ea6dff 1120 main/binary-armhf/Packages
+ a594c7b46a35bd6d511f84612d31e01e 697 main/binary-armhf/Packages.gz
+ abb3fa2765c31a8bcc2fc8cab15568cf 142 main/binary-armhf/Release
+SHA1:
+ 10ae4c62ce450880ff19b11c59672fe5f69dd6c5 1120 main/binary-amd64/Packages
+ 57f9eba1e102eb740b47eea9ccb8aa40a47b75d9 696 main/binary-amd64/Packages.gz
+ 801b912ae309802e555db7173f4df86d5c6b3790 142 main/binary-amd64/Release
+ 40ab5b0730fc036b0e9964ad25fd0c5c5e43595d 1120 main/binary-arm64/Packages
+ bf2b04710e0556a98f407bf49cd164a1fa28a467 701 main/binary-arm64/Packages.gz
+ e640e814020d4d90b2ac742bbd4715b2e50720a7 142 main/binary-arm64/Release
+ 9a305b1c7963599b3f61cf94baf77124f46c91b6 1120 main/binary-armhf/Packages
+ 5ce0287bc7d707ccd401a1c2e033ab13122c7057 697 main/binary-armhf/Packages.gz
+ f200e242294e35ab74a706058a474cd991786f9a 142 main/binary-armhf/Release
+SHA256:
+ 4a2e181ea3932d0cc809b3ed0eb3de9db29b65f4d0f33888f11254218427f03b 1120 main/binary-amd64/Packages
+ 9720c43cbd6328a5a7549dda6ed81a44545db2dbe2ccb509888b1d27e4c824c7 696 main/binary-amd64/Packages.gz
+ 616867f923671c3bbe8c1d383a8f51c66fc7c27a60681680c2e7915bdf343823 142 main/binary-amd64/Release
+ 20c902b17fbf680fceb862577d5d2f3cf3e218e08a52959c477132c38e5fffc6 1120 main/binary-arm64/Packages
+ 128242a775a3ad55f597e8aaa52ea8286da4372fbc4774522a937e670b74c623 701 main/binary-arm64/Packages.gz
+ 39d080a338a87c1a99b35f04737fe7a9f54c4cf310236a46cc546d0c91f8f3dd 142 main/binary-arm64/Release
+ ec8a2fd4120f08ead5d3a24e8a4bdbf1a892b9eb4385ef8b55265a3a590a0b86 1120 main/binary-armhf/Packages
+ 55e55aa6928b71a3ec0cdeed54ac0888434522f416991055365de2363a76b539 697 main/binary-armhf/Packages.gz
+ 4d26b3cc4971bf4ef6927bea1c5e61acd1c3c0d90050867098ccccf28315cc83 142 main/binary-armhf/Release
