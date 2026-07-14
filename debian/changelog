@@ -1,3 +1,25 @@
+debswarm (1.38.0-1) stable; urgency=low
+
+  * Source packages are now cached, SHA256-verified, and P2P-shared like binary
+    .deb packages. Previously a deb-src workflow (apt-get source, sbuild,
+    pbuilder, or any source-based build) fetched its .dsc, .orig.tar.*,
+    .debian.tar.*, and .diff.gz artifacts straight through the proxy with no
+    hash check, no content-addressed cache, and no peer sharing — the one
+    artifact class debswarm served entirely unverified. debswarm now parses a
+    repository's Sources index (which carries a Checksums-Sha256 for every
+    source file) and routes each source artifact through the same path as a
+    binary package: verified against the SHA256 the index lists, cached by
+    content, announced to the DHT, and served from a peer when available.
+    Native-format source packages and additional-component orig tarballs
+    (.orig-<component>.tar.*) are handled too.
+  * Sources indices are now GPG-verified by daemon-side signature verification,
+    exactly like Packages indices (both plain and Acquire-By-Hash forms). Source
+    indices written by APT under /var/lib/apt/lists from a deb-src line are also
+    parsed at daemon startup to warm the in-memory index, giving build hosts the
+    same warm-cache story on restart that binary packages already had.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 14 Jul 2026 08:00:00 +0000
+
 debswarm (1.37.0-1) stable; urgency=low
 
   * Official multi-arch container image at ghcr.io/clintcan/debswarm (linux
