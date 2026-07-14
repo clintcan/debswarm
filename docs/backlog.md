@@ -97,6 +97,16 @@ narrower: concrete, verified gaps in what exists today.
   cache (cold miss → warm hit), and default (`auto`) signature verification.
   Institutionalizes the manual Docker soak; committed under `test/e2e/`. Still
   open in testing/ops #2: fuzz-in-CI, two-node P2P, nightly.
+- **Source-package verification** (Unreleased, resolves former product gap #4):
+  a new `Sources` parser (`internal/index/sources.go`) reads the
+  `Checksums-Sha256` block of each stanza, so `.dsc`/`.orig.tar.*`/
+  `.debian.tar.*`/`.diff.gz`, native tarballs, and `.orig-<component>` tarballs
+  now classify as content-addressed packages and flow through the existing
+  cache/verify/P2P path (SHA256 from the index, DHT-announced, peer-served) — the
+  binary-`.deb` machinery is reused unchanged. `Sources` indices are GPG-verified
+  by the same `verifyIndex`/`Release` path as `Packages` (plain + `Acquire-By-Hash`),
+  and the apt-lists watcher warms the in-memory index from `deb-src` `Sources`
+  files at startup. Fuzz-tested (`FuzzParseSourcesFile`).
 
 ## Product gaps (ranked by user value)
 
@@ -128,10 +138,12 @@ narrower: concrete, verified gaps in what exists today.
    repo variable); it goes live on the first stable tag after the operator
    completes the one-time key/secret/Pages setup (checklist in
    `docs/design/self-distribution.md`). No Helm chart exists (lower priority).
-4. **Source packages get zero benefit.** Sources indices are deliberately not
-   parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
-   Sources carrying SHA256s that would make verification identical to the
-   `.deb` path. Build farms are a natural audience.
+4. **Source packages get zero benefit.** ✅ **Done** (Unreleased — see Recently
+   addressed and `CHANGELOG.md`). `Sources` indices are now parsed and each
+   `.dsc`/`.orig.tar.*`/`.debian.tar.*`/`.diff.gz` (plus native and
+   `.orig-<component>` tarballs) is cached, SHA256-verified against the index,
+   and P2P-shared through the same path as a `.deb`; `Sources` indices are also
+   GPG-verified. Build farms now get the full benefit.
 5. **Smaller**: `rollback fetch` from P2P is a stub while the README
    advertises it; no mirror remapping/failover (per-mirror stats are
    collected but never used for selection); no per-repo cache stats or

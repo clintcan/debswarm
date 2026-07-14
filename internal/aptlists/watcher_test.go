@@ -159,6 +159,73 @@ SHA256: def456789012345678901234567890123456789012345678901234abcdef12
 	}
 }
 
+func TestIsSourcesFile(t *testing.T) {
+	idx := index.New(t.TempDir(), testLogger())
+	w := New(idx, testLogger(), nil)
+
+	tests := []struct {
+		name     string
+		filename string
+		expected bool
+	}{
+		{"plain sources", "deb.debian.org_debian_dists_bookworm_main_source_Sources", true},
+		{"gzip sources", "deb.debian.org_debian_dists_bookworm_main_source_Sources.gz", true},
+		{"xz sources", "deb.debian.org_debian_dists_bookworm_main_source_Sources.xz", true},
+		{"partial download", "deb.debian.org_debian_dists_bookworm_main_source_Sources.partial", false},
+		{"binary packages", "deb.debian.org_debian_dists_bookworm_main_binary-amd64_Packages", false},
+		{"release file", "deb.debian.org_debian_dists_bookworm_Release", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := w.isSourcesFile(tt.filename)
+			if result != tt.expected {
+				t.Errorf("isSourcesFile(%q) = %v, want %v", tt.filename, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestScanAll_WithSourcesFile(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// A deb-src Sources index: one stanza, two source artifacts.
+	sourcesContent := `Package: hello
+Directory: pool/main/h/hello
+Checksums-Sha256:
+ 1111111111111111111111111111111111111111111111111111111111111111 1183 hello_2.10-3.dsc
+ 2222222222222222222222222222222222222222222222222222222222222222 725946 hello_2.10.orig.tar.gz
+`
+
+	sourcesPath := filepath.Join(tmpDir, "deb.debian.org_debian_dists_bookworm_main_source_Sources")
+	if err := os.WriteFile(sourcesPath, []byte(sourcesContent), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	idx := index.New(tmpDir, testLogger())
+	w := New(idx, testLogger(), &Config{ListsPath: tmpDir})
+
+	count, err := w.scanAll()
+	if err != nil {
+		t.Fatalf("scanAll failed: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("Expected 1 file scanned, got %d", count)
+	}
+
+	// Both source artifacts must be in the index, resolvable by their pool URL.
+	if idx.Count() != 2 {
+		t.Errorf("Expected 2 source artifacts in index, got %d", idx.Count())
+	}
+	pkg := idx.GetByURLPath("http://deb.debian.org/debian/pool/main/h/hello/hello_2.10.orig.tar.gz")
+	if pkg == nil {
+		t.Fatal("source artifact not resolvable after watcher scan")
+	}
+	if pkg.SHA256 != "2222222222222222222222222222222222222222222222222222222222222222" {
+		t.Errorf("SHA256 = %q, want the orig tarball hash", pkg.SHA256)
+	}
+}
+
 func TestStart_NonExistentDir(t *testing.T) {
 	idx := index.New(t.TempDir(), testLogger())
 	w := New(idx, testLogger(), &Config{ListsPath: "/nonexistent/path"})
