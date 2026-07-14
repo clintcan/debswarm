@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Flat-layout repositories are now GPG-verified.** Daemon-side signature verification previously covered only dist-layout repositories (those with a `/dists/<suite>/` tree); a flat-layout repository such as `pkgs.k8s.io` was reported `no-dist` and served unverified. debswarm now anchors a flat repo's index to the signature-verified `Release`/`InRelease` that sits in the same directory (and lists index files by bare name), exactly as it does for a dist repo. A flat repository whose signing key debswarm can discover therefore gets full `auto`/`enforce` protection with no extra configuration. Only a flat repo with no cached, verified `Release` falls back to the indecisive `no-release` result (served-and-flagged under `warn`/`auto`).
+
+### Changed
+- **The default `https_upstream_hosts` set now covers more common HTTPS repositories**: `download.docker.com`, `deb.nodesource.com`, `packages.microsoft.com`, `apt.releases.hashicorp.com`, and `apt.postgresql.org` join `pkgs.k8s.io` (all already in the default allowlist). With `trust_known_repos` on, pointing a `sources.list` entry for one of these at `http://` lets debswarm fetch it over HTTPS and cache, verify, and P2P-share it — instead of it becoming an opaque, uncacheable `CONNECT` tunnel. Only `http://` requests are upgraded; APT's own signature verification is unaffected.
+
 ## [1.35.0] - 2026-07-14
 
 ### Added

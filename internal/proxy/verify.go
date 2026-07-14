@@ -31,8 +31,8 @@ const (
 // "indecisive" failures mean verification could not be attempted at all.
 const (
 	verifyReasonNoKey        = "no-key"        // keyring empty / no trusted key — cannot verify (indecisive)
-	verifyReasonNoDist       = "no-dist"       // URL has no /dists/ segment, a flat repo — cannot verify (indecisive)
-	verifyReasonNoRelease    = "no-release"    // no signature-verified Release for this dist — cannot verify (indecisive)
+	verifyReasonNoDist       = "no-dist"       // no resolvable repository base in the URL — cannot verify (indecisive)
+	verifyReasonNoRelease    = "no-release"    // no signature-verified Release for this base (dist or flat) — cannot verify (indecisive)
 	verifyReasonNotListed    = "not-listed"    // Release verified but does not list this index file (decisive)
 	verifyReasonHashMismatch = "hash-mismatch" // index does not match the hash in the signed Release (decisive)
 )
@@ -83,6 +83,36 @@ func distBaseURL(rawURL string) string {
 		return ""
 	}
 	return rawURL[:i+len(marker)+slash+1]
+}
+
+// flatBaseURL returns the base URL of a flat-layout repository (one with no
+// /dists/ tree, e.g. pkgs.k8s.io) for an index or Release file: the directory
+// containing the file, including the trailing slash. The Release/InRelease of a
+// flat repo lives in that same directory and lists index files by their bare
+// names (e.g. "Packages", "Packages.gz"). For an Acquire-By-Hash URL the base is
+// the directory containing the /by-hash/ segment, so a by-hash index maps to the
+// same base as the plain files. Returns "" only for a URL with no path segment.
+func flatBaseURL(rawURL string) string {
+	if j := strings.Index(rawURL, "/by-hash/"); j >= 0 {
+		return rawURL[:j+1]
+	}
+	i := strings.LastIndexByte(rawURL, '/')
+	if i < 0 {
+		return ""
+	}
+	return rawURL[:i+1]
+}
+
+// verificationBaseURL returns the repository base URL that a Release verifies an
+// index (or another Release file) against: the dist base ("/dists/<suite>/") when
+// present, otherwise the flat-repo base (the file's directory). This is the key
+// under which the verified Release is stored, so an index and its Release resolve
+// to the same base whether the repo is dist- or flat-layout.
+func verificationBaseURL(rawURL string) string {
+	if d := distBaseURL(rawURL); d != "" {
+		return d
+	}
+	return flatBaseURL(rawURL)
 }
 
 // byHashDigest returns the hex digest embedded in an Acquire-By-Hash URL
@@ -149,11 +179,14 @@ func (s *Server) verifyIndex(rawURL string, data []byte) (bool, string) {
 	if s.keyring == nil || s.keyring.Empty() {
 		return false, verifyReasonNoKey
 	}
-	dist := distBaseURL(rawURL)
-	if dist == "" {
-		return false, verifyReasonNoDist // flat-layout repo (no dists/ tree)
+	// dist-layout repos anchor on "/dists/<suite>/"; flat-layout repos (no dists/
+	// tree, e.g. pkgs.k8s.io) anchor on the index file's own directory, where
+	// their Release lives and lists index files by bare name.
+	base := verificationBaseURL(rawURL)
+	if base == "" {
+		return false, verifyReasonNoDist // no resolvable repository base
 	}
-	rel := s.obtainRelease(dist)
+	rel := s.obtainRelease(base)
 	if rel == nil {
 		return false, verifyReasonNoRelease
 	}
@@ -169,7 +202,7 @@ func (s *Server) verifyIndex(rawURL string, data []byte) (bool, string) {
 
 	// Plain path: the Release must list this file, and its bytes must hash to the
 	// listed value.
-	relPath := strings.TrimPrefix(rawURL, dist)
+	relPath := strings.TrimPrefix(rawURL, base)
 	fh, ok := rel.SHA256[relPath]
 	if !ok {
 		// The Release verified but does not vouch for this file — decisive (auto

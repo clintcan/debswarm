@@ -179,9 +179,10 @@ func TestVerifyIndex_NoReleaseAndNoKey(t *testing.T) {
 	if ok, reason := srv.verifyIndex(other, pkgBody); ok || reason != verifyReasonNoRelease {
 		t.Fatalf("no cached release: ok=%v reason=%q, want false/no-release", ok, reason)
 	}
-	// A flat repo (no /dists/) → no-dist.
-	if ok, reason := srv.verifyIndex("http://pkgs.k8s.io/core/deb/Packages", pkgBody); ok || reason != verifyReasonNoDist {
-		t.Fatalf("flat repo: ok=%v reason=%q, want false/no-dist", ok, reason)
+	// A flat repo (no /dists/) with no cached Release → no-release: a flat base
+	// resolves (the file's directory), but nothing is cached there to verify against.
+	if ok, reason := srv.verifyIndex("http://pkgs.k8s.io/core/deb/Packages", pkgBody); ok || reason != verifyReasonNoRelease {
+		t.Fatalf("flat repo, no release: ok=%v reason=%q, want false/no-release", ok, reason)
 	}
 	// Nil keyring → no-key.
 	srv.keyring = nil
@@ -332,8 +333,8 @@ func TestCheckIndexVerification_AutoPolicy(t *testing.T) {
 
 	// Indecisive failures (cannot verify) → serve like warn, with a header.
 	indecisive := map[string]string{
-		"http://deb.debian.org/debian/dists/sid/main/binary-amd64/Packages": verifyReasonNoRelease, // no cached Release
-		"http://pkgs.k8s.io/core/deb/Packages":                              verifyReasonNoDist,    // flat repo
+		"http://deb.debian.org/debian/dists/sid/main/binary-amd64/Packages": verifyReasonNoRelease, // no cached dist Release
+		"http://pkgs.k8s.io/core/deb/Packages":                              verifyReasonNoRelease, // flat repo, no cached Release
 	}
 	for u, wantReason := range indecisive {
 		rec := httptest.NewRecorder()
@@ -361,5 +362,108 @@ func TestCheckIndexVerification_AutoPolicy(t *testing.T) {
 	exempt.verifyExempt = map[string]bool{"deb.debian.org": true}
 	if !exempt.checkIndexVerification(httptest.NewRecorder(), verPkgURL, tampered, newTestLogger()) {
 		t.Fatal("auto must serve an exempt host even on a decisive failure")
+	}
+}
+
+// --- Flat-layout repositories (no /dists/ tree, e.g. pkgs.k8s.io) ---
+
+const (
+	// A flat repo's index files and its Release live in the same directory; the
+	// Release lists index files by bare name.
+	verFlatBase   = "https://pkgs.k8s.io/core:/stable:/v1.31/deb/"
+	verFlatPkgURL = verFlatBase + "Packages"
+	verFlatPkgRel = "Packages"
+)
+
+func TestFlatBaseURL(t *testing.T) {
+	cases := map[string]string{
+		verFlatPkgURL:               verFlatBase,
+		verFlatBase + "InRelease":   verFlatBase,
+		verFlatBase + "Release":     verFlatBase,
+		verFlatBase + "Packages.gz": verFlatBase,
+		// A by-hash index maps to the same base as the plain files.
+		verFlatBase + "by-hash/SHA256/abc123": verFlatBase,
+		"http://host/only":                    "http://host/",
+	}
+	for in, want := range cases {
+		if got := flatBaseURL(in); got != want {
+			t.Errorf("flatBaseURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	// verificationBaseURL prefers the dist base when present, else the flat base.
+	if got := verificationBaseURL(verPkgURL); got != verDist {
+		t.Errorf("verificationBaseURL(dist) = %q, want %q", got, verDist)
+	}
+	if got := verificationBaseURL(verFlatPkgURL); got != verFlatBase {
+		t.Errorf("verificationBaseURL(flat) = %q, want %q", got, verFlatBase)
+	}
+}
+
+// signedFlatReleaseCache builds a metadata-enabled cache whose InRelease (at the
+// flat base, clearsigned by e) lists verFlatPkgRel with the SHA256 of pkgBody.
+func signedFlatReleaseCache(t *testing.T, e *openpgp.Entity, pkgBody []byte) *cache.Cache {
+	t.Helper()
+	h := sha256Hex(pkgBody)
+	releaseBody := fmt.Sprintf("Origin: Kubernetes\nSuite: stable\nSHA256:\n %s %d %s\n", h, len(pkgBody), verFlatPkgRel)
+
+	var buf bytes.Buffer
+	w, err := clearsign.Encode(&buf, e.PrivateKey, nil)
+	if err != nil {
+		t.Fatalf("clearsign.Encode: %v", err)
+	}
+	if _, err := w.Write([]byte(releaseBody)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("clearsign close: %v", err)
+	}
+
+	c, err := cache.New(t.TempDir(), 100*1024*1024, newTestLogger())
+	if err != nil {
+		t.Fatalf("cache.New: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	c.SetMetadataMaxSize(10 * 1024 * 1024)
+	mw, err := c.NewMetadataWriter(verFlatBase+"InRelease", "", "", "")
+	if err != nil {
+		t.Fatalf("NewMetadataWriter: %v", err)
+	}
+	if _, err := mw.Write(buf.Bytes()); err != nil {
+		t.Fatalf("metadata write: %v", err)
+	}
+	if err := mw.Commit(); err != nil {
+		t.Fatalf("metadata commit: %v", err)
+	}
+	return c
+}
+
+func TestVerifyIndex_FlatRepo(t *testing.T) {
+	pkgBody := []byte("Package: kubectl\nVersion: 1.31.0-1.1\nArchitecture: amd64\n\n")
+	e, kr := genKeyAndKeyring(t)
+	c := signedFlatReleaseCache(t, e, pkgBody)
+	srv := serverWith(t, c, index.New(t.TempDir(), newTestLogger()))
+	srv.keyring = kr
+	srv.verifyMode = verifyWarn
+
+	// The flat Packages verifies against the flat-base InRelease.
+	if ok, reason := srv.verifyIndex(verFlatPkgURL, pkgBody); !ok {
+		t.Fatalf("flat index should verify, got reason=%q", reason)
+	}
+
+	// Tampered bytes → decisive hash-mismatch.
+	if ok, reason := srv.verifyIndex(verFlatPkgURL, append(append([]byte{}, pkgBody...), 'X')); ok || reason != verifyReasonHashMismatch {
+		t.Fatalf("tampered flat index: ok=%v reason=%q, want false/hash-mismatch", ok, reason)
+	}
+
+	// A file the flat Release does not list → decisive not-listed.
+	if ok, reason := srv.verifyIndex(verFlatBase+"Packages.gz", pkgBody); ok || reason != verifyReasonNotListed {
+		t.Fatalf("unlisted flat file: ok=%v reason=%q, want false/not-listed", ok, reason)
+	}
+
+	// A by-hash flat URL whose digest the Release vouches for verifies.
+	byHash := verFlatBase + "by-hash/SHA256/" + sha256Hex(pkgBody)
+	if ok, reason := srv.verifyIndex(byHash, nil); !ok {
+		t.Fatalf("flat by-hash should verify, got reason=%q", reason)
 	}
 }

@@ -209,7 +209,7 @@ Settings for the HTTP proxy behavior.
 |-------|------|---------|-------------|
 | `trust_known_repos` | bool | `true` | Trust the curated set of common third-party repositories (see below) in addition to the built-in Debian/Ubuntu/Mint mirrors. Set to `false` for a strict, mirrors-only posture. |
 | `allowed_hosts` | string[] | `[]` | Additional repository hostnames to allow through the proxy, on top of the built-ins and (when enabled) the trusted set. Requests must still look like APT traffic (`/dists/`+`/pool/` layout, or a recognized APT file such as `Release`/`Packages`/`*.deb`); flat-layout repos are supported. |
-| `https_upstream_hosts` | string[] | `[]` | Hosts to fetch over HTTPS even when APT requests them via plain HTTP, so HTTPS-only repositories can be cached and shared over P2P. Merged with the known HTTPS-only defaults (`pkgs.k8s.io`) when `trust_known_repos` is enabled. See [HTTPS-only repositories](#https-only-repositories) below. |
+| `https_upstream_hosts` | string[] | `[]` | Hosts to fetch over HTTPS even when APT requests them via plain HTTP, so HTTPS-only repositories can be cached and shared over P2P. Merged with a curated set of common HTTPS repositories (`pkgs.k8s.io`, `download.docker.com`, `deb.nodesource.com`, `packages.microsoft.com`, `apt.releases.hashicorp.com`, `apt.postgresql.org`) when `trust_known_repos` is enabled. See [HTTPS-only repositories](#https-only-repositories) below. |
 
 **Example:**
 ```toml
@@ -245,7 +245,9 @@ This is different from an HTTPS **CONNECT tunnel** (used when APT itself request
 ```toml
 [proxy]
 https_upstream_hosts = [
-  "pkgs.k8s.io",              # trusted automatically when trust_known_repos = true
+  # pkgs.k8s.io, download.docker.com, deb.nodesource.com, packages.microsoft.com,
+  # apt.releases.hashicorp.com and apt.postgresql.org are included automatically
+  # when trust_known_repos = true — list only additional hosts here.
   "apt.internal.example.com",
 ]
 ```
@@ -363,7 +365,7 @@ P2P peers (whose only anchor is otherwise "the mirror said so").
 |------|----------|
 | `off` | No verification. Pre-1.34 behavior. |
 | `warn` | Verify and report — on failure, increment `debswarm_upstream_verify_total`, log, and set an `X-Debswarm-Unverified: <reason>` response header — but **always serve**. Identical to `off` from APT's point of view (nothing is refused); it only adds visibility. |
-| `auto` (default) | Refuse an index **only when verification was possible and failed** — a signature-verified `Release` exists for the repo but the index does not match it (`hash-mismatch` or `not-listed`) — and behave like `warn` (serve + flag) when verification could not be attempted at all (`no-key`, `no-dist`, `no-release`). This gives real protection for every repository whose signing key is discoverable, without breaking one that cannot be verified. A safe middle ground between `warn` and `enforce`, and the default. |
+| `auto` (default) | Refuse an index **only when verification was possible and failed** — a signature-verified `Release` exists for the repo but the index does not match it (`hash-mismatch` or `not-listed`) — and behave like `warn` (serve + flag) when verification could not be attempted at all (`no-key`, `no-release`). This gives real protection for every repository whose signing key is discoverable (dist- or flat-layout), without breaking one that cannot be verified. A safe middle ground between `warn` and `enforce`, and the default. |
 | `enforce` | Refuse to parse/serve an index whenever it is not verified, **including** when verification could not be attempted (fresh fetch → `502`; a cached index is simply not loaded into the in-memory index). Fully fail-closed. |
 
 APT's end-to-end GPG verification is unaffected in every mode; this is defense
@@ -396,10 +398,15 @@ with no keys or no metadata cache simply serves everything with a flag, like `wa
 its `Valid-Until` — that is left to APT — so serving an expired-but-signed
 `Release` offline (see `serve_stale_metadata`) still works.
 
-**Flat repositories** (e.g. `pkgs.k8s.io`, which have no `dists/` tree) are not
-covered by this dist-based scheme in v1: `warn` and `auto` serve them and report
-`no-dist` (`auto` treats "cannot verify" as serve), while `enforce` refuses them
-unless they are listed in `verify_exempt_hosts`.
+**Flat repositories** (e.g. `pkgs.k8s.io`, which have no `dists/` tree) **are**
+verified: their `Release`/`InRelease` lives in the same directory as the index and
+lists index files by bare name, and debswarm anchors the index hash to that signed
+`Release` exactly as it does for a dist-layout repo. A flat repo whose signing key
+is discoverable therefore gets full `auto`/`enforce` protection with no extra
+configuration — the same as Debian/Ubuntu. Only a flat repo with **no** cached,
+signature-verified `Release` (an empty keyring for it, or the `Release` not yet
+fetched) falls back to the indecisive `no-release` result: `warn`/`auto` serve and
+flag it, `enforce` refuses it unless the host is in `verify_exempt_hosts`.
 
 ---
 

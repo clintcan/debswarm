@@ -1510,8 +1510,19 @@ func TestProxyConfig_EffectiveHTTPSUpstreamHosts(t *testing.T) {
 	t.Run("default includes known HTTPS-only repos", func(t *testing.T) {
 		p := ProxyConfig{}
 		got := p.EffectiveHTTPSUpstreamHosts()
-		if !slices.Contains(got, "pkgs.k8s.io") {
-			t.Errorf("expected curated default pkgs.k8s.io, got %v", got)
+		// Every curated HTTPS-upstream host must also be reachable through the
+		// allowlist (DefaultTrustedRepos), or the scheme upgrade points at a host
+		// the proxy would then refuse.
+		for _, h := range []string{
+			"pkgs.k8s.io", "download.docker.com", "deb.nodesource.com",
+			"packages.microsoft.com", "apt.releases.hashicorp.com", "apt.postgresql.org",
+		} {
+			if !slices.Contains(got, h) {
+				t.Errorf("expected curated HTTPS-upstream default %q, got %v", h, got)
+			}
+			if !slices.Contains(DefaultTrustedRepos, h) {
+				t.Errorf("HTTPS-upstream default %q is not in the allowlist DefaultTrustedRepos", h)
+			}
 		}
 	})
 
