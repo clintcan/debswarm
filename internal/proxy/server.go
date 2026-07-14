@@ -2288,7 +2288,7 @@ func isFlatByHash(lower string) bool {
 // index exactly like binary packages. Native tarballs are gated on /pool/ so
 // dist-tree tarballs (e.g. installer netboot.tar.gz) are not caught; a false
 // positive is harmless anyway — an artifact absent from the index just streams
-// uncached, identical to the previous passthrough behaviour. The argument is
+// uncached, identical to the previous passthrough behavior. The argument is
 // expected to be already lowercased.
 func isSourceArtifactURL(lower string) bool {
 	switch {
