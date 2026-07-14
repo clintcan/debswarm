@@ -118,10 +118,14 @@ narrower: concrete, verified gaps in what exists today.
    `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
    publicly reachable nodes). `docs/comparison.md` now states this honestly
    (Relay Fallback: "Partial — client transport only") pending that work.
-3. **No apt repository or container image for debswarm itself.** Distribution
-   is GitHub releases + `curl | bash`. No signed apt repo means no
-   `unattended-upgrades` and no fleet-wide upgrade path — ironic for an APT
-   tool. No Dockerfile/OCI image/Helm chart exists.
+3. **No signed apt repository for debswarm itself.** The multi-arch **container
+   image now exists** (`ghcr.io/clintcan/debswarm`, distroless, shipped in
+   v1.37.0 — see `docs/design/self-distribution.md`). What remains is a signed
+   apt repo: distribution of the native package is still GitHub releases +
+   `curl | bash`, so there is no `unattended-upgrades` origin and no fleet-wide
+   upgrade path — ironic for an APT tool. Planned next (v1.38.0): a reprepro-built
+   signed repo on GitHub Pages (design + user-prerequisite checklist in the
+   design doc). No Helm chart exists (lower priority).
 4. **Source packages get zero benefit.** Sources indices are deliberately not
    parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
    Sources carrying SHA256s that would make verification identical to the

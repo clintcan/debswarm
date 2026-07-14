@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Official multi-arch container image** at `ghcr.io/clintcan/debswarm` (linux `amd64`/`arm64`/`armv7`), published automatically on each release by GoReleaser. It is built `FROM gcr.io/distroless/static-debian12:nonroot` — because the binary is fully static, the image is tiny, shell-less, and runs as a nonroot user. Tags: the full version (e.g. `1.37.0`), `major.minor` (`1.37`), and `latest` (the moving tags skip prereleases). The image bakes a **loopback-safe** default config, so it is secure by default; to run it as a cache server reachable from other containers or hosts, mount a config with a non-loopback `proxy_bind` + `proxy_allowed_cidrs` (ship `packaging/config.container.toml`), and persist the cache and peer identity with volumes on `/var/cache/debswarm` and `/var/lib/debswarm`. See the README "Run with Docker" section. (A signed apt repository for `apt-get install debswarm` + `unattended-upgrades` is planned as a follow-up.)
+
 ## [1.36.0] - 2026-07-14
 
 ### Added

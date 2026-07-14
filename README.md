@@ -78,6 +78,39 @@ echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
 
 > **Note:** the HTTPS line above sets up a CONNECT tunnel, which is opaque — those packages are **not** cached or P2P-shared. To get caching and P2P for an HTTPS-only repo (e.g. `pkgs.k8s.io`), point its `sources.list` entry at `http://` and list its host in `[proxy] https_upstream_hosts`; debswarm then makes its own HTTPS connection to the mirror. See [HTTPS-only repositories](docs/configuration.md#https-only-repositories).
 
+### Run with Docker
+
+Official multi-arch images (`amd64`/`arm64`/`armv7`) are published to `ghcr.io/clintcan/debswarm`:
+
+```bash
+docker pull ghcr.io/clintcan/debswarm:latest
+```
+
+The image is built on distroless — tiny, no shell, runs as a nonroot user — and bakes a **loopback-safe** default config, so out of the box the proxy is reachable only from inside the container. To use it as a cache server for other containers, mount a non-loopback config and put debswarm and its clients on the same Docker network:
+
+```yaml
+# docker-compose.yml
+services:
+  debswarm:
+    image: ghcr.io/clintcan/debswarm:latest
+    volumes:
+      - ./config.container.toml:/etc/debswarm/config.toml  # proxy_bind=0.0.0.0 + proxy_allowed_cidrs
+      - debswarm-cache:/var/cache/debswarm                 # persist the package cache
+      - debswarm-data:/var/lib/debswarm                    # persist the peer identity
+  app:
+    image: debian:bookworm-slim
+    depends_on: [debswarm]
+    # point this container's APT at the debswarm service on the shared network:
+    #   echo 'Acquire::http::Proxy "http://debswarm:9977";' > /etc/apt/apt.conf.d/99debswarm
+volumes:
+  debswarm-cache:
+  debswarm-data:
+```
+
+A ready-made server config ships at [`packaging/config.container.toml`](packaging/config.container.toml) (`proxy_bind = "0.0.0.0"` + an RFC1918 `proxy_allowed_cidrs` allowlist).
+
+> **Reachability caveats.** Because the baked default binds loopback, `-p 9977:9977` alone does **not** expose the proxy — you must mount a non-loopback config. For host-published ports Docker rewrites the client source to the bridge gateway, so the per-client CIDR allowlist can't distinguish external clients; restrict at the host instead (`-p 192.168.1.10:9977:9977` + a firewall). On a shared Docker network (the compose example above) the allowlist sees real client IPs and gates correctly. Note the container has no host APT keyrings, so debswarm's *own* daemon-side GPG verification reports "unverified" inside the container — but your client's `apt` still verifies every signature end-to-end.
+
 ## How It Works
 
 ```

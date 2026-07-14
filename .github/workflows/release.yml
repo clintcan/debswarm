@@ -48,6 +48,7 @@ jobs:
     if: needs.check-branch.outputs.on_main == 'true'
     permissions:
       contents: write
+      packages: write
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -60,6 +61,20 @@ jobs:
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+
+      # Multi-arch container images are built by GoReleaser (dockers:) and pushed
+      # to GHCR. buildx provides the per-platform builder; the login authorizes
+      # the push with the workflow's GITHUB_TOKEN (needs packages: write above).
+      # No QEMU is needed — the images are pure-COPY distroless (static binary).
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3

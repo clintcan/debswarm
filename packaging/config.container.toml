@@ -1,0 +1,61 @@
+# debswarm container SERVER configuration.
+#
+# Mount this over the baked default to make the proxy reachable from OTHER
+# containers or hosts — e.g. an app container that points its APT proxy at the
+# debswarm service:
+#
+#   docker run -d --name debswarm \
+#     -v $PWD/packaging/config.container.toml:/etc/debswarm/config.toml \
+#     -v debswarm-cache:/var/cache/debswarm \
+#     -v debswarm-data:/var/lib/debswarm \
+#     ghcr.io/clintcan/debswarm:latest
+#
+# proxy_bind is non-loopback, so proxy_allowed_cidrs is REQUIRED (fail-closed).
+# The allowlist matches the client's real connection address. On a user-defined
+# Docker bridge that is the client container's real bridge IP, so the RFC1918
+# ranges below gate correctly (the supported topology).
+#
+# CAVEAT: for HOST-published ports (-p) Docker SNATs the client source to the
+# bridge gateway, so per-client CIDR filtering cannot see the real client. For
+# that topology, publish on a specific host interface (-p 192.168.1.10:9977:9977)
+# and restrict with a host firewall instead.
+
+[network]
+listen_port = 4001
+proxy_port = 9977
+proxy_bind = "0.0.0.0"
+proxy_allowed_cidrs = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+max_connections = 100
+
+[proxy]
+trust_known_repos = true
+
+[cache]
+path = "/var/cache/debswarm"
+max_size = "10GB"
+min_free_space = "1GB"
+cache_metadata = true
+metadata_max_size = "1GB"
+serve_stale_metadata = true
+
+[security]
+verify_upstream_signatures = "auto"
+
+[metrics]
+port = 9978
+# Bound non-loopback so /stats and /dashboard are reachable; the read endpoints
+# are gated by proxy_allowed_cidrs above (same allowlist as the proxy).
+bind = "0.0.0.0"
+
+[fleet]
+enabled = true
+
+[privacy]
+enable_mdns = true
+announce_packages = true
+
+[index]
+watch_apt_lists = false
+
+[logging]
+level = "info"
