@@ -1,3 +1,19 @@
+debswarm (1.37.0-1) stable; urgency=low
+
+  * Official multi-arch container image at ghcr.io/clintcan/debswarm (linux
+    amd64/arm64/armv7), built and pushed by GoReleaser on each release. Built
+    FROM gcr.io/distroless/static-debian12:nonroot — because the binary is
+    fully static, the image is tiny, shell-less, and runs as a nonroot user.
+    Tags: the full version (1.37.0), major.minor (1.37), and latest (the moving
+    tags skip prereleases). The image bakes a loopback-safe default config; to
+    run it as a cache server reachable from other containers or hosts, mount a
+    config with a non-loopback proxy_bind + proxy_allowed_cidrs (see
+    packaging/config.container.toml) and persist the cache and peer identity
+    with volumes on /var/cache/debswarm and /var/lib/debswarm. A signed apt
+    repository is planned as a follow-up.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Mon, 14 Jul 2026 18:00:00 +0000
+
 debswarm (1.36.0-1) stable; urgency=low
 
   * Flat-layout repositories are now GPG-verified. Signature verification
