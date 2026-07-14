@@ -123,9 +123,11 @@ narrower: concrete, verified gaps in what exists today.
    v1.37.0 — see `docs/design/self-distribution.md`). What remains is a signed
    apt repo: distribution of the native package is still GitHub releases +
    `curl | bash`, so there is no `unattended-upgrades` origin and no fleet-wide
-   upgrade path — ironic for an APT tool. Planned next (v1.38.0): a reprepro-built
-   signed repo on GitHub Pages (design + user-prerequisite checklist in the
-   design doc). No Helm chart exists (lower priority).
+   upgrade path — ironic for an APT tool. The reprepro/GitHub-Pages **apt-repo CI
+   job and config are now committed but inert** (gated on the `APT_REPO_ENABLED`
+   repo variable); it goes live on the first stable tag after the operator
+   completes the one-time key/secret/Pages setup (checklist in
+   `docs/design/self-distribution.md`). No Helm chart exists (lower priority).
 4. **Source packages get zero benefit.** Sources indices are deliberately not
    parsed and `.dsc`/`.orig.tar.*` fall through to passthrough, despite
    Sources carrying SHA256s that would make verification identical to the
