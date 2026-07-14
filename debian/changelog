@@ -1,3 +1,16 @@
+debswarm (1.39.0-1) stable; urgency=low
+
+  * Signed apt repository at https://clintcan.github.io/debswarm/ — debswarm can
+    now be installed and kept up to date with apt-get install debswarm, instead
+    of downloading a .deb by hand or building from source. The repository is
+    GPG-signed, carries amd64/arm64/armhf, and is published automatically on
+    each stable release. An unattended-upgrades origin pattern is documented in
+    the README, so hosts can pick up new versions on their own. The publishing
+    infrastructure shipped inert in an earlier release; this is the first
+    release to actually populate the repository.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Wed, 15 Jul 2026 02:30:00 +0000
+
 debswarm (1.38.0-1) stable; urgency=low
 
   * Source packages are now cached, SHA256-verified, and P2P-shared like binary
