@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Signed apt repository** at `https://clintcan.github.io/debswarm/` — debswarm can now be installed and kept up to date with `apt-get install debswarm`, instead of downloading a `.deb` by hand or building from source. The repository is GPG-signed, carries `amd64`/`arm64`/`armhf`, and is published automatically on each stable release. An `unattended-upgrades` origin pattern is documented in the README, so hosts can pick up new versions on their own. (The publishing infrastructure shipped inert earlier; this release is the first to actually populate the repository.)
+
 ## [1.38.0] - 2026-07-14
 
 ### Added
