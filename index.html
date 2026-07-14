@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>debswarm apt repository</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --code-bg: #f6f8fa;
+    --accent: #0969da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --fg: #e6edf3;
+      --muted: #9198a1;
+      --border: #3d444d;
+      --code-bg: #151b23;
+      --accent: #4493f8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto;
+    padding: 3rem 1.25rem 5rem;
+    max-width: 46rem;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 1.9rem; margin: 0 0 .25rem; letter-spacing: -.02em; }
+  h2 { font-size: 1.15rem; margin: 2.5rem 0 .75rem; padding-bottom: .3rem; border-bottom: 1px solid var(--border); }
+  .tagline { color: var(--muted); margin: 0 0 2rem; }
+  a { color: var(--accent); }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem;
+    overflow-x: auto;
+    font-size: .875rem;
+    line-height: 1.5;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  p code, li code {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .1em .35em;
+    font-size: .875em;
+  }
+  .fpr {
+    display: block;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: .75rem 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .8125rem;
+    word-break: break-all;
+  }
+  footer { margin-top: 3.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border); color: var(--muted); font-size: .875rem; }
+  ul { padding-left: 1.25rem; }
+</style>
+</head>
+<body>
+
+<h1>debswarm apt repository</h1>
+<p class="tagline">The official signed APT repository for
+<a href="https://github.com/clintcan/debswarm">debswarm</a> — peer-to-peer package
+distribution for Debian and Ubuntu.</p>
+
+<p>This is an APT repository, not a website: it is meant to be added to
+<code>sources.list</code>, not browsed. It always serves the current release, for
+<code>amd64</code>, <code>arm64</code>, and <code>armhf</code>, and is republished
+automatically on every stable release.</p>
+
+<h2>Install</h2>
+
+<p>Add the signing key and the repository:</p>
+
+<pre><code>curl -fsSL https://clintcan.github.io/debswarm/debswarm-archive-keyring.gpg \
+  | sudo tee /usr/share/keyrings/debswarm-archive-keyring.gpg &gt; /dev/null
+
+sudo tee /etc/apt/sources.list.d/debswarm.sources &gt; /dev/null &lt;&lt;'EOF'
+Types: deb
+URIs: https://clintcan.github.io/debswarm
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/debswarm-archive-keyring.gpg
+EOF</code></pre>
+
+<p>Then install. The package creates the <code>debswarm</code> system user, enables and
+starts the systemd service, and drops in the APT proxy config — so APT starts going
+through debswarm immediately:</p>
+
+<pre><code>sudo apt-get update
+sudo apt-get install debswarm</code></pre>
+
+<h2>Verify the signing key</h2>
+
+<p>Before trusting any third-party repository, check the key you just installed matches
+the fingerprint below:</p>
+
+<pre><code>gpg --show-keys --with-fingerprint /usr/share/keyrings/debswarm-archive-keyring.gpg</code></pre>
+
+<span class="fpr">15EF 0050 5F36 C2DF C844&nbsp;&nbsp;3CF9 3B75 F449 CA15 E893</span>
+
+<p>RSA-4096, sign-only, used exclusively to sign this repository. Every package is
+GPG-signed, and <code>apt</code> verifies that signature itself on every
+<code>apt-get update</code>.</p>
+
+<h2>Automatic upgrades</h2>
+
+<p>To let <code>unattended-upgrades</code> pick up new debswarm versions:</p>
+
+<pre><code>sudo tee /etc/apt/apt.conf.d/52debswarm-unattended &gt; /dev/null &lt;&lt;'EOF'
+Unattended-Upgrade::Origins-Pattern {
+  "origin=debswarm,codename=stable";
+};
+EOF</code></pre>
+
+<h2>Other ways to install</h2>
+
+<ul>
+  <li><strong>Container image:</strong> <code>docker pull ghcr.io/clintcan/debswarm:latest</code>
+      (multi-arch, distroless)</li>
+  <li><strong>Standalone <code>.deb</code>s</strong> are attached to each
+      <a href="https://github.com/clintcan/debswarm/releases">GitHub release</a></li>
+  <li><strong>From source:</strong> see the
+      <a href="https://github.com/clintcan/debswarm#quick-start">README</a></li>
+</ul>
+
+<footer>
+  <a href="https://github.com/clintcan/debswarm">Source</a> ·
+  <a href="https://github.com/clintcan/debswarm/releases">Releases</a> ·
+  <a href="https://github.com/clintcan/debswarm/blob/main/CHANGELOG.md">Changelog</a> ·
+  <a href="dists/stable/InRelease">InRelease</a> ·
+  <a href="debswarm-archive-keyring.asc">Signing key</a>
+</footer>
+
+</body>
+</html>
