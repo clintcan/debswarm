@@ -124,20 +124,28 @@ narrower: concrete, verified gaps in what exists today.
    transport and hole punching are enabled — no AutoRelay reservation logic,
    and no debswarm node ever runs the relay service, so DCUtR has no relayed
    connection to coordinate through. Two NAT'd peers can never connect.
-   Fixing this properly means a relay story (static relays config,
-   `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
-   publicly reachable nodes). `docs/comparison.md` now states this honestly
-   (Relay Fallback: "Partial — client transport only") pending that work.
-3. **No signed apt repository for debswarm itself.** The multi-arch **container
-   image now exists** (`ghcr.io/clintcan/debswarm`, distroless, shipped in
-   v1.37.0 — see `docs/design/self-distribution.md`). What remains is a signed
-   apt repo: distribution of the native package is still GitHub releases +
-   `curl | bash`, so there is no `unattended-upgrades` origin and no fleet-wide
-   upgrade path — ironic for an APT tool. The reprepro/GitHub-Pages **apt-repo CI
-   job and config are now committed but inert** (gated on the `APT_REPO_ENABLED`
-   repo variable); it goes live on the first stable tag after the operator
-   completes the one-time key/secret/Pages setup (checklist in
-   `docs/design/self-distribution.md`). No Helm chart exists (lower priority).
+   **`EnableHolePunching()` is therefore effectively dead code**: it is enabled
+   and advertised, but DCUtR only fires over an existing relayed connection, and
+   nothing ever obtains the reservation that would create one. A second problem
+   sits behind the first — even with AutoRelay on, *there is no relay to reserve
+   on*, since no debswarm node runs the relay service and the libp2p bootstrap
+   nodes do not offer open circuit-v2 reservations. **Designed in
+   `docs/design/cross-nat-p2p.md`** (AutoRelay + `relay_service = auto` on
+   publicly-reachable nodes + `relay_peers` static config; relays are used only
+   to hole-punch, never to carry package bytes; includes a real NAT test topology,
+   because the current Docker-bridge soak cannot see this bug at all).
+   `docs/comparison.md` states this honestly today (Relay Fallback: "Partial —
+   client transport only") and stays that way until the implementation lands.
+3. **No signed apt repository for debswarm itself.** ✅ **Done** (v1.39.0). The
+   signed apt repo is **live at `https://clintcan.github.io/debswarm/`** —
+   `apt-get install debswarm` works, the repo is GPG-signed, carries
+   amd64/arm64/armhf, and is republished automatically by the `apt-repo` job on
+   every stable tag. Verified end-to-end in a clean container (apt verified the
+   signature; origin `o=debswarm,n=stable` matches the documented
+   `unattended-upgrades` pattern). The multi-arch container image
+   (`ghcr.io/clintcan/debswarm`, distroless) shipped in v1.37.0 and is public.
+   Self-distribution is complete; see `docs/design/self-distribution.md`. No Helm
+   chart exists (lower priority).
 4. **Source packages get zero benefit.** ✅ **Done** (Unreleased — see Recently
    addressed and `CHANGELOG.md`). `Sources` indices are now parsed and each
    `.dsc`/`.orig.tar.*`/`.debian.tar.*`/`.diff.gz` (plus native and
