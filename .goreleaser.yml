@@ -41,6 +41,92 @@ checksum:
   name_template: 'checksums.txt'
   algorithm: sha256
 
+# Multi-arch container images published to GHCR. The binary is fully static
+# (CGO_ENABLED=0), so each Dockerfile is a pure COPY on distroless and the arm
+# variants build without QEMU. GoReleaser stages the matching per-arch binary as
+# `debswarm` and the extra_files at their repo-relative paths (matching the
+# Dockerfile COPY paths). Requires a `docker login ghcr.io` step before release.
+dockers:
+  - id: debswarm-amd64
+    goos: linux
+    goarch: amd64
+    use: buildx
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-amd64"
+    extra_files:
+      - packaging/config.container.default.toml
+      - packaging/container
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title=debswarm"
+      - "--label=org.opencontainers.image.description=Peer-to-peer package distribution for APT"
+      - "--label=org.opencontainers.image.source=https://github.com/clintcan/debswarm"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+  - id: debswarm-arm64
+    goos: linux
+    goarch: arm64
+    use: buildx
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-arm64"
+    extra_files:
+      - packaging/config.container.default.toml
+      - packaging/container
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title=debswarm"
+      - "--label=org.opencontainers.image.description=Peer-to-peer package distribution for APT"
+      - "--label=org.opencontainers.image.source=https://github.com/clintcan/debswarm"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+  - id: debswarm-armv7
+    goos: linux
+    goarch: arm
+    goarm: "7"
+    use: buildx
+    dockerfile: Dockerfile
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-armv7"
+    extra_files:
+      - packaging/config.container.default.toml
+      - packaging/container
+    build_flag_templates:
+      - "--platform=linux/arm/v7"
+      - "--label=org.opencontainers.image.title=debswarm"
+      - "--label=org.opencontainers.image.description=Peer-to-peer package distribution for APT"
+      - "--label=org.opencontainers.image.source=https://github.com/clintcan/debswarm"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+      - "--label=org.opencontainers.image.licenses=Apache-2.0"
+
+docker_manifests:
+  - name_template: "ghcr.io/clintcan/debswarm:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-amd64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-arm64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-armv7"
+  # major.minor and latest are skipped for prereleases (prerelease: auto), so an
+  # -rc tag never clobbers the stable moving tags.
+  - name_template: "ghcr.io/clintcan/debswarm:{{ .Major }}.{{ .Minor }}"
+    skip_push: auto
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-amd64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-arm64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-armv7"
+  - name_template: "ghcr.io/clintcan/debswarm:latest"
+    skip_push: auto
+    image_templates:
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-amd64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-arm64"
+      - "ghcr.io/clintcan/debswarm:{{ .Version }}-armv7"
+
 snapshot:
   version_template: "{{ .Tag }}-next"
 

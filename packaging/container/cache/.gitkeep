@@ -1,0 +1,2 @@
+# Placeholder so this directory is tracked in git. The container image COPYs it
+# to /var/cache/debswarm with nonroot (uid 65532) ownership — see Dockerfile.

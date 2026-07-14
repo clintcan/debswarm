@@ -1,0 +1,57 @@
+# debswarm container default configuration.
+#
+# Baked into the official image at /etc/debswarm/config.toml. Loopback-safe: the
+# proxy (9977) and metrics/dashboard (9978) listeners bind 127.0.0.1, so the
+# image is secure by default but reachable only from INSIDE the container.
+#
+# To use the container as a cache server for other containers or hosts, mount a
+# config with a non-loopback proxy_bind and an explicit proxy_allowed_cidrs
+# allowlist — see packaging/config.container.toml. A non-loopback proxy_bind
+# without proxy_allowed_cidrs is refused at startup (fail-closed).
+
+[network]
+listen_port = 4001
+proxy_port = 9977
+proxy_bind = "127.0.0.1"
+max_connections = 100
+
+[proxy]
+# Trust the curated set of common third-party repos (Docker, PostgreSQL, k8s,
+# NodeSource, Microsoft, HashiCorp, Launchpad PPAs) in addition to Debian/Ubuntu/
+# Mint. Every download is SHA256-checked against the repository index regardless.
+trust_known_repos = true
+
+[cache]
+path = "/var/cache/debswarm"
+max_size = "10GB"
+min_free_space = "1GB"
+cache_metadata = true
+metadata_max_size = "1GB"
+serve_stale_metadata = true
+
+[security]
+# Daemon-side GPG verification of each repository's signed Release and its
+# Packages indices. "auto" (default) refuses an index only when a signature-
+# verified Release proves it was tampered with, and serves-and-reports otherwise.
+verify_upstream_signatures = "auto"
+
+[metrics]
+port = 9978
+bind = "127.0.0.1"
+
+[fleet]
+# Share cached packages with peers over P2P and coordinate LAN downloads.
+enabled = true
+
+[privacy]
+enable_mdns = true
+announce_packages = true
+
+[index]
+# A container is a cache server, not an apt host, so there is no local
+# /var/lib/apt/lists to watch. Packages are still indexed from the repository
+# metadata debswarm fetches.
+watch_apt_lists = false
+
+[logging]
+level = "info"
