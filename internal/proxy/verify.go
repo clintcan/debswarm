@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
@@ -8,11 +9,18 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
 	"github.com/debswarm/debswarm/internal/release"
 	"github.com/debswarm/debswarm/internal/sanitize"
+)
+
+// On-demand Release fetch (enforce mode) tuning.
+const (
+	releaseFetchTimeout  = 15 * time.Second // bound a single on-demand Release fetch
+	releaseFetchRetryTTL = 30 * time.Second // suppress re-fetching a base that just failed
 )
 
 // Upstream signature-verification modes (mirrors config.Verify*; kept as local
@@ -216,47 +224,127 @@ func (s *Server) verifyIndex(rawURL string, data []byte) (bool, string) {
 	return true, ""
 }
 
-// obtainRelease returns the signature-verified, parsed Release for a dist,
-// caching it in the store. It reads the InRelease (or Release + Release.gpg) from
-// the metadata cache and verifies it against the keyring. Verification therefore
-// requires the metadata cache to be enabled (the Release is cached there when APT
-// fetches it, before any Packages request). Returns nil if no verified Release is
-// available.
+// obtainRelease returns the signature-verified, parsed Release for a base (dist-
+// or flat-layout), caching it in the store. It reads the InRelease (or Release +
+// Release.gpg) from the metadata cache and verifies it against the keyring — so in
+// the common case verification needs only the metadata cache, which APT populates
+// by fetching the Release before any Packages request. Returns nil if no verified
+// Release is available.
 //
-// A live mirror fetch of a missing Release is intentionally NOT done here (it
-// would put network I/O on the index-serving path); in practice APT fetches the
-// Release before the Packages, so the cache already holds it. Enforce mode
-// therefore refuses only when the Release was never fetched/cached.
-func (s *Server) obtainRelease(dist string) *release.Release {
-	if r := s.releaseStore.get(dist); r != nil {
+// In enforce mode only, when the Release was never cached (e.g. the client's apt
+// held a current InRelease so our conditional GET relayed a 304 with no body, or
+// the metadata cache was cleared), it is fetched on demand so enforce does not
+// falsely refuse a verifiable index. That fallback is enforce-only to keep network
+// I/O off the default (auto) index-serving path — auto/warn serve regardless.
+func (s *Server) obtainRelease(base string) *release.Release {
+	if r := s.releaseStore.get(base); r != nil {
 		return r
 	}
-	if s.cache == nil || !s.cache.MetadataEnabled() {
-		return nil
-	}
-
-	// InRelease: clearsigned, self-contained.
-	if body := s.readCachedMetadataBody(dist + "InRelease"); body != nil {
-		if verified, err := s.keyring.VerifyClearsigned(body); err == nil {
-			if rel, perr := release.Parse(verified); perr == nil {
-				s.releaseStore.put(dist, rel)
-				return rel
-			}
+	if s.cache != nil && s.cache.MetadataEnabled() {
+		if rel := s.verifiedInRelease(s.readCachedMetadataBody(base + "InRelease")); rel != nil {
+			s.releaseStore.put(base, rel)
+			return rel
+		}
+		if rel := s.verifiedDetachedRelease(s.readCachedMetadataBody(base+"Release"), s.readCachedMetadataBody(base+"Release.gpg")); rel != nil {
+			s.releaseStore.put(base, rel)
+			return rel
 		}
 	}
-
-	// Release + detached Release.gpg.
-	if body := s.readCachedMetadataBody(dist + "Release"); body != nil {
-		if sig := s.readCachedMetadataBody(dist + "Release.gpg"); sig != nil {
-			if err := s.keyring.VerifyDetached(body, sig); err == nil {
-				if rel, perr := release.Parse(body); perr == nil {
-					s.releaseStore.put(dist, rel)
-					return rel
-				}
-			}
-		}
+	if s.verifyMode == verifyEnforce {
+		return s.fetchReleaseOnDemand(base)
 	}
 	return nil
+}
+
+// verifiedInRelease verifies a clearsigned InRelease body against the keyring and
+// returns the parsed Release, or nil on any failure (including a nil body).
+func (s *Server) verifiedInRelease(body []byte) *release.Release {
+	if body == nil {
+		return nil
+	}
+	verified, err := s.keyring.VerifyClearsigned(body)
+	if err != nil {
+		return nil
+	}
+	rel, err := release.Parse(verified)
+	if err != nil {
+		return nil
+	}
+	return rel
+}
+
+// verifiedDetachedRelease verifies a Release body against its detached Release.gpg
+// signature and returns the parsed Release, or nil on any failure.
+func (s *Server) verifiedDetachedRelease(body, sig []byte) *release.Release {
+	if body == nil || sig == nil {
+		return nil
+	}
+	if err := s.keyring.VerifyDetached(body, sig); err != nil {
+		return nil
+	}
+	rel, err := release.Parse(body)
+	if err != nil {
+		return nil
+	}
+	return rel
+}
+
+// fetchReleaseOnDemand fetches and verifies the signed Release for a base directly
+// from the mirror, for enforce mode when it was not cached. Concurrent callers for
+// the same base are collapsed via singleflight; a base whose fetch fails is
+// negative-cached for releaseFetchRetryTTL so it is not re-fetched on every
+// request. Returns nil if no verified Release can be obtained.
+func (s *Server) fetchReleaseOnDemand(base string) *release.Release {
+	if s.fetcher == nil {
+		return nil
+	}
+	if t, ok := s.releaseFetchFailed.Load(base); ok {
+		if time.Since(t.(time.Time)) < releaseFetchRetryTTL {
+			return nil
+		}
+	}
+	v, _, _ := s.releaseFetch.Do(base, func() (interface{}, error) {
+		// A concurrent caller may have populated the store while we waited.
+		if r := s.releaseStore.get(base); r != nil {
+			return r, nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), releaseFetchTimeout)
+		defer cancel()
+
+		if rel := s.verifiedInRelease(s.fetchMetadataBytes(ctx, base+"InRelease")); rel != nil {
+			s.releaseStore.put(base, rel)
+			s.releaseFetchFailed.Delete(base)
+			return rel, nil
+		}
+		body := s.fetchMetadataBytes(ctx, base+"Release")
+		sig := s.fetchMetadataBytes(ctx, base+"Release.gpg")
+		if rel := s.verifiedDetachedRelease(body, sig); rel != nil {
+			s.releaseStore.put(base, rel)
+			s.releaseFetchFailed.Delete(base)
+			return rel, nil
+		}
+		s.releaseFetchFailed.Store(base, time.Now())
+		return (*release.Release)(nil), nil
+	})
+	rel, _ := v.(*release.Release)
+	return rel
+}
+
+// fetchMetadataBytes streams a metadata URL from the mirror (HTTPS-upgraded when
+// the host is an https-upstream host), bounded by the fetcher's max response size.
+// Returns nil on any error; a non-signed/404 body simply fails verification later.
+func (s *Server) fetchMetadataBytes(ctx context.Context, rawURL string) []byte {
+	body, _, err := s.fetcher.Stream(ctx, s.upstreamFetchURL(rawURL))
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = body.Close() }()
+	limit := s.fetcher.MaxResponseSize()
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil || int64(len(data)) > limit {
+		return nil
+	}
+	return data
 }
 
 // readCachedMetadataBody returns the full cached body for a metadata URL, or nil

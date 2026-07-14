@@ -121,15 +121,24 @@ type Server struct {
 	allowedClientNets  []*net.IPNet // inbound client allowlist for LAN server mode (empty = loopback only)
 
 	// Upstream GPG verification: verify a Packages index against the GPG-signed
-	// Release before trusting its hashes. verifyMode is "off" (default; disabled),
-	// "warn" (verify + observe, serve unchanged), or "enforce" (refuse an
-	// unverified/mismatched index). keyring holds the trusted public keys;
-	// verifyExempt lists hosts served even when unverifiable (enforce only);
-	// releaseStore caches verified, parsed Release files per dist.
+	// Release before trusting its hashes. verifyMode is "off" (disabled), "warn"
+	// (verify + observe, serve unchanged), "auto" (default; refuse only a decisive
+	// failure — the signed Release exists but the index does not match it), or
+	// "enforce" (refuse any unverified/mismatched index). keyring holds the trusted
+	// public keys; verifyExempt lists hosts served even when unverifiable (auto and
+	// enforce); releaseStore caches verified, parsed Release files per base.
 	verifyMode   string
 	keyring      *gpg.Keyring
 	verifyExempt map[string]bool
 	releaseStore *releaseStore
+	// On-demand Release fetch (enforce only): when the signed Release for a base was
+	// never cached (e.g. the client's apt held a current InRelease so our conditional
+	// GET relayed a 304 with no body), fetch it so enforce does not falsely refuse a
+	// verifiable index. releaseFetch dedups concurrent fetches per base;
+	// releaseFetchFailed negative-caches a base whose fetch failed so it is not
+	// re-fetched on every request.
+	releaseFetch       singleflight.Group
+	releaseFetchFailed sync.Map // base(string) -> time.Time of last failed fetch
 
 	// uncachedHostsSeen tracks repository hosts for which we have already logged
 	// an INFO-level "served uncached" notice, so the log is emitted once per host
@@ -907,10 +916,11 @@ func (s *Server) classifyRequest(url string) requestType {
 		return requestTypeIndex
 	}
 
-	// Detect by-hash URLs for Packages files (binary-*/by-hash/ or source/by-hash/)
-	// Exclude i18n/by-hash/ (translations) and cnf/by-hash/ (commands)
+	// Detect by-hash URLs for Packages/Sources files: dist-layout binary-*/source/,
+	// or a flat-layout repo where by-hash sits directly under the repo base.
+	// Exclude i18n/ (translations), cnf/ (commands) and dep11/ (appstream).
 	if strings.Contains(lower, "/by-hash/") {
-		if strings.Contains(lower, "/binary-") || strings.Contains(lower, "/source/") {
+		if strings.Contains(lower, "/binary-") || strings.Contains(lower, "/source/") || isFlatByHash(lower) {
 			return requestTypeIndex
 		}
 	}
@@ -2238,10 +2248,29 @@ func isPackagesIndexURL(url string) bool {
 	if strings.Contains(lower, "/packages") && !strings.Contains(lower, "/translation") {
 		return true
 	}
-	if strings.Contains(lower, "/by-hash/") && strings.Contains(lower, "/binary-") {
-		return true
+	if strings.Contains(lower, "/by-hash/") {
+		// Dist-layout Packages by-hash, or a flat-layout repo's by-hash (which has
+		// no binary-*/ path). Source by-hash is intentionally excluded here (Sources
+		// files are not parsed into the Packages index).
+		if strings.Contains(lower, "/binary-") || isFlatByHash(lower) {
+			return true
+		}
 	}
 	return false
+}
+
+// isFlatByHash reports whether a URL already known to contain "/by-hash/" belongs
+// to a flat-layout repository (no /dists/ tree) rather than a known non-Packages
+// component (i18n translations, cnf command-not-found, dep11 appstream). In a flat
+// repo the by-hash directory sits directly under the repo base, so there is no
+// binary-*/ path to classify by; such a file is a Packages index. The rare case of
+// a flat repo's Translation-by-hash is misclassified as Packages but is harmless:
+// it still verifies against the signed Release and parses to zero package entries.
+func isFlatByHash(lower string) bool {
+	return !strings.Contains(lower, "/dists/") &&
+		!strings.Contains(lower, "/i18n/") &&
+		!strings.Contains(lower, "/cnf/") &&
+		!strings.Contains(lower, "/dep11/")
 }
 
 // noteStaleServe logs, at most once per repository host, that debswarm is serving
