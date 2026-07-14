@@ -1,3 +1,17 @@
+debswarm (1.35.0-1) stable; urgency=low
+
+  * Upstream signature verification now defaults to "auto" (was "warn"), and a
+    new "auto" mode is added between "warn" and "enforce". auto refuses an index
+    only when a signature-verified Release proves it was tampered with — for
+    every repository whose signing key debswarm can discover — and serves and
+    reports like "warn" when verification cannot be attempted, so it protects by
+    default without breaking unverifiable repos and, unlike "enforce", never
+    fails daemon startup on a missing keyring or metadata cache. Set
+    verify_upstream_signatures = "warn" to only observe, or "off" to disable
+    ([security]).
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Tue, 14 Jul 2026 02:00:00 +0000
+
 debswarm (1.34.0-1) stable; urgency=low
 
   * Repository metadata caching: index files (Release/Packages/Translation/

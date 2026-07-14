@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-07-14
+
 ### Added
 - **`auto` mode for upstream signature verification**: a new value for `[security] verify_upstream_signatures`, between `warn` and `enforce`. `auto` refuses an index **only when verification was possible and it failed** — a signature-verified `Release` exists for the repository but the index does not match it (a hash mismatch, or a file the `Release` does not list) — and otherwise behaves like `warn` (serve and flag) when verification could not be attempted at all: no trusted key for the repository, a flat/no-`dists` repository, or no cached `Release`. The effect is real, fail-closed protection for every repository whose signing key debswarm can discover (Debian, Ubuntu, and any third-party repo with a `signed-by=` key), while a repository debswarm cannot verify is never turned into a hard failure. Unlike `enforce`, `auto` needs no `keyring_path`/`verify_exempt_hosts` for repos it cannot verify and never fails daemon startup on a missing keyring or metadata cache (it degrades to `warn`). New metric label `debswarm_upstream_verify_total{result="not-listed"}` distinguishes "the signed Release does not list this index" from "no verified Release available" (`no-release`).
 
