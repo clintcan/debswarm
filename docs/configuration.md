@@ -398,15 +398,24 @@ with no keys or no metadata cache simply serves everything with a flag, like `wa
 its `Valid-Until` — that is left to APT — so serving an expired-but-signed
 `Release` offline (see `serve_stale_metadata`) still works.
 
-**Flat repositories** (e.g. `pkgs.k8s.io`, which have no `dists/` tree) **are**
-verified: their `Release`/`InRelease` lives in the same directory as the index and
-lists index files by bare name, and debswarm anchors the index hash to that signed
-`Release` exactly as it does for a dist-layout repo. A flat repo whose signing key
-is discoverable therefore gets full `auto`/`enforce` protection with no extra
-configuration — the same as Debian/Ubuntu. Only a flat repo with **no** cached,
-signature-verified `Release` (an empty keyring for it, or the `Release` not yet
-fetched) falls back to the indecisive `no-release` result: `warn`/`auto` serve and
-flag it, `enforce` refuses it unless the host is in `verify_exempt_hosts`.
+**Flat repositories** (those with no `dists/` tree) **are** verified: their
+`Release`/`InRelease` lives in the same directory as the index and lists index
+files by bare name, and debswarm anchors the index hash to that signed `Release`
+exactly as it does for a dist-layout repo. A flat repo whose `Release` carries a
+modern (v4) OpenPGP signature and whose key is discoverable therefore gets full
+`auto`/`enforce` protection with no extra configuration. A flat repo with **no**
+cached, verifiable `Release` (an empty keyring for it, the `Release` not yet
+fetched, or an unverifiable signature — see below) falls back to the indecisive
+`no-release` result: `warn`/`auto` serve and flag it, `enforce` refuses it unless
+the host is in `verify_exempt_hosts`.
+
+> **`pkgs.k8s.io` caveat.** The Kubernetes repositories sign their `InRelease`
+> with a **legacy v3 OpenPGP signature**. The Go OpenPGP library debswarm uses —
+> in line with the modern OpenPGP spec — does not accept v3 signatures (only
+> GnuPG still does, for backward compatibility), so debswarm cannot verify
+> `pkgs.k8s.io` and reports `no-release`. Under the default `auto` it is
+> served-and-flagged (APT's own check still applies); under `enforce` add it to
+> `verify_exempt_hosts`. This is an upstream signature-format limitation.
 
 ---
 

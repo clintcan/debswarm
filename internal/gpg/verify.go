@@ -21,6 +21,12 @@ var (
 // content) on success. Callers MUST parse hashes only from the returned body,
 // never from the raw input: the returned bytes are exactly what the signature
 // covers.
+//
+// Note: go-crypto (like the modern OpenPGP spec) does not accept legacy v3
+// signatures; it silently ignores a v3 signature packet, so verification of such
+// a message fails with "unknown entity" even when the issuing key is loaded. Some
+// repositories still emit v3 signatures (e.g. pkgs.k8s.io) that only GnuPG will
+// check; debswarm cannot verify those and treats them as unverifiable.
 func (k *Keyring) VerifyClearsigned(data []byte) ([]byte, error) {
 	if k.Empty() {
 		return nil, ErrNoKeys
