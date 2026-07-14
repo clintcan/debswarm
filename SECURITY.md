@@ -31,13 +31,13 @@ Please include the following information (as much as you can provide):
 
 ## Security Model
 
-debswarm **preserves** APT's existing security guarantees while adding P2P distribution. By default it adds no cryptographic guarantee of its own: your protection against a tampered mirror is APT's client-side signature check, which debswarm leaves intact by passing fetched bytes through unmodified for APT to verify. Optionally (v1.34+), debswarm can perform its **own** daemon-side GPG verification of the repository `Release` and index — see [Upstream Signature Verification](#upstream-signature-verification-optional-v134) below. This is opt-in; the default mode (`warn`) verifies and reports but does not block, so unless you enable `enforce`, APT's client-side check remains the actual guarantee.
+debswarm **preserves** APT's existing security guarantees while adding P2P distribution, and since v1.34+ it also performs its **own** daemon-side GPG verification of the repository `Release` and index — see [Upstream Signature Verification](#upstream-signature-verification-optional-v134) below. The default mode (`auto`) refuses an index that a signature-verified `Release` proves has been tampered with, for every repository whose signing key debswarm can discover; where it cannot verify a repository (no discoverable key, a flat repo, or no cached `Release`) it falls back to serving-and-reporting, so your protection there remains APT's client-side signature check — which debswarm leaves intact in every mode by passing fetched bytes through unmodified for APT to verify. Set the mode to `enforce` to refuse *every* unverified index, or to `warn`/`off` to reduce debswarm to observe-only / no daemon-side verification.
 
 ### Trust Model
 
 1. **Release Files**: Always fetched from official mirrors. These are GPG-signed by Debian/Ubuntu and verified by APT. debswarm never serves Release files via P2P.
 
-2. **Packages Index**: Fetched from mirrors (usually over plain HTTP) and cached. It carries the SHA256 of every package and is signed transitively via the Release file. By default debswarm does not verify that signature (APT does, client-side); with `[security] verify_upstream_signatures = "enforce"` debswarm additionally verifies the `Release` signature against a trusted keyring and refuses an index whose hash it does not vouch for.
+2. **Packages Index**: Fetched from mirrors (usually over plain HTTP) and cached. It carries the SHA256 of every package and is signed transitively via the Release file. APT verifies that signature client-side; by default (`[security] verify_upstream_signatures = "auto"`) debswarm *also* verifies the `Release` signature against a trusted keyring and refuses an index whose hash it does not vouch for — for repositories whose signing key it can discover. `enforce` refuses every index it cannot verify; `warn`/`off` reduce this to reporting-only / nothing.
 
 3. **Package Downloads**: Can be served via P2P. Every package is checked against its SHA256 from the Packages index debswarm fetched, before use. This catches a bad *peer* — its bytes won't match the hash — but the hash and the index arrive over the same upstream leg, so it does **not** catch a bad *mirror* that rewrites both (see below).
 
@@ -48,7 +48,7 @@ debswarm **preserves** APT's existing security guarantees while adding P2P distr
 
 ### What debswarm Does NOT Protect Against
 
-- **A compromised or malicious upstream mirror** (or a man-in-the-middle on the mirror connection). In the default configuration, if it serves a poisoned Packages index *and* matching poisoned bytes, debswarm's SHA256 check passes — the hash it checks against came from that same poisoned index. APT's GPG verification of the signed Release catches this on install. debswarm's optional `enforce` mode (below) additionally closes this gap at the daemon for any repository whose signing key it can discover, by verifying the `Release` signature and the index hash itself. Use HTTPS mirrors to reduce the MITM surface.
+- **A compromised or malicious upstream mirror** (or a man-in-the-middle on the mirror connection) **for a repository debswarm cannot verify** — one with no discoverable signing key, a flat/no-`dists` layout, or no cached `Release`. There, if it serves a poisoned Packages index *and* matching poisoned bytes, debswarm's SHA256 check passes — the hash it checks against came from that same poisoned index — and APT's GPG verification of the signed Release is what catches it on install. For any repository whose signing key debswarm *can* discover, the default `auto` mode (and `enforce`) already close this gap at the daemon by verifying the `Release` signature and the index hash itself. Use HTTPS mirrors to reduce the MITM surface.
 - **Anything that bypasses APT's signature verification** — `[trusted=yes]` sources, `Acquire::AllowInsecureRepositories`, or `dpkg -i` on a file pulled from debswarm's cache. These forgo the one check that makes the upstream trustworthy; debswarm's SHA256 check is not equivalent. (These are exactly the cases `enforce` mode is designed to harden, since it anchors the index — and thus each `.deb`'s hash — to GPG at the daemon.)
 - Compromise of the official Debian/Ubuntu signing keys
 - Vulnerabilities in APT itself
@@ -62,14 +62,23 @@ keyring, and each `Packages` index against that signed `Release`, before trustin
 the SHA256 it lists — anchoring the hash to GPG instead of to the mirror's word.
 Configured by `[security] verify_upstream_signatures`:
 
-- **`off`** — no daemon-side verification (unchanged behavior).
-- **`warn`** (default) — verify and report (metric, log, and an
+- **`off`** — no daemon-side verification (pre-1.34 behavior).
+- **`warn`** — verify and report (metric, log, and an
   `X-Debswarm-Unverified` response header on failure) but **always serve**.
   Behaviorally identical to `off` for APT; it adds visibility, not enforcement, so
   APT's client-side check remains the guarantee.
-- **`enforce`** — refuse to parse/serve an index whose `Release` fails signature
-  or hash verification. This is what closes the upstream-tampering and
-  bypass-case gaps above at the daemon.
+- **`auto`** (default) — refuse an index **only when verification was possible and
+  it failed** (a signature-verified `Release` exists for the repository but the index
+  does not match it), and fall back to `warn` when verification cannot be attempted
+  at all (no trusted key for the repo, a flat/no-`dists` repo, or no cached
+  `Release`). This closes the tampering and bypass-case gaps for every repository
+  whose signing key is discoverable, without breaking one that cannot be verified —
+  the strongest setting that never turns an unverifiable repo into a hard failure,
+  which is why it is the default.
+- **`enforce`** — refuse to parse/serve an index whenever it is not verified,
+  **including** when verification could not be attempted. Fully fail-closed; it
+  typically needs `keyring_path` and/or `verify_exempt_hosts` for repos whose key
+  debswarm cannot discover.
 
 Trusted keys are auto-discovered from the host's APT keyrings, so debswarm trusts
 exactly what APT trusts. This does **not** replace APT's own end-to-end
@@ -79,7 +88,7 @@ verification, which is unaffected in every mode. It also does not verify
 ### Security Features
 
 - **Hash Verification**: All P2P downloads verified against SHA256
-- **Upstream Signature Verification** (v1.34+, optional): daemon-side GPG check of the `Release` and index; `warn` reports, `enforce` refuses. See above.
+- **Upstream Signature Verification** (v1.34+): daemon-side GPG check of the `Release` and index; `auto` (default) refuses where a key is discoverable, `warn` only reports, `enforce` always refuses, `off` disables. See above.
 - **Peer Blacklisting**: Peers serving bad data are automatically blacklisted
 - **SSRF Protection**: URL validation blocks localhost, cloud metadata (169.254.x.x), and private networks
 - **Response Limits**: Mirror responses capped at 500MB to prevent memory exhaustion
@@ -104,7 +113,7 @@ verification, which is unaffected in every mode. It also does not verify
 3. **Keep Updated**: Run the latest version of debswarm
 4. **Monitor Logs**: Watch for hash mismatch warnings which may indicate attacks
 5. **Network Segmentation**: Consider running debswarm on a dedicated network interface
-6. **Harden with `enforce`**: if you use `[trusted=yes]` repositories, `dpkg -i` files from the cache, or seed packages to P2P peers, set `[security] verify_upstream_signatures = "enforce"` so debswarm anchors index hashes to GPG itself rather than relying on the mirror
+6. **Keep the default `auto` (or step up to `enforce`)**: debswarm ships with `[security] verify_upstream_signatures = "auto"`, which already anchors index hashes to GPG for every repository whose signing key it can discover — leave it on. If you use `[trusted=yes]` repositories, `dpkg -i` files from the cache, or seed packages to P2P peers, consider `enforce` to additionally refuse repositories it cannot verify at all (this may need `keyring_path`/`verify_exempt_hosts`). Only downgrade to `warn`/`off` if daemon-side verification is causing problems
 
 ## Threat Model
 
@@ -119,7 +128,7 @@ verification, which is unaffected in every mode. It also does not verify
 
 ### Out of Scope
 
-- A compromised upstream mirror, or a MITM on the mirror connection, serving a poisoned index plus matching bytes (defended by APT's client-side GPG verification; and, when `[security] verify_upstream_signatures = "enforce"` is set, by debswarm itself for repos whose signing key it can discover — see the Trust Model above)
+- A compromised upstream mirror, or a MITM on the mirror connection, serving a poisoned index plus matching bytes (defended by APT's client-side GPG verification; and, by debswarm itself in the default `auto` mode — or `enforce` — for repos whose signing key it can discover — see the Trust Model above)
 - Physical access to the machine
 - Compromise of the underlying OS
 - Attacks requiring root/sudo access

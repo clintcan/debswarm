@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`auto` mode for upstream signature verification**: a new value for `[security] verify_upstream_signatures`, between `warn` and `enforce`. `auto` refuses an index **only when verification was possible and it failed** — a signature-verified `Release` exists for the repository but the index does not match it (a hash mismatch, or a file the `Release` does not list) — and otherwise behaves like `warn` (serve and flag) when verification could not be attempted at all: no trusted key for the repository, a flat/no-`dists` repository, or no cached `Release`. The effect is real, fail-closed protection for every repository whose signing key debswarm can discover (Debian, Ubuntu, and any third-party repo with a `signed-by=` key), while a repository debswarm cannot verify is never turned into a hard failure. Unlike `enforce`, `auto` needs no `keyring_path`/`verify_exempt_hosts` for repos it cannot verify and never fails daemon startup on a missing keyring or metadata cache (it degrades to `warn`). New metric label `debswarm_upstream_verify_total{result="not-listed"}` distinguishes "the signed Release does not list this index" from "no verified Release available" (`no-release`).
+
+### Changed
+- **Upstream signature verification now defaults to `auto`** (previously `warn`). Out of the box, debswarm will now refuse an index that a signature-verified `Release` proves has been tampered with (returning `502` so APT retries/fails cleanly), while still serving — and flagging with `X-Debswarm-Unverified` — any index it simply cannot verify (no discoverable key, a flat repo, or no cached `Release`). This turns on real anti-tampering protection for Debian, Ubuntu, and every third-party repo with a discoverable signing key without breaking unverifiable repositories. It is safe as a default precisely because it degrades to the old `warn` behavior whenever verification is not possible, and it never fails daemon startup on a missing keyring or metadata cache. Set `verify_upstream_signatures = "warn"` to restore the pre-`auto` observe-only behavior, or `"off"` to disable verification entirely.
+
 ## [1.34.0] - 2026-07-14
 
 ### Added

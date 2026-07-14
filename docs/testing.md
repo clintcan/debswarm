@@ -273,6 +273,9 @@ a throwaway non-Debian key); all scenarios use `cache_metadata = true`:
 | warn + same bogus keyring | `warn` | same fetch is **served 200** with `X-Debswarm-Unverified` (warn never refuses) |
 | enforce + empty keyring | `enforce`, no keys | daemon **fails fast** at startup ("no trusted keys were found") |
 | enforce + `cache_metadata = false` | `enforce` | daemon **fails fast** at startup ("requires cache.cache_metadata") |
+| auto + real keys, cold cache | `auto` | `apt-get update` succeeds; `result="verified"` ≥ 1 (auto never breaks a repo it can verify) |
+| auto + same bogus keyring | `auto` | same fetch is **served 200** with `X-Debswarm-Unverified: no-release` — auto serves when it *cannot* verify (contrast the `enforce` 502 above) |
+| auto + empty keyring / `cache_metadata = false` | `auto` | daemon **starts** (no fail-fast) and degrades to `warn`-like serving — auto is safe to leave on |
 
 Because debswarm auto-discovers exactly APT's keyrings, the "unverifiable" cases
 are produced by hiding the system keyrings and pointing `keyring_path` at a key

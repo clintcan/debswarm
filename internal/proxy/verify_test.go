@@ -261,3 +261,105 @@ func TestCheckIndexVerification_ExemptHost(t *testing.T) {
 		t.Fatal("enforce must allow an exempt host")
 	}
 }
+
+// TestVerifyIndex_NotListed covers the reason split that auto mode depends on: a
+// verified Release for the dist that does not list the requested index file is
+// "not-listed" (decisive), distinct from "no-release" (no verified Release at all).
+func TestVerifyIndex_NotListed(t *testing.T) {
+	pkgBody := []byte("Package: hello\n\n")
+	e, kr := genKeyAndKeyring(t)
+	srv := verifyTestServer(t, e, kr, pkgBody, verifyWarn)
+
+	// Same dist (its Release verifies), but an index path the Release omits.
+	notListed := verDist + "main/binary-arm64/Packages"
+	if ok, reason := srv.verifyIndex(notListed, pkgBody); ok || reason != verifyReasonNotListed {
+		t.Fatalf("unlisted index: ok=%v reason=%q, want false/not-listed", ok, reason)
+	}
+}
+
+// TestModeRefuses pins the per-mode refusal classification independent of the
+// serving path: enforce refuses every failure, auto refuses only decisive ones,
+// warn/off never refuse.
+func TestModeRefuses(t *testing.T) {
+	reasons := []string{
+		verifyReasonNoKey, verifyReasonNoDist, verifyReasonNoRelease,
+		verifyReasonNotListed, verifyReasonHashMismatch,
+	}
+	decisive := map[string]bool{verifyReasonNotListed: true, verifyReasonHashMismatch: true}
+	for _, mode := range []string{verifyOff, verifyWarn, verifyAuto, verifyEnforce} {
+		s := &Server{verifyMode: mode}
+		for _, r := range reasons {
+			want := false
+			switch mode {
+			case verifyEnforce:
+				want = true
+			case verifyAuto:
+				want = decisive[r]
+			}
+			if got := s.modeRefuses(r); got != want {
+				t.Errorf("modeRefuses(mode=%q, reason=%q) = %v, want %v", mode, r, got, want)
+			}
+		}
+	}
+}
+
+// TestCheckIndexVerification_AutoPolicy is the end-to-end auto behavior: refuse a
+// decisive failure (the signed Release exists but the index is bad), serve+flag an
+// indecisive one (cannot verify), serve a verified index, and honor host exemption.
+func TestCheckIndexVerification_AutoPolicy(t *testing.T) {
+	pkgBody := []byte("Package: hello\n\n")
+	e, kr := genKeyAndKeyring(t)
+	tampered := append(append([]byte{}, pkgBody...), 'X')
+	newAuto := func() *Server { return verifyTestServer(t, e, kr, pkgBody, verifyAuto) }
+
+	// Decisive failures → refuse (like enforce).
+	if newAuto().checkIndexVerification(httptest.NewRecorder(), verPkgURL, tampered, newTestLogger()) {
+		t.Fatal("auto must refuse a hash-mismatched index")
+	}
+	notListed := verDist + "main/binary-arm64/Packages"
+	if newAuto().checkIndexVerification(httptest.NewRecorder(), notListed, pkgBody, newTestLogger()) {
+		t.Fatal("auto must refuse an index the signed Release does not list")
+	}
+
+	// Verified → serve, no header.
+	w := httptest.NewRecorder()
+	if !newAuto().checkIndexVerification(w, verPkgURL, pkgBody, newTestLogger()) {
+		t.Fatal("auto must serve a verified index")
+	}
+	if got := w.Header().Get("X-Debswarm-Unverified"); got != "" {
+		t.Fatalf("verified index set header %q, want none", got)
+	}
+
+	// Indecisive failures (cannot verify) → serve like warn, with a header.
+	indecisive := map[string]string{
+		"http://deb.debian.org/debian/dists/sid/main/binary-amd64/Packages": verifyReasonNoRelease, // no cached Release
+		"http://pkgs.k8s.io/core/deb/Packages":                              verifyReasonNoDist,    // flat repo
+	}
+	for u, wantReason := range indecisive {
+		rec := httptest.NewRecorder()
+		if !newAuto().checkIndexVerification(rec, u, pkgBody, newTestLogger()) {
+			t.Fatalf("auto must serve when it cannot verify (%s)", u)
+		}
+		if got := rec.Header().Get("X-Debswarm-Unverified"); got != wantReason {
+			t.Fatalf("auto header for %s = %q, want %q", u, got, wantReason)
+		}
+	}
+
+	// No key at all is indecisive → serve.
+	nokey := newAuto()
+	nokey.keyring = nil
+	wk := httptest.NewRecorder()
+	if !nokey.checkIndexVerification(wk, verPkgURL, tampered, newTestLogger()) {
+		t.Fatal("auto must serve when there is no key to verify with")
+	}
+	if got := wk.Header().Get("X-Debswarm-Unverified"); got != verifyReasonNoKey {
+		t.Fatalf("auto no-key header = %q, want no-key", got)
+	}
+
+	// An exempt host is served even on a decisive failure.
+	exempt := newAuto()
+	exempt.verifyExempt = map[string]bool{"deb.debian.org": true}
+	if !exempt.checkIndexVerification(httptest.NewRecorder(), verPkgURL, tampered, newTestLogger()) {
+		t.Fatal("auto must serve an exempt host even on a decisive failure")
+	}
+}

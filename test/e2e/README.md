@@ -10,9 +10,11 @@ unit and integration tests cannot reach:
   `apt-get update` steps are wrapped in `timeout` so a regression surfaces as a
   failed job rather than a stuck one.
 - The **metadata cache** (cold miss → warm hit across two `apt-get update`s).
-- **Daemon-side signature verification** at its default (`warn`): the index is
+- **Daemon-side signature verification** at its default (`auto`): the index is
   verified against the signed `Release`, reported via
-  `debswarm_upstream_verify_total{result="verified"}`.
+  `debswarm_upstream_verify_total{result="verified"}`. (A real Debian repo
+  verifies cleanly, so `auto` serves it exactly like `warn` here — the refuse
+  path is covered by unit tests and the GPG soak.)
 - A real `.deb` fetched and cached through the proxy (`apt-get install`).
 
 Runs in CI as the `e2e` job in `.github/workflows/ci.yml`. It hits
