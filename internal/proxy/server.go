@@ -911,6 +911,15 @@ func (s *Server) classifyRequest(url string) requestType {
 		return requestTypePackage
 	}
 
+	// Source-package artifacts (.dsc/.orig.tar.*/.debian.tar.*/.diff.gz/native
+	// tarball) are content-addressed and verified like binary packages once their
+	// Sources index is parsed. Classified before the index arm below so a source
+	// package whose name contains "sources" (e.g. pool/main/s/sources-list/….dsc)
+	// is not mistaken for a Sources index.
+	if isSourceArtifactURL(lower) {
+		return requestTypePackage
+	}
+
 	if strings.Contains(lower, "/packages") ||
 		strings.Contains(lower, "/sources") {
 		return requestTypeIndex
@@ -1177,7 +1186,7 @@ func (s *Server) warmIndexFromCacheOnce() {
 		}
 		warmed := 0
 		for _, u := range urls {
-			if !isPackagesIndexURL(u) || s.index.HasIndexFile(u) {
+			if !isVerifiableIndexURL(u) || s.index.HasIndexFile(u) {
 				continue
 			}
 			entry, rc, gerr := s.cache.GetMetadata(u)
@@ -1194,7 +1203,7 @@ func (s *Server) warmIndexFromCacheOnce() {
 			if !s.checkIndexVerification(nil, u, data, s.logger) {
 				continue
 			}
-			if lerr := s.index.LoadFromData(data, u); lerr == nil {
+			if lerr := s.loadIndexInto(u, data); lerr == nil {
 				warmed++
 			}
 		}
@@ -2040,8 +2049,8 @@ func (s *Server) serveFreshBody(w http.ResponseWriter, r *http.Request, url stri
 			http.Error(w, "index failed upstream signature verification", http.StatusBadGateway)
 			return
 		}
-		if isPackagesIndexURL(url) {
-			if err := s.index.LoadFromData(data, url); err != nil {
+		if isVerifiableIndexURL(url) {
+			if err := s.loadIndexInto(url, data); err != nil {
 				log.Debug("Failed to parse index file", zap.Error(err))
 			} else {
 				log.Debug("Parsed index file",
@@ -2141,7 +2150,7 @@ func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url
 		s.noteStaleServe(log, url)
 	}
 
-	warmIndex := isIndex && isPackagesIndexURL(url) && !s.index.HasIndexFile(url)
+	warmIndex := isIndex && isVerifiableIndexURL(url) && !s.index.HasIndexFile(url)
 	clientHas := clientHasCurrent(r, entry)
 
 	// Fast path: client already has it and there is no index to warm — 304 without
@@ -2165,7 +2174,7 @@ func (s *Server) serveCachedMetadata(w http.ResponseWriter, r *http.Request, url
 			// against the signed Release (enforce). warn loads it and flags the
 			// response; the cached bytes are still served either way (APT verifies).
 			if s.checkIndexVerification(w, url, data, log) {
-				if err := s.index.LoadFromData(data, url); err != nil {
+				if err := s.loadIndexInto(url, data); err != nil {
 					log.Debug("Failed to parse cached index file", zap.Error(err))
 				}
 			}
@@ -2271,6 +2280,70 @@ func isFlatByHash(lower string) bool {
 		!strings.Contains(lower, "/i18n/") &&
 		!strings.Contains(lower, "/cnf/") &&
 		!strings.Contains(lower, "/dep11/")
+}
+
+// isSourceArtifactURL reports whether a URL is a Debian source-package artifact —
+// a .dsc, .diff.gz, an .orig/.debian/.orig-component tarball, or a native source
+// tarball under /pool/. These are content-addressed and verified via the Sources
+// index exactly like binary packages. Native tarballs are gated on /pool/ so
+// dist-tree tarballs (e.g. installer netboot.tar.gz) are not caught; a false
+// positive is harmless anyway — an artifact absent from the index just streams
+// uncached, identical to the previous passthrough behaviour. The argument is
+// expected to be already lowercased.
+func isSourceArtifactURL(lower string) bool {
+	switch {
+	case strings.HasSuffix(lower, ".dsc"),
+		strings.HasSuffix(lower, ".diff.gz"),
+		strings.Contains(lower, ".orig.tar."),
+		strings.Contains(lower, ".debian.tar."):
+		return true
+	case strings.Contains(lower, ".orig-") && strings.Contains(lower, ".tar."):
+		// Additional-component orig tarball, e.g. foo_1.0.orig-extra.tar.xz.
+		return true
+	case strings.Contains(lower, "/pool/") &&
+		(strings.HasSuffix(lower, ".tar.gz") ||
+			strings.HasSuffix(lower, ".tar.xz") ||
+			strings.HasSuffix(lower, ".tar.bz2") ||
+			strings.HasSuffix(lower, ".tar.lz") ||
+			strings.HasSuffix(lower, ".tar.zst")):
+		// Native source package: <name>_<ver>.tar.{xz,gz,…} with no orig/debian.
+		return true
+	}
+	return false
+}
+
+// isSourcesIndexURL reports whether a URL is a Debian Sources index (the
+// source-package counterpart of a Packages index): dists/<suite>/<comp>/source/
+// Sources{,.gz,.xz,…} or its Acquire-By-Hash form. Kept separate from
+// isPackagesIndexURL because a Sources index must be GPG-verified but parsed by
+// the Sources parser, not loaded into the binary Packages index.
+func isSourcesIndexURL(url string) bool {
+	lower := strings.ToLower(url)
+	if strings.Contains(lower, "/pool/") {
+		return false
+	}
+	if !strings.Contains(lower, "/source/") {
+		return false
+	}
+	return strings.Contains(lower, "/sources") || strings.Contains(lower, "/by-hash/")
+}
+
+// isVerifiableIndexURL reports whether a URL is an index whose bytes debswarm
+// gates against the signature-verified Release — a Packages or a Sources index.
+func isVerifiableIndexURL(url string) bool {
+	return isPackagesIndexURL(url) || isSourcesIndexURL(url)
+}
+
+// loadIndexInto parses an index response into the in-memory index, dispatching to
+// the Packages or the Sources parser by URL. It is a no-op for non-index URLs.
+func (s *Server) loadIndexInto(url string, data []byte) error {
+	switch {
+	case isPackagesIndexURL(url):
+		return s.index.LoadFromData(data, url)
+	case isSourcesIndexURL(url):
+		return s.index.LoadSourcesFromData(data, url)
+	}
+	return nil
 }
 
 // noteStaleServe logs, at most once per repository host, that debswarm is serving

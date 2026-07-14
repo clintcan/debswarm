@@ -150,6 +150,14 @@ func (w *Watcher) scanAll() (int, error) {
 				continue
 			}
 			count++
+		} else if w.isSourcesFile(entry.Name()) {
+			if err := w.parseSourcesFile(filepath.Join(w.listsPath, entry.Name())); err != nil {
+				w.logger.Debug("Failed to parse sources file",
+					zap.String("file", entry.Name()),
+					zap.Error(err))
+				continue
+			}
+			count++
 		}
 	}
 
@@ -181,6 +189,32 @@ func (w *Watcher) parseFile(path string) error {
 	repo := w.extractRepoFromFilename(filepath.Base(path))
 
 	return w.index.LoadFromFileWithRepo(path, repo)
+}
+
+// isSourcesFile returns true if the filename looks like a deb-src Sources file.
+// APT stores them as: {origin}_{path}_source_Sources or ..._Sources.{compression}
+func (w *Watcher) isSourcesFile(name string) bool {
+	// Skip partial downloads
+	if strings.HasSuffix(name, ".partial") {
+		return false
+	}
+
+	// Match *_Sources, *_Sources.gz, *_Sources.xz, ... (same compression exts as
+	// isPackagesFile). The _source_ component in the path is the deb-src marker.
+	base := name
+	for _, ext := range []string{".gz", ".xz", ".lz4", ".bz2", ".zst"} {
+		base = strings.TrimSuffix(base, ext)
+	}
+
+	return strings.HasSuffix(base, "_Sources") || strings.Contains(base, "_source_")
+}
+
+// parseSourcesFile parses a single deb-src Sources file and adds its artifacts to
+// the index, mirroring parseFile for the source-package warm path.
+func (w *Watcher) parseSourcesFile(path string) error {
+	repo := w.extractRepoFromFilename(filepath.Base(path))
+
+	return w.index.LoadSourcesFromFileWithRepo(path, repo)
 }
 
 // extractRepoFromFilename extracts the repository base from an APT list filename
@@ -228,7 +262,7 @@ func (w *Watcher) watchLoop(ctx context.Context) {
 			}
 
 			name := filepath.Base(event.Name)
-			if !w.isPackagesFile(name) {
+			if !w.isPackagesFile(name) && !w.isSourcesFile(name) {
 				continue
 			}
 
@@ -278,11 +312,23 @@ func (w *Watcher) processPendingFiles() {
 	w.logger.Debug("Processing APT list updates", zap.Int("files", len(files)))
 
 	for _, path := range files {
-		if err := w.parseFile(path); err != nil {
-			w.logger.Debug("Failed to parse updated packages file",
-				zap.String("file", filepath.Base(path)),
-				zap.Error(err))
+		base := filepath.Base(path)
+		// A file can satisfy both predicates only in pathological cases; prefer the
+		// Packages classification (isPackagesFile is checked first in the watch loop).
+		if w.isPackagesFile(base) {
+			if err := w.parseFile(path); err != nil {
+				w.logger.Debug("Failed to parse updated packages file",
+					zap.String("file", base),
+					zap.Error(err))
+			}
 			continue
+		}
+		if w.isSourcesFile(base) {
+			if err := w.parseSourcesFile(path); err != nil {
+				w.logger.Debug("Failed to parse updated sources file",
+					zap.String("file", base),
+					zap.Error(err))
+			}
 		}
 	}
 

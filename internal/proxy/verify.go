@@ -378,7 +378,7 @@ func (s *Server) readCachedMetadataBody(rawURL string) []byte {
 // w may be nil for non-serving callers (the startup index warm), in which case
 // only the load decision matters.
 func (s *Server) checkIndexVerification(w http.ResponseWriter, rawURL string, data []byte, log *zap.Logger) bool {
-	if !s.verificationEnabled() || !isPackagesIndexURL(rawURL) {
+	if !s.verificationEnabled() || !isVerifiableIndexURL(rawURL) {
 		return true
 	}
 	verified, reason := s.verifyIndex(rawURL, data)

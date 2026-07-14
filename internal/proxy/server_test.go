@@ -184,6 +184,15 @@ func TestClassifyRequest(t *testing.T) {
 		{"http://archive.ubuntu.com/ubuntu/pool/main/h/hello/hello_2.10-2_amd64.deb", requestTypePackage},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/Packages.gz", requestTypeIndex},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/main/source/Sources.xz", requestTypeIndex},
+		// Source-package artifacts are content-addressed packages, not indices.
+		{"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-3.dsc", requestTypePackage},
+		{"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10.orig.tar.gz", requestTypePackage},
+		{"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-3.debian.tar.xz", requestTypePackage},
+		{"http://deb.debian.org/debian/pool/main/d/dpkg/dpkg_1.21.22.tar.xz", requestTypePackage},
+		{"http://deb.debian.org/debian/pool/main/g/gcc/gcc_4.0.diff.gz", requestTypePackage},
+		// A source package literally named "sources-list" must not be misclassified
+		// as an index by the substring "sources" (regression the source arm fixes).
+		{"http://deb.debian.org/debian/pool/main/s/sources-list/sources-list_1.0.dsc", requestTypePackage},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/Release", requestTypeRelease},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/InRelease", requestTypeRelease},
 		{"http://archive.ubuntu.com/ubuntu/dists/jammy/Release.gpg", requestTypeRelease},
@@ -226,6 +235,50 @@ func TestIsPackagesIndexURL(t *testing.T) {
 	for url, want := range cases {
 		if got := isPackagesIndexURL(url); got != want {
 			t.Errorf("isPackagesIndexURL(%q) = %v, want %v", url, got, want)
+		}
+	}
+}
+
+func TestIsSourceArtifactURL(t *testing.T) {
+	cases := map[string]bool{
+		// .dsc / .diff.gz
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-3.dsc": true,
+		"http://deb.debian.org/debian/pool/main/g/gcc/gcc_4.0.diff.gz":    true,
+		// orig / debian tarballs (any compression)
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10.orig.tar.gz":       true,
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-3.debian.tar.xz":   true,
+		"http://deb.debian.org/debian/pool/main/l/libfoo/libfoo_3.0.orig-docs.tar.gz": true,
+		// native tarball under /pool/
+		"http://deb.debian.org/debian/pool/main/d/dpkg/dpkg_1.21.22.tar.xz": true,
+		"http://deb.debian.org/debian/pool/main/z/zstd/zstd_1.5.tar.zst":    true,
+		// NOT source artifacts
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10-2_amd64.deb": false,
+		"http://deb.debian.org/debian/dists/bookworm/main/source/Sources.xz":    false,
+		// A dist-tree tarball (no /pool/) must not be treated as a native source tarball.
+		"http://deb.debian.org/debian/dists/bookworm/main/foo.tar.gz": false,
+	}
+	for url, want := range cases {
+		if got := isSourceArtifactURL(strings.ToLower(url)); got != want {
+			t.Errorf("isSourceArtifactURL(%q) = %v, want %v", url, got, want)
+		}
+	}
+}
+
+func TestIsSourcesIndexURL(t *testing.T) {
+	cases := map[string]bool{
+		"http://deb.debian.org/debian/dists/bookworm/main/source/Sources":            true,
+		"http://deb.debian.org/debian/dists/bookworm/main/source/Sources.gz":         true,
+		"http://deb.debian.org/debian/dists/bookworm/main/source/Sources.xz":         true,
+		"http://deb.debian.org/debian/dists/bookworm/main/source/by-hash/SHA256/abc": true,
+		// NOT Sources indices
+		"http://deb.debian.org/debian/dists/bookworm/main/binary-amd64/Packages.xz": false,
+		// A source *artifact* under /pool/ is a package, not the index.
+		"http://deb.debian.org/debian/pool/main/s/sources-list/sources-list_1.0.dsc": false,
+		"http://deb.debian.org/debian/pool/main/h/hello/hello_2.10.orig.tar.gz":      false,
+	}
+	for url, want := range cases {
+		if got := isSourcesIndexURL(url); got != want {
+			t.Errorf("isSourcesIndexURL(%q) = %v, want %v", url, got, want)
 		}
 	}
 }

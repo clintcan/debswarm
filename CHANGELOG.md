@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Source packages are now cached, SHA256-verified, and P2P-shared** like binary `.deb`s. Previously, a `deb-src` workflow (`apt-get source`, `sbuild`/`pbuilder`, or any source-based build) fetched its `.dsc`, `.orig.tar.*`, `.debian.tar.*`, and `.diff.gz` artifacts straight through the proxy with no hash check, no content-addressed cache, and no peer sharing — the one artifact class debswarm served entirely unverified. debswarm now parses a repository's `Sources` index (which carries a `Checksums-Sha256` for every source file) and routes each source artifact through the same path as a binary package: it is verified against the SHA256 the index lists, cached by content, announced to the DHT, and served from a peer when available. This makes debswarm useful to build farms and source-based workflows and closes the last "served unverified" gap for a whole artifact class. Native-format source packages (a single `<name>_<ver>.tar.*` with no separate `orig`/`debian` tarball) and additional-component orig tarballs (`.orig-<component>.tar.*`) are handled too.
+- **`Sources` indices are now GPG-verified** by daemon-side signature verification, exactly like `Packages` indices. A `Sources` index that a signature-verified `Release` vouches for is trusted; a tampered one is refused under `auto`/`enforce` (both plain and `Acquire-By-Hash` forms). Source indices written by APT under `/var/lib/apt/lists` (from a `deb-src` line) are also parsed to warm the in-memory index at daemon startup, giving build hosts the same warm-cache story on restart that binary packages already had.
+
 ## [1.37.0] - 2026-07-14
 
 ### Added

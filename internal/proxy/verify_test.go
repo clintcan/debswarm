@@ -23,6 +23,8 @@ const (
 	verDist   = "http://deb.debian.org/debian/dists/bookworm/"
 	verPkgURL = verDist + "main/binary-amd64/Packages"
 	verPkgRel = "main/binary-amd64/Packages"
+	verSrcURL = verDist + "main/source/Sources"
+	verSrcRel = "main/source/Sources"
 )
 
 func TestDistBaseURL(t *testing.T) {
@@ -96,8 +98,20 @@ func genKeyAndKeyring(t *testing.T) (*openpgp.Entity, *gpg.Keyring) {
 // by e) lists verPkgRel with the SHA256 of pkgBody.
 func signedReleaseCache(t *testing.T, e *openpgp.Entity, pkgBody []byte) *cache.Cache {
 	t.Helper()
-	h := sha256Hex(pkgBody)
-	releaseBody := fmt.Sprintf("Origin: Debian\nSuite: bookworm\nSHA256:\n %s %d %s\n", h, len(pkgBody), verPkgRel)
+	return signedReleaseCacheMulti(t, e, map[string][]byte{verPkgRel: pkgBody})
+}
+
+// signedReleaseCacheMulti is signedReleaseCache generalized to a signed InRelease
+// listing several index files (relPath → body), so a single verified Release can
+// vouch for both a Packages and a Sources index.
+func signedReleaseCacheMulti(t *testing.T, e *openpgp.Entity, entries map[string][]byte) *cache.Cache {
+	t.Helper()
+	var rb bytes.Buffer
+	rb.WriteString("Origin: Debian\nSuite: bookworm\nSHA256:\n")
+	for rel, body := range entries {
+		fmt.Fprintf(&rb, " %s %d %s\n", sha256Hex(body), len(body), rel)
+	}
+	releaseBody := rb.String()
 
 	var buf bytes.Buffer
 	w, err := clearsign.Encode(&buf, e.PrivateKey, nil)
@@ -168,6 +182,47 @@ func TestVerifyIndex_Tampered(t *testing.T) {
 	bad := verDist + "main/binary-amd64/by-hash/SHA256/" + sha256Hex([]byte("something else"))
 	if ok, reason := srv.verifyIndex(bad, nil); ok || reason != verifyReasonHashMismatch {
 		t.Fatalf("unknown by-hash: ok=%v reason=%q, want false/hash-mismatch", ok, reason)
+	}
+}
+
+// A Sources index verifies against the same signature-verified Release as its
+// sibling Packages index — verifyIndex is path-generic, so a main/source/Sources
+// entry the Release lists is vouched for identically (plain and by-hash forms).
+func TestVerifyIndex_SourcesSignedReleaseMatches(t *testing.T) {
+	pkgBody := []byte("Package: hello\nVersion: 2.10\nArchitecture: amd64\n\n")
+	srcBody := []byte("Package: hello\nDirectory: pool/main/h/hello\n\n")
+	e, kr := genKeyAndKeyring(t)
+	c := signedReleaseCacheMulti(t, e, map[string][]byte{verPkgRel: pkgBody, verSrcRel: srcBody})
+	srv := serverWith(t, c, index.New(t.TempDir(), newTestLogger()))
+	srv.keyring = kr
+	srv.verifyMode = verifyWarn
+
+	if ok, reason := srv.verifyIndex(verSrcURL, srcBody); !ok {
+		t.Fatalf("expected Sources index verified, got reason=%q", reason)
+	}
+	// The source by-hash form resolves via the digest the Release lists.
+	byHashURL := verDist + "main/source/by-hash/SHA256/" + sha256Hex(srcBody)
+	if ok, reason := srv.verifyIndex(byHashURL, nil); !ok {
+		t.Fatalf("Sources by-hash should verify, got reason=%q", reason)
+	}
+}
+
+// A tampered Sources index reports hash-mismatch and is refused under enforce,
+// exactly like a tampered Packages index.
+func TestVerifyIndex_SourcesTamperedEnforce(t *testing.T) {
+	srcBody := []byte("Package: hello\nDirectory: pool/main/h/hello\n\n")
+	e, kr := genKeyAndKeyring(t)
+	c := signedReleaseCacheMulti(t, e, map[string][]byte{verSrcRel: srcBody})
+	srv := serverWith(t, c, index.New(t.TempDir(), newTestLogger()))
+	srv.keyring = kr
+	srv.verifyMode = verifyEnforce
+
+	ok, reason := srv.verifyIndex(verSrcURL, append(srcBody, 'X'))
+	if ok || reason != verifyReasonHashMismatch {
+		t.Fatalf("tampered Sources: ok=%v reason=%q, want false/hash-mismatch", ok, reason)
+	}
+	if !srv.modeRefuses(reason) {
+		t.Fatal("enforce must refuse a hash-mismatch Sources index")
 	}
 }
 
