@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Cross-NAT P2P now actually works (Phase 1).** Two peers each behind their own NAT can now discover each other and transfer packages — previously they could not, because the chain that makes it possible was never completed. debswarm enabled the circuit-relay client transport and hole punching, but nothing ever obtained a relay **reservation**, so no NAT'd peer had a `/p2p-circuit` address, nothing could dial it, and DCUtR hole punching (which only fires over an existing relayed connection) never triggered — `EnableHolePunching()` was effectively dead code. This release adds the missing pieces:
+  - **AutoRelay** obtains circuit-v2 reservations, either from statically configured `relay_peers` or by discovering relays through the DHT, giving a NAT'd node a reachable circuit address.
+  - **A bounded relay service** runs on publicly-reachable nodes (`relay_service = "auto"`, on when AutoNAT reports the node is public), so the swarm has relays to reserve on and coordinate hole punches through. Limits are configurable via `relay_limits`. Relays only coordinate the hole punch — they **never carry package bytes** (circuit-v2's small limits are a feature), and every byte is still SHA256-verified against the signed index, so a malicious relay cannot poison the swarm.
+  - **`force_reachability`** lets a node you know is NAT'd (or public) skip AutoNAT's guessing and reserve immediately — useful in small swarms where AutoNAT may never gather enough dial-back samples to reach a verdict.
+  - **New config** under `[network]`: `enable_autorelay`, `relay_service` (`auto`/`on`/`off`), `relay_peers`, `force_reachability` (`auto`/`public`/`private`), and `relay_limits` (`max_reservations`, `max_circuits`, `buffer_size`, `duration`). All default to sensible values — a NAT'd node reserves and hole-punches automatically, a public node relays within bounds.
+  - **New metrics** make the path observable: `debswarm_relay_reservations`, `debswarm_holepunch_total{result}`, `debswarm_connections{type}`, `debswarm_relay_service_active`, `debswarm_relay_circuits_active`, and `debswarm_reachability`.
+  - **A real NAT test topology** (`test/nat/`) proves it: two peers behind separate `iptables MASQUERADE` gateways on isolated bridges, reachable only out through a public network. It asserts the relay accepts a reservation from each NAT'd peer, and a `--baseline` run with AutoRelay disabled must fail — a check the ordinary Docker-bridge soak cannot make, because on a shared bridge containers dial each other directly and pass even on a completely broken build.
+  - **Private (PSK) swarms** need `relay_peers` pointed at a public node you run, since they have no public DHT to discover relays through.
+  - *Follow-up (Phase 2): a default public relay/bootstrap node so out-of-the-box NAT'd peers have a relay to reserve on without configuring `relay_peers`.*
+
 ## [1.39.0] - 2026-07-15
 
 ### Added

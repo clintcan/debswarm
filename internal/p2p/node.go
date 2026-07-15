@@ -23,7 +23,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	drouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/host/autorelay"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
+	"github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/libp2p/go-libp2p/p2p/protocol/holepunch"
 	"github.com/libp2p/go-libp2p/p2p/protocol/ping"
 	"github.com/multiformats/go-multiaddr"
 	"go.uber.org/zap"
@@ -93,6 +96,14 @@ type Node struct {
 	// Whether a pre-shared key isolates this swarm: every connected peer is
 	// then a trusted swarm member (see GetMDNSPeers)
 	pskEnabled bool
+
+	// Circuit relay (cross-NAT). relayService is non-nil only while we are
+	// relaying for other peers; relay_service="auto" starts and stops it as
+	// AutoNAT's reachability verdict changes.
+	relayMu          sync.Mutex
+	relayService     *relay.Relay
+	relayServiceMode string          // auto | on | off
+	relayResources   relay.Resources // bounds on what we carry for others
 }
 
 // ContentGetter is a function that retrieves content by hash
@@ -121,6 +132,32 @@ type Config struct {
 	// NAT traversal configuration
 	EnableRelay        bool // Use circuit relays to reach NAT'd peers (default: true)
 	EnableHolePunching bool // Enable NAT hole punching (default: true)
+
+	// EnableAutoRelay makes this node reserve a slot on a relay, so that peers
+	// behind NAT can be dialed at all. Without it the node never obtains a
+	// /p2p-circuit address, nothing can dial it, and hole punching — which only
+	// fires over an existing relayed connection — can never trigger.
+	EnableAutoRelay bool
+
+	// RelayService: "auto" (relay for others only when AutoNAT says we're public),
+	// "on" (always), "off" (never). Empty means "auto".
+	RelayService string
+
+	// RelayPeers are static relays to reserve on, as full multiaddrs including
+	// /p2p/<peer-id>. Required for a private (PSK) swarm, which has no public DHT
+	// to discover relays through.
+	RelayPeers []string
+
+	// Bounds on what we are willing to carry when acting as a relay. Zero values
+	// fall back to circuit-relay v2's own defaults.
+	RelayMaxReservations int
+	RelayMaxCircuits     int
+	RelayBufferSize      int64
+	RelayDuration        time.Duration
+
+	// ForceReachability overrides AutoNAT: "auto" (default), "private" (assert
+	// NAT'd — makes AutoRelay reserve immediately), or "public".
+	ForceReachability string
 
 	// Per-peer rate limiting configuration
 	PerPeerUploadRate   int64   // bytes per second, 0 = auto-calculate from global/expected
@@ -239,15 +276,66 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		libp2p.NATPortMap(),
 	}
 
-	// Optional: Circuit relay for reaching NAT'd peers
+	// Optional: circuit-relay client transport. This lets us *dial* a /p2p-circuit
+	// address and be reached through a relay we hold a reservation with. On its
+	// own it obtains no reservation — that is AutoRelay's job, below.
 	if cfg.EnableRelay {
 		opts = append(opts, libp2p.EnableRelay())
-		logger.Info("Circuit relay enabled (can reach NAT'd peers via relays)")
+		logger.Debug("Circuit relay transport enabled")
 	}
 
-	// Optional: NAT hole punching
+	// Optional: override AutoNAT's reachability verdict. In a small swarm AutoNAT
+	// may never gather enough dial-back samples to conclude we are private, and
+	// AutoRelay only reserves a relay slot once it believes we are private — so a
+	// node that knows it is NAT'd can assert "private" to get a reservation
+	// promptly instead of waiting on a verdict that may never come.
+	switch cfg.ForceReachability {
+	case ReachabilityPrivate:
+		opts = append(opts, libp2p.ForceReachabilityPrivate())
+		logger.Info("Reachability forced to private (AutoRelay will reserve a relay slot)")
+	case ReachabilityPublic:
+		opts = append(opts, libp2p.ForceReachabilityPublic())
+		logger.Info("Reachability forced to public")
+	}
+
+	// AutoRelay: reserve a slot on a relay so NAT'd peers are reachable at all.
+	//
+	// This is the step whose absence made cross-NAT P2P impossible: with no
+	// reservation there is no /p2p-circuit address, so nothing can dial us, so no
+	// relayed connection exists — and DCUtR only ever hole-punches over an
+	// existing relayed connection. Without this, EnableHolePunching() below can
+	// never fire.
+	relaySrc := &relaySource{}
+	staticRelays := ParseRelayPeers(cfg.RelayPeers, logger)
+	if cfg.EnableAutoRelay && cfg.EnableRelay {
+		// libp2p's AutoRelay defaults (minCandidates=4, bootDelay=3m) assume a
+		// large public swarm where it can afford to gather several relay
+		// candidates and pick the best. debswarm swarms are often small — a home
+		// or lab with a single public relay — where those defaults mean a NAT'd
+		// node waits three minutes and then still wants four candidates it will
+		// never find. minCandidates=1 makes it reserve as soon as it finds one
+		// relay; the short boot delay is a floor for the case where a candidate
+		// briefly drops to zero.
+		arOpts := []autorelay.Option{
+			autorelay.WithMinCandidates(1),
+			autorelay.WithBootDelay(10 * time.Second),
+		}
+		if len(staticRelays) > 0 {
+			opts = append(opts, libp2p.EnableAutoRelayWithStaticRelays(staticRelays, arOpts...))
+			logger.Info("AutoRelay enabled with static relays",
+				zap.Int("relays", len(staticRelays)))
+		} else {
+			opts = append(opts, libp2p.EnableAutoRelayWithPeerSource(relaySrc.FindCandidates, arOpts...))
+			logger.Info("AutoRelay enabled (discovering relays from the swarm)")
+		}
+	}
+
+	// Optional: NAT hole punching (DCUtR). Upgrades a relayed connection to a
+	// direct one, which is what actually carries package bytes — circuit-v2's
+	// limits are far too small to transfer a package over, by design.
 	if cfg.EnableHolePunching {
-		opts = append(opts, libp2p.EnableHolePunching())
+		hpTracer := &holePunchTracer{metrics: cfg.Metrics, logger: logger}
+		opts = append(opts, libp2p.EnableHolePunching(holepunch.WithTracer(hpTracer)))
 		logger.Debug("NAT hole punching enabled")
 	}
 
@@ -358,7 +446,13 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		downloadLimiter:      ratelimit.New(cfg.MaxDownloadRate),
 		privateSwarm:         privateSwarmMode,
 		pskEnabled:           len(cfg.PSK) > 0,
+		relayServiceMode:     relayServiceMode(cfg.RelayService),
+		relayResources:       relayResourcesFrom(cfg),
 	}
+
+	// AutoRelay's peer source was handed to libp2p before this Node existed;
+	// attach it now so relay discovery can actually query the DHT.
+	relaySrc.attach(node)
 
 	// Apply default for max concurrent uploads if not set
 	if node.maxConcurrentUploads <= 0 {
@@ -440,6 +534,24 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 
 	// Start keepalive pings to prevent idle connection pruning
 	go node.keepalivePings()
+
+	// Cross-NAT connectivity: observe whether we actually hold a relay
+	// reservation, classify connections as direct vs relayed, and drive the relay
+	// service from AutoNAT's reachability verdict.
+	node.trackConnectionTypes()
+	go node.watchRelayReservations()
+	go node.watchReachability()
+
+	switch node.relayServiceMode {
+	case RelayServiceOn:
+		// The operator asserts we are publicly reachable; don't wait for AutoNAT.
+		node.startRelayService()
+	case RelayServiceOff:
+		logger.Debug("Relay service disabled by config")
+	default:
+		// "auto": watchReachability starts the service if AutoNAT says we're public.
+		logger.Debug("Relay service in auto mode (awaiting AutoNAT reachability verdict)")
+	}
 
 	return node, nil
 }
@@ -1222,6 +1334,9 @@ func (n *Node) Host() host.Host {
 // Close shuts down the P2P node
 func (n *Node) Close() error {
 	n.cancel()
+
+	// Stop relaying for other peers before tearing down the host
+	n.stopRelayService()
 
 	// Close per-peer rate limiters
 	if n.peerUploadLimiter != nil {

@@ -104,8 +104,8 @@ File Request → Find N Peers → Score & Rank
 | **UPnP** | Yes | Via libp2p |
 | **NAT-PMP** | No | Via libp2p |
 | **STUN** | No | Yes (QUIC) |
-| **Hole Punching** | Limited | Yes (libp2p) |
-| **Relay Fallback** | No | Partial (libp2p circuit-relay client transport only; no relay service runs yet, so two NAT'd peers cannot yet connect through a relay) |
+| **Hole Punching** | Limited | Yes (libp2p DCUtR, over a relay reservation) |
+| **Relay Fallback** | No | Yes (AutoRelay reservations; publicly-reachable nodes run a relay service to coordinate hole punches for two NAT'd peers) |
 
 QUIC's UDP-based transport in debswarm provides significantly better NAT traversal than apt-p2p's TCP-only approach. Many corporate firewalls and home routers handle UDP hole punching better than TCP.
 

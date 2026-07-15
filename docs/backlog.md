@@ -120,24 +120,38 @@ narrower: concrete, verified gaps in what exists today.
    WAN. The fix belongs inside `downloadPackage` (nil the mirror source for the
    parallel downloader and skip the final mirror `Stream`), but it touches the
    racing path — deferred to keep the offline change low-risk.
-2. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
-   transport and hole punching are enabled — no AutoRelay reservation logic,
-   and no debswarm node ever runs the relay service, so DCUtR has no relayed
-   connection to coordinate through. Two NAT'd peers can never connect.
-   Fixing this properly means a relay story (static relays config,
-   `EnableAutoRelayWithStaticRelays`, optionally `EnableRelayService()` on
-   publicly reachable nodes). `docs/comparison.md` now states this honestly
-   (Relay Fallback: "Partial — client transport only") pending that work.
-3. **No signed apt repository for debswarm itself.** The multi-arch **container
-   image now exists** (`ghcr.io/clintcan/debswarm`, distroless, shipped in
-   v1.37.0 — see `docs/design/self-distribution.md`). What remains is a signed
-   apt repo: distribution of the native package is still GitHub releases +
-   `curl | bash`, so there is no `unattended-upgrades` origin and no fleet-wide
-   upgrade path — ironic for an APT tool. The reprepro/GitHub-Pages **apt-repo CI
-   job and config are now committed but inert** (gated on the `APT_REPO_ENABLED`
-   repo variable); it goes live on the first stable tag after the operator
-   completes the one-time key/secret/Pages setup (checklist in
-   `docs/design/self-distribution.md`). No Helm chart exists (lower priority).
+2. **Cross-NAT P2P doesn't work; docs claim it does.** ✅ **Done (Phase 1,
+   v1.40.0).** The chain was broken: only the relay client transport and hole
+   punching were enabled — no AutoRelay reservation logic, and no debswarm node
+   ever ran the relay service, so DCUtR had no relayed connection to coordinate
+   through and **`EnableHolePunching()` was effectively dead code**. Phase 1
+   closes it: **AutoRelay** now obtains circuit-v2 reservations (static
+   `relay_peers` or DHT peer-source), publicly-reachable nodes run a bounded
+   **relay service** (`relay_service = "auto"`, on when AutoNAT reports public),
+   and `force_reachability` lets a known-NAT'd node reserve immediately when
+   AutoNAT can't reach a verdict in a small swarm. Relays coordinate hole punches
+   only — never carry package bytes (circuit-v2 limits are a feature). New metrics
+   (`debswarm_relay_reservations`, `debswarm_holepunch_total`,
+   `debswarm_connections{type}`, `debswarm_relay_service_active`,
+   `debswarm_reachability`) make the path observable. Proven by a real NAT test
+   topology (`test/nat/`) the ordinary Docker-bridge soak cannot see: two peers
+   behind separate `iptables MASQUERADE` gateways, asserting the relay accepts a
+   reservation from each NAT'd peer, with a `--baseline` (AutoRelay-off) run that
+   must fail. `docs/comparison.md` and `docs/configuration.md` now describe the
+   working relay/hole-punch path. Designed in `docs/design/cross-nat-p2p.md`.
+   *Follow-up (Phase 2, not yet done): a default public relay/bootstrap node
+   debswarm ships so out-of-the-box NAT'd peers have a relay to reserve on without
+   configuring `relay_peers`.*
+3. **No signed apt repository for debswarm itself.** ✅ **Done** (v1.39.0). The
+   signed apt repo is **live at `https://clintcan.github.io/debswarm/`** —
+   `apt-get install debswarm` works, the repo is GPG-signed, carries
+   amd64/arm64/armhf, and is republished automatically by the `apt-repo` job on
+   every stable tag. Verified end-to-end in a clean container (apt verified the
+   signature; origin `o=debswarm,n=stable` matches the documented
+   `unattended-upgrades` pattern). The multi-arch container image
+   (`ghcr.io/clintcan/debswarm`, distroless) shipped in v1.37.0 and is public.
+   Self-distribution is complete; see `docs/design/self-distribution.md`. No Helm
+   chart exists (lower priority).
 4. **Source packages get zero benefit.** ✅ **Done** (Unreleased — see Recently
    addressed and `CHANGELOG.md`). `Sources` indices are now parsed and each
    `.dsc`/`.orig.tar.*`/`.debian.tar.*`/`.diff.gz` (plus native and

@@ -1,0 +1,19 @@
+# One image, three roles (relay | gateway | peer), selected by the compose command.
+# The debswarm binary is built into this directory before `docker build` — see
+# run.sh.
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl iproute2 iptables procps iputils-ping tcpdump \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY debswarm /usr/local/bin/debswarm
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /usr/local/bin/debswarm /entrypoint.sh
+
+# Surface libp2p's own subsystem logs (go-log, separate from debswarm's zap
+# logger) so relay reservations and hole punches are observable during the test.
+ENV GOLOG_LOG_LEVEL="error,autorelay=debug,relay=debug,holepunch=debug,autonat=debug"
+
+ENTRYPOINT ["bash", "/entrypoint.sh"]
