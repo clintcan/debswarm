@@ -110,6 +110,22 @@ type Metrics struct {
 	TunnelBytesIn         *Counter   // Bytes transferred client -> target
 	TunnelBytesOut        *Counter   // Bytes transferred target -> client
 	TunnelDuration        *Histogram // Tunnel connection duration
+
+	// Cross-NAT connectivity metrics.
+	//
+	// These exist because cross-NAT P2P was enabled, advertised, and completely
+	// non-functional for a long time without anything noticing: nothing measured
+	// whether a relay reservation was ever obtained, so nobody could see that hole
+	// punching could never fire. They make "cross-NAT P2P works" a claim that can
+	// be checked instead of asserted.
+	RelayReservations   *GaugeVec   // Active relay reservations we hold, by state
+	RelayReservationsOK *Counter    // Reservations successfully obtained (cumulative)
+	RelayReservationErr *Counter    // Reservation attempts that failed (cumulative)
+	HolePunchTotal      *CounterVec // DCUtR attempts, by result (success|failure)
+	ConnectionsByType   *GaugeVec   // Current connections, by type (direct|relayed)
+	RelayServiceActive  *Gauge      // 1 when we are running a relay for other peers
+	RelayCircuitsActive *Gauge      // Circuits we are currently relaying for others
+	Reachability        *GaugeVec   // AutoNAT verdict, by state (public|private|unknown)
 }
 
 // Counter is a simple counter metric
@@ -411,6 +427,16 @@ func New() *Metrics {
 		TunnelBytesIn:         &Counter{},
 		TunnelBytesOut:        &Counter{},
 		TunnelDuration:        NewHistogram(DurationBuckets),
+
+		// Cross-NAT connectivity metrics
+		RelayReservations:   NewGaugeVec(),
+		RelayReservationsOK: &Counter{},
+		RelayReservationErr: &Counter{},
+		HolePunchTotal:      NewCounterVec(),
+		ConnectionsByType:   NewGaugeVec(),
+		RelayServiceActive:  &Gauge{},
+		RelayCircuitsActive: &Gauge{},
+		Reachability:        NewGaugeVec(),
 	}
 }
 
@@ -517,6 +543,24 @@ func (m *Metrics) Handler() http.Handler {
 		writeCounter(w, "debswarm_tunnel_bytes_in_total", m.TunnelBytesIn.Value())
 		writeCounter(w, "debswarm_tunnel_bytes_out_total", m.TunnelBytesOut.Value())
 		writeHistogram(w, "debswarm_tunnel_duration_seconds", m.TunnelDuration)
+
+		// Cross-NAT connectivity
+		for label, value := range m.RelayReservations.Values() {
+			writeGaugeWithLabel(w, "debswarm_relay_reservations", "state", label, value)
+		}
+		writeCounter(w, "debswarm_relay_reservations_obtained_total", m.RelayReservationsOK.Value())
+		writeCounter(w, "debswarm_relay_reservation_errors_total", m.RelayReservationErr.Value())
+		for label, value := range m.HolePunchTotal.Values() {
+			writeCounterWithLabel(w, "debswarm_holepunch_total", "result", label, value)
+		}
+		for label, value := range m.ConnectionsByType.Values() {
+			writeGaugeWithLabel(w, "debswarm_connections", "type", label, value)
+		}
+		writeGauge(w, "debswarm_relay_service_active", m.RelayServiceActive.Value())
+		writeGauge(w, "debswarm_relay_circuits_active", m.RelayCircuitsActive.Value())
+		for label, value := range m.Reachability.Values() {
+			writeGaugeWithLabel(w, "debswarm_reachability", "state", label, value)
+		}
 	})
 }
 

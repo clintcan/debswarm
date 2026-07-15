@@ -55,12 +55,49 @@ connectivity_check_interval = "30s"
 # redirect to HTTPS.
 # connectivity_check_url = "http://deb.debian.org/debian/"
 
-# NAT traversal (both default to true)
-# enable_relay: use circuit relays to reach peers behind NAT
-# enable_hole_punching: attempt direct connections through NAT (DCUtR)
+# NAT traversal (all default to true)
+# enable_relay: circuit-relay transport — lets this node dial and be dialed via a relay
+# enable_autorelay: reserve a slot on a relay so peers behind NAT can reach us at all.
+#   Without a reservation there is no /p2p-circuit address, nothing can dial us, and
+#   hole punching (which only fires over an existing relayed connection) never triggers.
+# enable_hole_punching: upgrade a relayed connection to a direct one (DCUtR); the direct
+#   connection is what carries package bytes — relays only coordinate the punch.
 # Disable only if your network policy forbids relayed or hole-punched connections.
 # enable_relay = true
+# enable_autorelay = true
 # enable_hole_punching = true
+
+# relay_service: run a circuit-relay service to help NAT'd peers connect.
+#   "auto" (default) - only when AutoNAT reports this node is publicly reachable
+#   "on"             - always (use on a known-public host if AutoNAT is unsure)
+#   "off"            - never
+# Relays only coordinate hole punches; they never carry package bytes (circuit-v2
+# limits are tiny by design), so the cost of helping is bounded and small.
+# relay_service = "auto"
+
+# relay_peers: static relays to reserve on, in addition to any discovered from the
+# swarm. REQUIRED for a private (PSK) swarm, which has no public DHT to discover
+# relays through. Full multiaddrs including /p2p/<peer-id>.
+# relay_peers = [
+#   "/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooW...",
+# ]
+
+# force_reachability: override AutoNAT's public/private detection.
+#   "auto" (default) - let AutoNAT decide
+#   "private"        - assert we are behind NAT; makes AutoRelay reserve a relay slot
+#                      immediately instead of waiting for AutoNAT, which in a small
+#                      swarm may never gather enough samples to decide
+#   "public"         - assert we are publicly reachable (suits a relay/seed node)
+# force_reachability = "auto"
+
+# relay_limits: bounds on what this node carries when acting as a relay. The
+# defaults mirror circuit-relay v2 and are sized for hole-punch coordination, not
+# bulk transfer, so they are deliberately small.
+# [network.relay_limits]
+# max_reservations = 128    # concurrent peers we vouch for
+# max_circuits     = 16     # concurrent relayed connections
+# buffer_size      = "128KB" # per-circuit data cap
+# duration         = "2m"   # per-circuit lifetime
 
 # Bootstrap peers for DHT initialization
 # These are libp2p public bootstrap nodes; add your own for private networks

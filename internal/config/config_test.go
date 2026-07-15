@@ -1643,3 +1643,149 @@ func TestPackagedSystemConfigDefaults(t *testing.T) {
 		t.Error("packaged config: announce_packages should be true")
 	}
 }
+
+func TestNetworkConfig_IsAutoRelayEnabled(t *testing.T) {
+	tru, fls := true, false
+	tests := []struct {
+		name string
+		val  *bool
+		want bool
+	}{
+		{"unset defaults to true", nil, true},
+		{"explicit true", &tru, true},
+		{"explicit false", &fls, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := NetworkConfig{EnableAutoRelay: tc.val}
+			if got := c.IsAutoRelayEnabled(); got != tc.want {
+				t.Errorf("IsAutoRelayEnabled() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNetworkConfig_GetRelayService(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"", RelayServiceAuto},
+		{"auto", RelayServiceAuto},
+		{"on", RelayServiceOn},
+		{"off", RelayServiceOff},
+		{"  ON  ", RelayServiceOn},
+	}
+	for _, tc := range tests {
+		c := NetworkConfig{RelayService: tc.in}
+		if got := c.GetRelayService(); got != tc.want {
+			t.Errorf("GetRelayService(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNetworkConfig_RelayLimits(t *testing.T) {
+	t.Run("defaults when unset", func(t *testing.T) {
+		c := NetworkConfig{}
+		if got := c.RelayMaxReservations(); got != DefaultRelayMaxReservations {
+			t.Errorf("RelayMaxReservations() = %d, want %d", got, DefaultRelayMaxReservations)
+		}
+		if got := c.RelayMaxCircuits(); got != DefaultRelayMaxCircuits {
+			t.Errorf("RelayMaxCircuits() = %d, want %d", got, DefaultRelayMaxCircuits)
+		}
+		if got := c.RelayBufferSizeBytes(); got != DefaultRelayBufferSize {
+			t.Errorf("RelayBufferSizeBytes() = %d, want %d", got, DefaultRelayBufferSize)
+		}
+		if got := c.RelayDuration(); got != DefaultRelayDuration {
+			t.Errorf("RelayDuration() = %v, want %v", got, DefaultRelayDuration)
+		}
+	})
+
+	t.Run("parses configured values", func(t *testing.T) {
+		c := NetworkConfig{RelayLimits: RelayLimitsConfig{
+			MaxReservations: 8,
+			MaxCircuits:     2,
+			BufferSize:      "64KB",
+			Duration:        "30s",
+		}}
+		if got := c.RelayMaxReservations(); got != 8 {
+			t.Errorf("RelayMaxReservations() = %d, want 8", got)
+		}
+		if got := c.RelayMaxCircuits(); got != 2 {
+			t.Errorf("RelayMaxCircuits() = %d, want 2", got)
+		}
+		if got := c.RelayBufferSizeBytes(); got != 64*1024 {
+			t.Errorf("RelayBufferSizeBytes() = %d, want %d", got, 64*1024)
+		}
+		if got := c.RelayDuration(); got != 30*time.Second {
+			t.Errorf("RelayDuration() = %v, want 30s", got)
+		}
+	})
+
+	t.Run("falls back to defaults on unparseable values", func(t *testing.T) {
+		c := NetworkConfig{RelayLimits: RelayLimitsConfig{
+			BufferSize: "not-a-size",
+			Duration:   "not-a-duration",
+		}}
+		if got := c.RelayBufferSizeBytes(); got != DefaultRelayBufferSize {
+			t.Errorf("RelayBufferSizeBytes() = %d, want default %d", got, DefaultRelayBufferSize)
+		}
+		if got := c.RelayDuration(); got != DefaultRelayDuration {
+			t.Errorf("RelayDuration() = %v, want default %v", got, DefaultRelayDuration)
+		}
+	})
+}
+
+func TestValidate_RelayConfig(t *testing.T) {
+	const validRelay = "/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
+
+	t.Run("accepts a valid relay peer", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.RelayPeers = []string{validRelay}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("expected valid relay peer to pass, got %v", err)
+		}
+	})
+
+	t.Run("rejects a relay peer with no /p2p peer ID", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.RelayPeers = []string{"/ip4/203.0.113.10/udp/4001/quic-v1"}
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected an error for a relay address with no peer ID")
+		}
+		if !strings.Contains(err.Error(), "relay_peers") {
+			t.Errorf("error should name the offending field, got %v", err)
+		}
+	})
+
+	t.Run("rejects an invalid relay_service mode", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.RelayService = "sometimes"
+		err := cfg.Validate()
+		if err == nil {
+			t.Fatal("expected an error for an invalid relay_service value")
+		}
+		if !strings.Contains(err.Error(), "relay_service") {
+			t.Errorf("error should name the offending field, got %v", err)
+		}
+	})
+
+	t.Run("accepts each valid relay_service mode", func(t *testing.T) {
+		for _, mode := range []string{"", "auto", "on", "off"} {
+			cfg := DefaultConfig()
+			cfg.Network.RelayService = mode
+			if err := cfg.Validate(); err != nil {
+				t.Errorf("relay_service = %q should be valid, got %v", mode, err)
+			}
+		}
+	})
+
+	t.Run("rejects a malformed relay limit", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.RelayLimits.BufferSize = "twelve"
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected an error for a malformed buffer_size")
+		}
+	})
+}

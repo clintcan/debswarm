@@ -120,22 +120,28 @@ narrower: concrete, verified gaps in what exists today.
    WAN. The fix belongs inside `downloadPackage` (nil the mirror source for the
    parallel downloader and skip the final mirror `Stream`), but it touches the
    racing path — deferred to keep the offline change low-risk.
-2. **Cross-NAT P2P doesn't work; docs claim it does.** Only the relay client
-   transport and hole punching are enabled — no AutoRelay reservation logic,
-   and no debswarm node ever runs the relay service, so DCUtR has no relayed
-   connection to coordinate through. Two NAT'd peers can never connect.
-   **`EnableHolePunching()` is therefore effectively dead code**: it is enabled
-   and advertised, but DCUtR only fires over an existing relayed connection, and
-   nothing ever obtains the reservation that would create one. A second problem
-   sits behind the first — even with AutoRelay on, *there is no relay to reserve
-   on*, since no debswarm node runs the relay service and the libp2p bootstrap
-   nodes do not offer open circuit-v2 reservations. **Designed in
-   `docs/design/cross-nat-p2p.md`** (AutoRelay + `relay_service = auto` on
-   publicly-reachable nodes + `relay_peers` static config; relays are used only
-   to hole-punch, never to carry package bytes; includes a real NAT test topology,
-   because the current Docker-bridge soak cannot see this bug at all).
-   `docs/comparison.md` states this honestly today (Relay Fallback: "Partial —
-   client transport only") and stays that way until the implementation lands.
+2. **Cross-NAT P2P doesn't work; docs claim it does.** ✅ **Done (Phase 1,
+   v1.40.0).** The chain was broken: only the relay client transport and hole
+   punching were enabled — no AutoRelay reservation logic, and no debswarm node
+   ever ran the relay service, so DCUtR had no relayed connection to coordinate
+   through and **`EnableHolePunching()` was effectively dead code**. Phase 1
+   closes it: **AutoRelay** now obtains circuit-v2 reservations (static
+   `relay_peers` or DHT peer-source), publicly-reachable nodes run a bounded
+   **relay service** (`relay_service = "auto"`, on when AutoNAT reports public),
+   and `force_reachability` lets a known-NAT'd node reserve immediately when
+   AutoNAT can't reach a verdict in a small swarm. Relays coordinate hole punches
+   only — never carry package bytes (circuit-v2 limits are a feature). New metrics
+   (`debswarm_relay_reservations`, `debswarm_holepunch_total`,
+   `debswarm_connections{type}`, `debswarm_relay_service_active`,
+   `debswarm_reachability`) make the path observable. Proven by a real NAT test
+   topology (`test/nat/`) the ordinary Docker-bridge soak cannot see: two peers
+   behind separate `iptables MASQUERADE` gateways, asserting the relay accepts a
+   reservation from each NAT'd peer, with a `--baseline` (AutoRelay-off) run that
+   must fail. `docs/comparison.md` and `docs/configuration.md` now describe the
+   working relay/hole-punch path. Designed in `docs/design/cross-nat-p2p.md`.
+   *Follow-up (Phase 2, not yet done): a default public relay/bootstrap node
+   debswarm ships so out-of-the-box NAT'd peers have a relay to reserve on without
+   configuring `relay_peers`.*
 3. **No signed apt repository for debswarm itself.** ✅ **Done** (v1.39.0). The
    signed apt repo is **live at `https://clintcan.github.io/debswarm/`** —
    `apt-get install debswarm` works, the repo is GPG-signed, carries

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/multiformats/go-multiaddr"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -178,6 +179,137 @@ type NetworkConfig struct {
 	// NAT traversal settings
 	EnableRelay        *bool `toml:"enable_relay"`         // Use circuit relays to reach NAT'd peers (default: true)
 	EnableHolePunching *bool `toml:"enable_hole_punching"` // Enable NAT hole punching (default: true)
+
+	// EnableAutoRelay makes this node reserve a slot on a circuit relay so that
+	// peers behind NAT can be dialed at all. Without a reservation the node never
+	// obtains a /p2p-circuit address, nothing can dial it, and hole punching
+	// (which only triggers over an existing relayed connection) can never fire.
+	// Default: true.
+	EnableAutoRelay *bool `toml:"enable_autorelay"`
+
+	// RelayService controls whether this node runs a circuit-relay v2 service for
+	// other peers: "auto" (default) runs it only when AutoNAT reports us publicly
+	// reachable, "on" always runs it, "off" never does.
+	RelayService string `toml:"relay_service"`
+
+	// RelayPeers are static relays to reserve on, as full multiaddrs including
+	// /p2p/<peer-id>. Required for a private (PSK) swarm, which has no public DHT
+	// to discover relays through. Merged with any relays discovered from the swarm.
+	RelayPeers []string `toml:"relay_peers"`
+
+	// RelayLimits bounds what this node is willing to carry when acting as a relay.
+	RelayLimits RelayLimitsConfig `toml:"relay_limits"`
+
+	// ForceReachability overrides AutoNAT's reachability detection:
+	//   "auto" (default) - let AutoNAT decide
+	//   "private"        - assert we are behind NAT; makes AutoRelay reserve a
+	//                      relay slot immediately instead of waiting for AutoNAT,
+	//                      which in a small swarm may never gather enough samples
+	//   "public"         - assert we are publicly reachable
+	// Most deployments want "auto". "private" is useful on a node you know is
+	// NAT'd (or in a small private/PSK swarm where AutoNAT has too few peers to
+	// reach a verdict); "public" suits a relay/seed on a known-public address.
+	ForceReachability string `toml:"force_reachability"`
+}
+
+// Reachability override modes.
+const (
+	ReachabilityAuto    = "auto"
+	ReachabilityPublic  = "public"
+	ReachabilityPrivate = "private"
+)
+
+// GetForceReachability returns the reachability override, defaulting to "auto".
+func (c *NetworkConfig) GetForceReachability() string {
+	if c.ForceReachability == "" {
+		return ReachabilityAuto
+	}
+	return strings.ToLower(strings.TrimSpace(c.ForceReachability))
+}
+
+// RelayLimitsConfig bounds the resources a relaying node donates to the swarm.
+// The defaults are deliberately small: a relayed connection exists only long
+// enough for two peers to hole-punch a direct path, never to carry a package.
+type RelayLimitsConfig struct {
+	MaxReservations int    `toml:"max_reservations"` // concurrent peers we vouch for (default 128)
+	MaxCircuits     int    `toml:"max_circuits"`     // concurrent relayed connections (default 16)
+	BufferSize      string `toml:"buffer_size"`      // per-circuit data cap (default "128KB")
+	Duration        string `toml:"duration"`         // per-circuit lifetime (default "2m")
+}
+
+// Relay service modes.
+const (
+	RelayServiceAuto = "auto"
+	RelayServiceOn   = "on"
+	RelayServiceOff  = "off"
+)
+
+// Relay limit defaults. These mirror circuit-relay v2's own defaults, which are
+// sized for hole-punch coordination rather than bulk transfer.
+const (
+	DefaultRelayMaxReservations = 128
+	DefaultRelayMaxCircuits     = 16
+	DefaultRelayBufferSize      = 128 * 1024
+	DefaultRelayDuration        = 2 * time.Minute
+)
+
+// IsAutoRelayEnabled reports whether the node should obtain a relay reservation.
+// Defaults to true when unset.
+func (c *NetworkConfig) IsAutoRelayEnabled() bool {
+	if c.EnableAutoRelay == nil {
+		return true
+	}
+	return *c.EnableAutoRelay
+}
+
+// GetRelayService returns the relay-service mode, defaulting to "auto".
+func (c *NetworkConfig) GetRelayService() string {
+	if c.RelayService == "" {
+		return RelayServiceAuto
+	}
+	return strings.ToLower(strings.TrimSpace(c.RelayService))
+}
+
+// RelayMaxReservations returns the reservation cap, defaulting when unset.
+func (c *NetworkConfig) RelayMaxReservations() int {
+	if c.RelayLimits.MaxReservations <= 0 {
+		return DefaultRelayMaxReservations
+	}
+	return c.RelayLimits.MaxReservations
+}
+
+// RelayMaxCircuits returns the concurrent-circuit cap, defaulting when unset.
+func (c *NetworkConfig) RelayMaxCircuits() int {
+	if c.RelayLimits.MaxCircuits <= 0 {
+		return DefaultRelayMaxCircuits
+	}
+	return c.RelayLimits.MaxCircuits
+}
+
+// RelayBufferSizeBytes returns the per-circuit data cap in bytes, defaulting when
+// unset or unparseable.
+func (c *NetworkConfig) RelayBufferSizeBytes() int64 {
+	if c.RelayLimits.BufferSize == "" {
+		return DefaultRelayBufferSize
+	}
+	n, err := ParseSize(c.RelayLimits.BufferSize)
+	if err != nil || n <= 0 {
+		return DefaultRelayBufferSize
+	}
+	return n
+}
+
+// RelayDuration returns the per-circuit lifetime, defaulting when unset or
+// unparseable.
+func (c *NetworkConfig) RelayDuration() time.Duration {
+	if c.RelayLimits.Duration == "" {
+		return DefaultRelayDuration
+	}
+	d, err := time.ParseDuration(c.RelayLimits.Duration)
+	if err != nil || d <= 0 {
+		return DefaultRelayDuration
+	}
+	return d
 }
 
 // GetConnectivityMode returns the connectivity mode with a default of "auto"
@@ -1094,6 +1226,61 @@ func (c *Config) Validate() error {
 			errs = append(errs, ValidationError{
 				Field:   fmt.Sprintf("network.bootstrap_peers[%d]", i),
 				Message: fmt.Sprintf("invalid multiaddr %q: %v", addr, err),
+			})
+		}
+	}
+
+	// Validate relay peers. These must carry a /p2p/<peer-id> component: a relay
+	// address without a peer ID cannot be reserved on.
+	for i, addr := range c.Network.RelayPeers {
+		if addr == "" {
+			continue
+		}
+		if _, err := peer.AddrInfoFromString(addr); err != nil {
+			errs = append(errs, ValidationError{
+				Field: fmt.Sprintf("network.relay_peers[%d]", i),
+				Message: fmt.Sprintf("invalid relay multiaddr %q: %v "+
+					"(must be a full address including /p2p/<peer-id>)", addr, err),
+			})
+		}
+	}
+
+	// Validate relay service mode
+	switch c.Network.GetRelayService() {
+	case RelayServiceAuto, RelayServiceOn, RelayServiceOff:
+	default:
+		errs = append(errs, ValidationError{
+			Field: "network.relay_service",
+			Message: fmt.Sprintf("invalid value %q (must be %q, %q, or %q)",
+				c.Network.RelayService, RelayServiceAuto, RelayServiceOn, RelayServiceOff),
+		})
+	}
+
+	// Validate reachability override
+	switch c.Network.GetForceReachability() {
+	case ReachabilityAuto, ReachabilityPublic, ReachabilityPrivate:
+	default:
+		errs = append(errs, ValidationError{
+			Field: "network.force_reachability",
+			Message: fmt.Sprintf("invalid value %q (must be %q, %q, or %q)",
+				c.Network.ForceReachability, ReachabilityAuto, ReachabilityPublic, ReachabilityPrivate),
+		})
+	}
+
+	// Validate relay limit strings when explicitly set (empty means default).
+	if s := c.Network.RelayLimits.BufferSize; s != "" {
+		if _, err := ParseSize(s); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "network.relay_limits.buffer_size",
+				Message: fmt.Sprintf("invalid size %q: %v", s, err),
+			})
+		}
+	}
+	if s := c.Network.RelayLimits.Duration; s != "" {
+		if _, err := time.ParseDuration(s); err != nil {
+			errs = append(errs, ValidationError{
+				Field:   "network.relay_limits.duration",
+				Message: fmt.Sprintf("invalid duration %q: %v", s, err),
 			})
 		}
 	}

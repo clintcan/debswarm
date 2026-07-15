@@ -1,6 +1,6 @@
 # Design: cross-NAT P2P (relay reservations, hole punching, relay service)
 
-**Status:** Proposed
+**Status:** Implemented (Phase 1, v1.40.0)
 **Author:** debswarm maintainers
 **Date:** 2026-07-15
 **Backlog item:** Product gaps #2 — "Cross-NAT P2P doesn't work; docs claim it does"

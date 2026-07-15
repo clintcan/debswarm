@@ -198,6 +198,16 @@ func runSeedImport(args []string, opts *seedImportOptions) error {
 			PreferQUIC:         true,
 			EnableRelay:        cfg.Network.IsRelayEnabled(),
 			EnableHolePunching: cfg.Network.IsHolePunchingEnabled(),
+			// Cross-NAT: a seeding node is often the publicly-reachable one, so it
+			// is exactly the node that should be relaying for NAT'd peers.
+			EnableAutoRelay:      cfg.Network.IsAutoRelayEnabled(),
+			RelayService:         cfg.Network.GetRelayService(),
+			RelayPeers:           cfg.Network.RelayPeers,
+			RelayMaxReservations: cfg.Network.RelayMaxReservations(),
+			RelayMaxCircuits:     cfg.Network.RelayMaxCircuits(),
+			RelayBufferSize:      cfg.Network.RelayBufferSizeBytes(),
+			RelayDuration:        cfg.Network.RelayDuration(),
+			ForceReachability:    cfg.Network.GetForceReachability(),
 		}
 
 		p2pNode, err = p2p.New(ctx, p2pCfg, logger)

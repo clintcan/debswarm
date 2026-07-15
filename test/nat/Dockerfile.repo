@@ -1,0 +1,22 @@
+# The "mirror" for the NAT test: a tiny flat apt repository, built at image-build
+# time (when the build has internet) so the test itself needs no upstream access.
+#
+# It serves exactly one package. The test stops this container partway through, so
+# that the only remaining source for that package is the other NAT'd peer — which
+# is what makes the P2P assertion unambiguous rather than "maybe it came from the
+# mirror".
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends dpkg-dev apt-utils python3 \
+ && mkdir -p /repo \
+ && cd /repo \
+ && apt-get download hello \
+ && dpkg-scanpackages . /dev/null > Packages \
+ && gzip -9c Packages > Packages.gz \
+ && apt-ftparchive release . > Release \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+EXPOSE 80
+CMD ["python3", "-m", "http.server", "80"]

@@ -71,8 +71,16 @@ Network settings for P2P communication and the HTTP proxy.
 | `connectivity_mode` | string | `"auto"` | Connectivity mode: `"auto"`, `"lan_only"`, or `"online_only"`. |
 | `connectivity_check_interval` | string | `"30s"` | How often to check connectivity in auto mode. |
 | `connectivity_check_url` | string | `"http://deb.debian.org/debian/"` | URL probed to detect internet access. Uses plain HTTP so the check reflects mirror reachability, not TLS trust. |
-| `enable_relay` | boolean | `true` | Enable circuit relay to reach NAT'd peers via relay nodes. (v1.13+) |
-| `enable_hole_punching` | boolean | `true` | Enable direct NAT hole punching for peer-to-peer connections. (v1.13+) |
+| `enable_relay` | boolean | `true` | Enable the circuit-relay transport (dial and be dialed via a relay). (v1.13+) |
+| `enable_autorelay` | boolean | `true` | Reserve a slot on a relay so peers behind NAT can reach this node at all. Without a reservation there is no `/p2p-circuit` address and hole punching can never fire. |
+| `enable_hole_punching` | boolean | `true` | Upgrade a relayed connection to a direct one (DCUtR). The direct connection carries package bytes; relays only coordinate the punch. (v1.13+) |
+| `relay_service` | string | `"auto"` | Run a circuit-relay service for other peers: `auto` (only when AutoNAT says we're public), `on` (always), `off` (never). |
+| `relay_peers` | string[] | `[]` | Static relays to reserve on (full multiaddrs incl. `/p2p/<peer-id>`), in addition to any discovered from the swarm. **Required for a private (PSK) swarm**, which has no public DHT to discover relays through. |
+| `force_reachability` | string | `"auto"` | Override AutoNAT: `auto` (detect), `private` (assert NAT'd — reserves a relay slot immediately instead of waiting for a verdict a small swarm may never reach), `public` (assert reachable). |
+| `relay_limits.max_reservations` | int | `128` | When relaying: concurrent peers vouched for. |
+| `relay_limits.max_circuits` | int | `16` | When relaying: concurrent relayed connections. |
+| `relay_limits.buffer_size` | string | `"128KB"` | When relaying: per-circuit data cap (sized for hole-punch coordination, not transfer). |
+| `relay_limits.duration` | string | `"2m"` | When relaying: per-circuit lifetime. |
 
 **Example:**
 ```toml
@@ -86,9 +94,13 @@ connectivity_mode = "auto"           # "auto", "lan_only", "online_only"
 connectivity_check_interval = "30s"
 # connectivity_check_url = "http://deb.debian.org/debian/"
 
-# NAT traversal (v1.13+)
-enable_relay = true         # Use circuit relays to reach NAT'd peers
-enable_hole_punching = true # Enable direct NAT hole punching
+# NAT traversal (v1.13+; cross-NAT relay reservations added later)
+enable_relay = true          # circuit-relay transport
+enable_autorelay = true      # reserve a relay slot (required for hole punching to fire)
+enable_hole_punching = true  # upgrade a relayed connection to a direct one
+relay_service = "auto"       # relay for others only when publicly reachable
+# relay_peers = ["/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooW..."]  # required for PSK swarms
+# force_reachability = "auto"  # "private" on a known-NAT'd node; "public" on a relay/seed
 
 # Bootstrap peers (libp2p public nodes)
 bootstrap_peers = [
@@ -137,12 +149,33 @@ Mutating cache-management API routes remain loopback-only regardless.
 
 debswarm uses libp2p's NAT traversal techniques to connect peers behind NAT/firewalls:
 
+For two peers **both behind NAT** to connect, libp2p needs a chain: one peer
+**reserves a slot on a relay** (gaining a `/p2p-circuit` address), the other dials
+that address to form a *relayed* connection, and **hole punching (DCUtR)** then
+upgrades it to a **direct** connection over which packages actually transfer. The
+relay only coordinates the punch — circuit-relay v2's limits are far too small to
+carry a package, by design.
+
 | Option | Description |
 |--------|-------------|
-| `enable_relay` | Allows connecting to NAT'd peers via public relay nodes. The relay forwards traffic when direct connection fails. This is client-only - debswarm uses relays but doesn't act as one. |
-| `enable_hole_punching` | Attempts to establish direct connections through NAT using coordinated hole punching. More efficient than relays when successful. |
+| `enable_relay` | The circuit-relay **transport**: lets this node dial a `/p2p-circuit` address and be reached through a relay it holds a reservation with. On its own it obtains **no** reservation. |
+| `enable_autorelay` | Obtains the reservation. **This is the step that makes a NAT'd node reachable at all** — without it there is no circuit address, nothing can dial the node, and hole punching never fires. |
+| `enable_hole_punching` | Runs DCUtR over the relayed connection to establish a direct one. The direct connection carries the package; the relay does not. |
+| `relay_service` | Whether this node **runs a relay** for others. `auto` (default) turns it on only when AutoNAT reports the node is publicly reachable — so a public seed/cache node helps the swarm, while a NAT'd node does not waste its uplink. Relaying is bounded by `relay_limits`. |
+| `relay_peers` | Explicit relays to reserve on. **Required for a private (PSK) swarm**, which has no public DHT to discover relays through — point it at a public node you control. |
+| `force_reachability` | Skip AutoNAT's guessing. In a small swarm AutoNAT may never gather enough dial-back samples to conclude a node is private, so AutoRelay never reserves; setting `private` on a node you know is NAT'd makes it reserve immediately. |
 
-Both are enabled by default. Disable if you're on a restricted network that blocks these techniques.
+All default to sensible values (`enable_*` on, `relay_service = "auto"`,
+`force_reachability = "auto"`). A node behind NAT gets a relay reservation and
+hole-punches automatically; a publicly-reachable node relays for the swarm within
+bounded limits. **Trust is unchanged:** a relay carries an end-to-end-encrypted
+stream it cannot read, and every byte is still SHA256-verified against the signed
+index, so a malicious relay cannot poison the swarm — at most it can decline to
+relay.
+
+> **Private (PSK) swarms:** there is no public DHT, so relays cannot be discovered.
+> Set `relay_peers` to a public node you run (and give that node `relay_service =
+> "on"` + `force_reachability = "public"`).
 
 **Notes:**
 - The `listen_port` should be accessible through your firewall for incoming P2P connections

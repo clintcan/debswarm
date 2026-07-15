@@ -327,6 +327,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		// NAT traversal configuration
 		EnableRelay:        cfg.Network.IsRelayEnabled(),
 		EnableHolePunching: cfg.Network.IsHolePunchingEnabled(),
+		// Cross-NAT: reserve a relay slot (without which hole punching can never
+		// fire) and, when publicly reachable, relay for other peers.
+		EnableAutoRelay:      cfg.Network.IsAutoRelayEnabled(),
+		RelayService:         cfg.Network.GetRelayService(),
+		RelayPeers:           cfg.Network.RelayPeers,
+		RelayMaxReservations: cfg.Network.RelayMaxReservations(),
+		RelayMaxCircuits:     cfg.Network.RelayMaxCircuits(),
+		RelayBufferSize:      cfg.Network.RelayBufferSizeBytes(),
+		RelayDuration:        cfg.Network.RelayDuration(),
+		ForceReachability:    cfg.Network.GetForceReachability(),
 		// Per-peer rate limiting configuration
 		PerPeerUploadRate:   cfg.Transfer.PerPeerUploadRateBytes(),
 		PerPeerDownloadRate: cfg.Transfer.PerPeerDownloadRateBytes(),
