@@ -1736,6 +1736,26 @@ func TestNetworkConfig_RelayLimits(t *testing.T) {
 	})
 }
 
+func TestNetworkConfig_RelayedTransferMaxBytes(t *testing.T) {
+	tests := []struct {
+		name string
+		in   int64
+		want int64
+	}{
+		{"default (unset) disables relayed transfers", 0, 0},
+		{"positive cap passes through", 262144, 262144},
+		{"negative clamps to disabled", -1, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := NetworkConfig{RelayedTransferMax: tt.in}
+			if got := c.RelayedTransferMaxBytes(); got != tt.want {
+				t.Errorf("RelayedTransferMaxBytes() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidate_RelayConfig(t *testing.T) {
 	const validRelay = "/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooWDpJ7As7BWAwRMfu1VU2WCqNjvq387JEYKDBj4kx6nXTN"
 

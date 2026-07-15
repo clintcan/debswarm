@@ -208,6 +208,7 @@ func runSeedImport(args []string, opts *seedImportOptions) error {
 			RelayBufferSize:      cfg.Network.RelayBufferSizeBytes(),
 			RelayDuration:        cfg.Network.RelayDuration(),
 			ForceReachability:    cfg.Network.GetForceReachability(),
+			RelayedTransferMax:   cfg.Network.RelayedTransferMaxBytes(),
 		}
 
 		p2pNode, err = p2p.New(ctx, p2pCfg, logger)

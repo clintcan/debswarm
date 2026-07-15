@@ -54,6 +54,17 @@ enabled = false            # ditto: fleet is a LAN mechanism
 [cache]
 path = "/var/cache/debswarm"
 EOF
+  # relay-data mode (run.sh --relay-data): raise the per-circuit data cap so this
+  # relay will carry small package transfers for symmetric-NAT'd peers that cannot
+  # hole-punch. Left unset, the relay stays coordinate-only (128KB default).
+  if [ -n "${RELAY_BUFFER_SIZE:-}" ]; then
+    cat >> /etc/debswarm/config.toml <<EOF
+
+[network.relay_limits]
+buffer_size = "${RELAY_BUFFER_SIZE}"
+EOF
+    echo "[relay] relay_limits.buffer_size = ${RELAY_BUFFER_SIZE} (relay will carry small transfers)"
+  fi
   echo "[relay] starting debswarm (relay service + DHT bootstrap)"
   debswarm daemon --log-level debug &
   DAEMON_PID=$!
@@ -110,6 +121,7 @@ relay_peers = ["${RELAY_ADDR_TCP}"]
 enable_autorelay = ${AUTORELAY}
 relay_service = "off"           # we are behind NAT; relaying for others is useless
 force_reachability = "private"  # we ARE behind NAT; make AutoRelay reserve at once
+relayed_transfer_max_bytes = ${RELAYED_TRANSFER_MAX:-0}  # >0 (relay-data mode) fetches small pkgs over the relay when the punch fails
 
 [privacy]
 enable_mdns = false        # the peers are on different subnets anyway, but be sure

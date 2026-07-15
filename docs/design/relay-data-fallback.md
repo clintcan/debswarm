@@ -1,10 +1,43 @@
 # Design: relayed-transfer fallback for symmetric-NAT'd peers
 
-**Status:** Proposed
+**Status:** Implemented (v1.40.0)
 **Author:** debswarm maintainers
 **Date:** 2026-07-15
 **Follow-up to:** `docs/design/cross-nat-p2p.md` (cross-NAT P2P Phase 1) — closes the
 gap that Phase 1 surfaced but did not solve.
+
+## Implementation notes (as shipped)
+
+The design below is the plan; this section records what actually landed and what was
+deferred, so the doc stays honest.
+
+- **Config:** `[network] relayed_transfer_max_bytes` (int, default `0`) with accessor
+  `NetworkConfig.RelayedTransferMaxBytes()` (clamps negatives to 0), wired into
+  `p2p.Config.RelayedTransferMax` in both `daemon.go` and `seed.go`.
+- **Client gate (`internal/p2p`):** `Node.DownloadRange` classifies the path with
+  `onlyRelayedConn` (true when every connection to the peer is `Stat().Limited`).
+  `relayedTransferSkipped` refuses a relay-only peer when the cap is 0 — returning an
+  error so the caller falls back to the mirror, without penalizing the peer's score.
+  Otherwise the stream is opened with `network.WithAllowLimitedConn`, and after the
+  size header `relayedSizeExceeded` resets the stream and refuses when `size > cap`.
+  Both decisions are pure helpers in `relay.go`, unit-tested in `relay_transfer_test.go`;
+  the pre-connect guard also treats `network.Limited` connectedness as "connected".
+- **Effective cap:** the client bound is `relayed_transfer_max_bytes`; the relay's
+  per-circuit `buffer_size` (circuit-v2 `Data` limit) is an independent hard ceiling
+  the relay enforces, so the effective cap is `min(client, relay)` with no negotiation.
+- **Metrics shipped:** `debswarm_bytes_from_relay_total` (a subset of the existing
+  `{source="peer"}` bytes) and `debswarm_relayed_transfer_total{result="ok"|"too_large"}`.
+- **Racing:** unchanged — a relayed peer participates through the existing `PeerSource`
+  closure, so it joins the P2P-vs-mirror race automatically; no source-selection code
+  changed.
+- **NAT rig:** `test/nat` gains an opt-in `--relay-data` mode (enables the feature on
+  the peers and raises the relay `buffer_size`) whose Tier 2 asserts `bytes_from_relay > 0`
+  — a completed cross-NAT fetch without a hole-punchable gateway. The default rig run is
+  unchanged.
+- **Deferred:** the relay-side `debswarm_relay_bytes_carried_total` (the
+  `relayMetricsTracer.BytesTransferred` hook is still a no-op) and the `result="failed"`
+  label; a `config wizard` Private-Swarm default; and per-peer/day byte quotas for a
+  public opt-in relay (see Risks).
 
 ## Context
 

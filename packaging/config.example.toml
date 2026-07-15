@@ -92,12 +92,25 @@ connectivity_check_interval = "30s"
 
 # relay_limits: bounds on what this node carries when acting as a relay. The
 # defaults mirror circuit-relay v2 and are sized for hole-punch coordination, not
-# bulk transfer, so they are deliberately small.
+# bulk transfer, so they are deliberately small. Raising buffer_size lets this
+# relay carry small package transfers for symmetric-NAT'd peers that cannot
+# hole-punch — at the cost of YOUR bandwidth. Do this on a relay you run for your
+# own (e.g. PSK) swarm; leave it at the default on a public relay.
 # [network.relay_limits]
 # max_reservations = 128    # concurrent peers we vouch for
 # max_circuits     = 16     # concurrent relayed connections
 # buffer_size      = "128KB" # per-circuit data cap
 # duration         = "2m"   # per-circuit lifetime
+
+# relayed_transfer_max_bytes: max package size (bytes) this node will fetch over a
+# RELAYED connection when no direct/hole-punched path exists — e.g. when both peers
+# are behind symmetric NATs that DCUtR cannot punch. 0 (default) disables relayed
+# transfers entirely: a relay-only peer is skipped and the download falls back to
+# the mirror, so relays only ever coordinate hole punches, never carry bytes. Set a
+# small positive value (e.g. 262144 = 256 KiB) on a private swarm to let two
+# symmetric-NAT'd peers exchange small packages over the relay; raise the relay's
+# relay_limits.buffer_size to match. See docs/design/relay-data-fallback.md.
+# relayed_transfer_max_bytes = 0
 
 # Bootstrap peers for DHT initialization
 # These are libp2p public bootstrap nodes; add your own for private networks

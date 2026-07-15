@@ -78,6 +78,11 @@ services:
         ipv4_address: 11.11.11.10
     volumes:
       - shared:/shared
+    environment:
+      # run.sh --relay-data raises this so the relay will carry small package
+      # transfers for symmetric-NAT'd peers that cannot hole-punch. Empty (default)
+      # keeps the relay coordinate-only.
+      RELAY_BUFFER_SIZE: ${RELAY_BUFFER_SIZE:-}
     command: ["relay"]
 
   # NAT gateway for peer-a. Dual-homed; MASQUERADEs lan-a out onto public.
@@ -133,6 +138,9 @@ services:
       GATEWAY: 192.168.10.2
       # run.sh --baseline forces this false, which MUST make the test fail.
       AUTORELAY: ${AUTORELAY:-true}
+      # run.sh --relay-data sets this >0 to allow fetching a small package over a
+      # relayed connection when the hole punch fails. 0 (default) = disabled.
+      RELAYED_TRANSFER_MAX: ${RELAYED_TRANSFER_MAX:-0}
     command: ["peer"]
 
   peer-b:
@@ -150,4 +158,5 @@ services:
     environment:
       GATEWAY: 192.168.20.2
       AUTORELAY: ${AUTORELAY:-true}
+      RELAYED_TRANSFER_MAX: ${RELAYED_TRANSFER_MAX:-0}
     command: ["peer"]

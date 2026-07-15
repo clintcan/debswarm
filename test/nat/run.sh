@@ -16,24 +16,36 @@
 #   two NAT'd peers could never connect. Tier 1 passing + baseline failing proves
 #   both that the fix works and that the test can detect its absence.
 #
-#   TIER 2 — the full transfer (best-effort; reported, not asserted). peer-b
+#   TIER 2 — cross-NAT discovery + a DCUtR hole-punch attempt (asserted). peer-b
 #   caches a package the mirror then STOPS serving, and peer-a fetches it — so its
-#   only possible source is peer-b, across two NATs, via a hole punch. This needs
-#   the peer<->relay connection to stay up through the reservation-to-transfer
-#   gap. On real Linux (and CI) it does. On Docker Desktop for Windows the
-#   LinuxKit/WSL2 NAT drops the idle connection at ~28s (QUIC idle timeout /
-#   conntrack expiry — NOT a debswarm behaviour; nothing in debswarm closes
-#   connections on that cadence), so Tier 2 is reported as environment-limited
-#   there rather than failing the run.
+#   only possible source is peer-b, across two NATs. peer-a must DISCOVER peer-b
+#   through the DHT (via its circuit address) and ATTEMPT a hole punch; both were
+#   structurally impossible before Phase 1. The punch itself FAILS on this rig's
+#   symmetric (iptables MASQUERADE) gateways — fundamental to DCUtR, not a bug — so
+#   the completed transfer is only reported, not asserted, in the default run.
+#   With --relay-data the completed transfer IS asserted: relayed transfers are
+#   enabled, so the small package rides the relay even though the punch fails,
+#   proving an end-to-end cross-NAT fetch without a hole-punchable gateway.
 #
-#   ./run.sh              normal run  — Tier 1 must PASS
-#   ./run.sh --baseline   AutoRelay off — Tier 1 must FAIL (proves detection)
+#   ./run.sh               normal run   — Tier 1 must PASS
+#   ./run.sh --baseline    AutoRelay off — Tier 1 must FAIL (proves detection)
+#   ./run.sh --relay-data  enable relayed transfers — Tier 2 must COMPLETE the
+#                          transfer OVER THE RELAY despite the failed punch, so the
+#                          symmetric-NAT rig can prove an end-to-end cross-NAT fetch
+#                          without a hole-punchable gateway (asserts bytes_from_relay>0).
 #
 set -uo pipefail
 cd "$(dirname "$0")"
 
 BASELINE=0
-[ "${1:-}" = "--baseline" ] && BASELINE=1
+RELAY_DATA=0
+for arg in "$@"; do
+  case "$arg" in
+    --baseline)   BASELINE=1 ;;
+    --relay-data) RELAY_DATA=1 ;;
+    *) echo "unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
 
 FAILED=0
 ok()   { echo "  ✅ $*"; }
@@ -73,6 +85,11 @@ if [ "$BASELINE" = "1" ]; then
   export AUTORELAY=false
 else
   export AUTORELAY=true
+fi
+if [ "$RELAY_DATA" = "1" ]; then
+  echo "  ▶ RELAY-DATA MODE: peers may fetch small packages over the relay (relayed_transfer_max_bytes>0)"
+  export RELAYED_TRANSFER_MAX=262144   # 256 KiB — comfortably covers 'hello'
+  export RELAY_BUFFER_SIZE=1MB         # raise the relay's per-circuit data cap to match
 fi
 docker compose up -d --build >/dev/null 2>&1 || { echo "compose up failed"; docker compose logs --tail 30; exit 1; }
 ok "topology up (peer-a and peer-b behind separate NATs)"
@@ -167,17 +184,23 @@ note "mirror stopped — peer-b is the only source of hello"
 # Drive discovery + the punch by fetching on peer-a with no mirror. Poll (re-triggering
 # the fetch) until peer-a BOTH discovers peer-b as a provider AND attempts a hole punch.
 # Generous budget: DHT propagation across NATs is not instant. These two are asserted.
-GOT=0; FOUND=0; HP=0; P2P_BYTES=0
+GOT=0; FOUND=0; HP=0; P2P_BYTES=0; RELAY_BYTES=0
 for _ in $(seq 1 6); do
   docker exec nat-peer-a apt-get clean 2>/dev/null
   docker exec nat-peer-a timeout 40 apt-get install -y --download-only --reinstall hello >/dev/null 2>&1 && GOT=1
   FOUND=$(docker logs nat-peer-a 2>&1 | grep -c 'Found P2P providers')
   HP=$(holepunch_attempts nat-peer-a)
   P2P_BYTES=$(stat_field nat-peer-a bytes_from_p2p)
-  [ "${FOUND:-0}" -ge 1 ] && [ "${HP:-0}" -ge 1 ] && break
+  RELAY_BYTES=$(metric nat-peer-a 'debswarm_bytes_from_relay_total')
+  if [ "$RELAY_DATA" = "1" ]; then
+    # Also wait for the package to actually arrive over the relay.
+    [ "${FOUND:-0}" -ge 1 ] && [ "${HP:-0}" -ge 1 ] && [ "${RELAY_BYTES%.*}" -ge 1 ] && break
+  else
+    [ "${FOUND:-0}" -ge 1 ] && [ "${HP:-0}" -ge 1 ] && break
+  fi
   sleep 8
 done
-note "peer-a: got=$GOT bytes_from_p2p=$P2P_BYTES holepunch_attempts=$HP found_provider_events=$FOUND"
+note "peer-a: got=$GOT bytes_from_p2p=$P2P_BYTES bytes_from_relay=$RELAY_BYTES holepunch_attempts=$HP found_provider_events=$FOUND"
 
 # ASSERTED: the cross-NAT path must reach discovery and a hole-punch attempt. Both were
 # structurally impossible before Phase 1 (no reservation → no circuit addr → nothing to
@@ -189,16 +212,22 @@ note "peer-a: got=$GOT bytes_from_p2p=$P2P_BYTES holepunch_attempts=$HP found_pr
   && ok "DCUtR hole punch was ATTEMPTED (the path that was entirely dead before Phase 1 now fires)" \
   || bad "no hole-punch attempt recorded — DCUtR did not fire"
 
-# The transfer itself only completes over a HOLE-PUNCHABLE NAT; report, don't assert.
-if [ "$GOT" = "1" ] && [ "${P2P_BYTES:-0}" -gt 0 ]; then
+# The transfer itself only completes over a HOLE-PUNCHABLE NAT — UNLESS relayed
+# transfers are enabled (--relay-data), which let the package ride the relay even
+# when the punch fails. So assert completion in relay-data mode; otherwise report.
+if [ "$RELAY_DATA" = "1" ]; then
+  [ "${RELAY_BYTES%.*}" -ge 1 ] 2>/dev/null \
+    && ok "relayed transfer COMPLETED: peer-a fetched hello over the relay despite the failed punch (bytes_from_relay=$RELAY_BYTES)" \
+    || bad "relay-data mode: no bytes_from_relay — the relayed-transfer fallback did not carry the package"
+elif [ "$GOT" = "1" ] && [ "${P2P_BYTES:-0}" -gt 0 ]; then
   ok "BONUS: full cross-NAT P2P transfer completed (this gateway was hole-punchable)"
 else
   note "Full transfer NOT completed here (expected on this rig): the gateways are plain iptables"
   note "MASQUERADE = address-dependent (symmetric) NATs, which DCUtR cannot punch — peer-a's dial to"
   note "peer-b's public ip:port is refused because the mapping is bound to the relay, not to peer-a."
-  note "debswarm relays coordinate the punch but never carry bytes, so a failed punch falls back to"
-  note "the mirror (stopped). This is symmetric NAT + hole punching, NOT a debswarm bug; a completed"
-  note "transfer needs a hole-punchable (endpoint-independent / full-cone) gateway."
+  note "debswarm relays coordinate the punch but never carry bytes (by default), so a failed punch"
+  note "falls back to the mirror (stopped). This is symmetric NAT + hole punching, NOT a debswarm bug."
+  note "Re-run with --relay-data to carry small packages over the relay and complete the fetch anyway."
 fi
 
 step "RESULT"
