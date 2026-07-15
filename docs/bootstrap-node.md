@@ -12,6 +12,11 @@ A bootstrap node is a publicly accessible debswarm instance that:
 
 Bootstrap nodes don't require special software - any debswarm instance can serve as one.
 
+> **Deploying a relay?** If your goal is to let peers *behind NAT* reach each other
+> (not just seed the DHT), see [Deploying a Public Relay Node (DigitalOcean / AWS)](relay-node.md).
+> A relay builds on this guide, adding the circuit-relay service config and the
+> cloud-provider firewall/IP specifics.
+
 ## Requirements
 
 ### Server Requirements
