@@ -104,6 +104,11 @@ type Node struct {
 	relayService     *relay.Relay
 	relayServiceMode string          // auto | on | off
 	relayResources   relay.Resources // bounds on what we carry for others
+
+	// relayedTransferMax > 0 permits fetching a package over a relayed (Limited)
+	// connection, bounded to this many bytes, when the peer has no direct path
+	// (e.g. both peers symmetric-NAT'd). 0 = never carry package bytes over a relay.
+	relayedTransferMax int64
 }
 
 // ContentGetter is a function that retrieves content by hash
@@ -158,6 +163,12 @@ type Config struct {
 	// ForceReachability overrides AutoNAT: "auto" (default), "private" (assert
 	// NAT'd — makes AutoRelay reserve immediately), or "public".
 	ForceReachability string
+
+	// RelayedTransferMax bounds the size in bytes of a transfer this node will
+	// accept over a relayed (circuit-relay) connection when the peer has no direct
+	// path. 0 (default) disables relayed transfers: a relay-only peer is skipped so
+	// the caller falls back to the mirror. See docs/design/relay-data-fallback.md.
+	RelayedTransferMax int64
 
 	// Per-peer rate limiting configuration
 	PerPeerUploadRate   int64   // bytes per second, 0 = auto-calculate from global/expected
@@ -448,6 +459,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		pskEnabled:           len(cfg.PSK) > 0,
 		relayServiceMode:     relayServiceMode(cfg.RelayService),
 		relayResources:       relayResourcesFrom(cfg),
+		relayedTransferMax:   cfg.RelayedTransferMax,
 	}
 
 	// AutoRelay's peer source was handed to libp2p before this Node existed;
@@ -855,8 +867,11 @@ func decodeRangeRequest(r io.Reader) (sha256Hash string, start, end int64, err e
 func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256Hash string, start, end int64) ([]byte, error) {
 	startTime := time.Now()
 
-	// Connect to peer if not already connected
-	if n.host.Network().Connectedness(peerInfo.ID) != network.Connected {
+	// Connect to peer if not already connected. A relayed (Limited) connection
+	// counts as connected here; whether we may actually transfer over it is decided
+	// below, once we know if a direct path exists.
+	connectedness := n.host.Network().Connectedness(peerInfo.ID)
+	if connectedness != network.Connected && connectedness != network.Limited {
 		connectTimeout := n.timeouts.Get(timeouts.OpPeerConnect)
 		connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 
@@ -872,6 +887,24 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		n.timeouts.RecordSuccess(timeouts.OpPeerConnect, time.Since(connectStart))
 	}
 
+	// Decide whether this transfer would ride a relayed (circuit) connection — the
+	// symmetric-NAT fallback. A relayed path is usable only when relayed transfers
+	// are enabled, and then only up to relayedTransferMax bytes (enforced after we
+	// read the size below). See docs/design/relay-data-fallback.md.
+	relayed := n.onlyRelayedConn(peerInfo.ID)
+	if relayedTransferSkipped(relayed, n.relayedTransferMax) {
+		// Relayed transfers disabled (default): never carry package bytes over a
+		// relay. Skip this peer so the caller falls back to the mirror. This is not
+		// the peer's fault, so its score is left untouched.
+		return nil, fmt.Errorf("peer reachable only over a relay and relayed transfers are disabled")
+	}
+	streamCtx := ctx
+	if relayed {
+		// Permit opening a stream over the Limited (relayed) connection; without this
+		// libp2p refuses NewStream on a circuit connection.
+		streamCtx = network.WithAllowLimitedConn(ctx, "debswarm-transfer")
+	}
+
 	// Choose protocol based on whether we need a range
 	proto := ProtocolTransfer
 	if start > 0 || end > 0 {
@@ -879,7 +912,7 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 	}
 
 	// Open stream
-	stream, err := n.host.NewStream(ctx, peerInfo.ID, protocol.ID(proto))
+	stream, err := n.host.NewStream(streamCtx, peerInfo.ID, protocol.ID(proto))
 	if err != nil {
 		n.scorer.RecordFailure(peerInfo.ID, "stream failed")
 		return nil, fmt.Errorf("failed to open stream: %w", err)
@@ -960,6 +993,18 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		return nil, fmt.Errorf("content too large: %d bytes", size)
 	}
 
+	// A relayed transfer is bounded: refuse anything larger than the configured cap
+	// so a relay only ever carries small packages. The relay's own per-circuit Data
+	// budget is an independent hard ceiling; this is the client-side bound. Reset the
+	// stream so the remote stops sending, then fall back to the mirror.
+	if relayedSizeExceeded(relayed, size, n.relayedTransferMax) {
+		if n.metrics != nil {
+			n.metrics.RelayedTransferTotal.WithLabel("too_large").Inc()
+		}
+		_ = stream.Reset()
+		return nil, fmt.Errorf("relayed transfer too large: %d bytes exceeds cap %d", size, n.relayedTransferMax)
+	}
+
 	// Extend stream deadline based on actual transfer size
 	transferDeadline := n.timeouts.GetForSize(timeouts.OpPeerTransfer, size)
 	if deadlineErr := stream.SetDeadline(time.Now().Add(transferDeadline)); deadlineErr != nil {
@@ -1011,6 +1056,12 @@ func (n *Node) DownloadRange(ctx context.Context, peerInfo peer.AddrInfo, sha256
 		n.metrics.BytesDownloaded.WithLabel("peer").Add(size)
 		n.metrics.DownloadsTotal.WithLabel("peer").Inc()
 		n.metrics.PeerLatency.Observe(latencyMs)
+		if relayed {
+			// Relayed bytes are a subset of peer bytes, tracked separately so an
+			// operator can see what a relay is actually carrying.
+			n.metrics.BytesFromRelay.Add(size)
+			n.metrics.RelayedTransferTotal.WithLabel("ok").Inc()
+		}
 	}
 
 	return data, nil

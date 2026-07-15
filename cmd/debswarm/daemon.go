@@ -337,6 +337,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		RelayBufferSize:      cfg.Network.RelayBufferSizeBytes(),
 		RelayDuration:        cfg.Network.RelayDuration(),
 		ForceReachability:    cfg.Network.GetForceReachability(),
+		RelayedTransferMax:   cfg.Network.RelayedTransferMaxBytes(),
 		// Per-peer rate limiting configuration
 		PerPeerUploadRate:   cfg.Transfer.PerPeerUploadRateBytes(),
 		PerPeerDownloadRate: cfg.Transfer.PerPeerDownloadRateBytes(),

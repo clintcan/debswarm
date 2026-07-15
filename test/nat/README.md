@@ -45,8 +45,9 @@ gateway stands between each peer and the public network.
 
 ```bash
 cd test/nat
-./run.sh              # normal run   — Tier 1 must PASS
-./run.sh --baseline   # AutoRelay off — Tier 1 must FAIL (proves the test detects the bug)
+./run.sh               # normal run    — Tier 1 must PASS
+./run.sh --baseline    # AutoRelay off  — Tier 1 must FAIL (proves the test detects the bug)
+./run.sh --relay-data  # relayed transfers on — Tier 2 must COMPLETE the fetch over the relay
 ```
 
 `KEEP=1 ./run.sh` leaves the stack up for inspection (`docker compose down -v` to
@@ -87,8 +88,18 @@ hole punch **succeeds**, and that depends on the NAT type.
 > *completed* cross-NAT transfer therefore needs at least one **hole-punchable**
 > (endpoint-independent / full-cone) NAT — which a stock `MASQUERADE` gateway is not.
 > Making the rig demonstrate a completed transfer means giving a gateway full-cone
-> behaviour (e.g. an `xt_FULLCONENAT` / `nft`-based endpoint-independent mapping),
-> which is future test-infra work.
+> behaviour (e.g. an `xt_FULLCONENAT` / `nft`-based endpoint-independent mapping) —
+> **or** enabling the relayed-transfer fallback, which is what `--relay-data` does.
+
+**`--relay-data` — complete the transfer without a hole-punchable gateway.** This
+run sets `relayed_transfer_max_bytes` on the peers and raises the relay's
+`relay_limits.buffer_size`, so when the punch fails on the symmetric gateways the
+small package rides the **relay** instead. Tier 2 then **asserts** `bytes_from_relay
+> 0` — an end-to-end cross-NAT fetch proven without any full-cone NAT infrastructure.
+It exercises the `relayed_transfer_max_bytes` gate (see
+`docs/design/relay-data-fallback.md`): every relayed byte is still SHA256-verified,
+and the relay carries only the end-to-end-encrypted stream, so this trades bandwidth
+for reach, not safety.
 
 ## Files
 

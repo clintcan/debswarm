@@ -210,6 +210,17 @@ type NetworkConfig struct {
 	// NAT'd (or in a small private/PSK swarm where AutoNAT has too few peers to
 	// reach a verdict); "public" suits a relay/seed on a known-public address.
 	ForceReachability string `toml:"force_reachability"`
+
+	// RelayedTransferMax bounds the size in bytes of a package this node will fetch
+	// over a RELAYED (circuit-relay) connection when no direct/hole-punched path
+	// exists — e.g. when both peers sit behind symmetric NATs that DCUtR cannot
+	// punch. 0 (default) disables relayed transfers entirely: a relayed peer is
+	// skipped and the download falls back to the mirror, so relays only ever
+	// coordinate hole punches, never carry package bytes. The effective cap is
+	// min(this, the relay's per-circuit buffer_size). Keep it small — this is for
+	// the long tail of small packages, and the bytes are carried by whoever runs
+	// the relay. See docs/design/relay-data-fallback.md.
+	RelayedTransferMax int64 `toml:"relayed_transfer_max_bytes"`
 }
 
 // Reachability override modes.
@@ -310,6 +321,16 @@ func (c *NetworkConfig) RelayDuration() time.Duration {
 		return DefaultRelayDuration
 	}
 	return d
+}
+
+// RelayedTransferMaxBytes returns the relayed-transfer size cap in bytes, clamped
+// to a non-negative value. 0 means relayed transfers are disabled (the default):
+// a peer reachable only over a relay is skipped in favor of the mirror.
+func (c *NetworkConfig) RelayedTransferMaxBytes() int64 {
+	if c.RelayedTransferMax < 0 {
+		return 0
+	}
+	return c.RelayedTransferMax
 }
 
 // GetConnectivityMode returns the connectivity mode with a default of "auto"

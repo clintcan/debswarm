@@ -427,6 +427,41 @@ func (n *Node) adjustConnectionGauge(c network.Conn, delta float64) {
 	n.metrics.ConnectionsByType.WithLabel(label).Add(delta)
 }
 
+// relayedTransferSkipped reports whether a transfer must be skipped because the
+// only path to the peer is a relay and relayed transfers are disabled (cap <= 0).
+// When true the caller falls back to the mirror; a direct path (relayed=false) is
+// never skipped, so enabling the feature never changes direct-transfer behavior.
+func relayedTransferSkipped(relayed bool, maxBytes int64) bool {
+	return relayed && maxBytes <= 0
+}
+
+// relayedSizeExceeded reports whether a relayed transfer of size bytes exceeds the
+// configured cap. Only meaningful when relayed is true — a direct transfer is
+// never bounded by this cap. The boundary is inclusive: size == maxBytes is
+// allowed, size == maxBytes+1 is refused.
+func relayedSizeExceeded(relayed bool, size, maxBytes int64) bool {
+	return relayed && size > maxBytes
+}
+
+// onlyRelayedConn reports whether every current connection to the peer is a
+// circuit-relay (Limited) connection — i.e. there is no direct path to it. Returns
+// false when any direct connection exists, and false when there are no connections
+// at all (the caller handles that as a connect failure). This is what gates the
+// relayed-transfer fallback: bytes are only carried over a relay when a direct
+// (hole-punched or publicly-reachable) path is genuinely unavailable.
+func (n *Node) onlyRelayedConn(id peer.ID) bool {
+	conns := n.host.Network().ConnsToPeer(id)
+	if len(conns) == 0 {
+		return false
+	}
+	for _, c := range conns {
+		if !c.Stat().Limited {
+			return false
+		}
+	}
+	return true
+}
+
 // holePunchTracer records DCUtR outcomes.
 type holePunchTracer struct {
 	metrics *metrics.Metrics

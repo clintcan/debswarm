@@ -126,6 +126,13 @@ type Metrics struct {
 	RelayServiceActive  *Gauge      // 1 when we are running a relay for other peers
 	RelayCircuitsActive *Gauge      // Circuits we are currently relaying for others
 	Reachability        *GaugeVec   // AutoNAT verdict, by state (public|private|unknown)
+
+	// Relayed-transfer fallback: bytes fetched over a circuit-relay connection when
+	// no direct/hole-punched path exists (e.g. both peers symmetric-NAT'd). Kept
+	// distinct from direct-peer and mirror bytes so an operator can see exactly what
+	// a relay is carrying. See docs/design/relay-data-fallback.md.
+	BytesFromRelay       *Counter    // Bytes fetched over a relay (a subset of peer bytes)
+	RelayedTransferTotal *CounterVec // Relayed-transfer attempts, by result (ok|too_large)
 }
 
 // Counter is a simple counter metric
@@ -437,6 +444,9 @@ func New() *Metrics {
 		RelayServiceActive:  &Gauge{},
 		RelayCircuitsActive: &Gauge{},
 		Reachability:        NewGaugeVec(),
+
+		BytesFromRelay:       &Counter{},
+		RelayedTransferTotal: NewCounterVec(),
 	}
 }
 
@@ -560,6 +570,10 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(w, "debswarm_relay_circuits_active", m.RelayCircuitsActive.Value())
 		for label, value := range m.Reachability.Values() {
 			writeGaugeWithLabel(w, "debswarm_reachability", "state", label, value)
+		}
+		writeCounter(w, "debswarm_bytes_from_relay_total", m.BytesFromRelay.Value())
+		for label, value := range m.RelayedTransferTotal.Values() {
+			writeCounterWithLabel(w, "debswarm_relayed_transfer_total", "result", label, value)
 		}
 	})
 }

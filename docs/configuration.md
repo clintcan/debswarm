@@ -79,8 +79,9 @@ Network settings for P2P communication and the HTTP proxy.
 | `force_reachability` | string | `"auto"` | Override AutoNAT: `auto` (detect), `private` (assert NAT'd — reserves a relay slot immediately instead of waiting for a verdict a small swarm may never reach), `public` (assert reachable). |
 | `relay_limits.max_reservations` | int | `128` | When relaying: concurrent peers vouched for. |
 | `relay_limits.max_circuits` | int | `16` | When relaying: concurrent relayed connections. |
-| `relay_limits.buffer_size` | string | `"128KB"` | When relaying: per-circuit data cap (sized for hole-punch coordination, not transfer). |
+| `relay_limits.buffer_size` | string | `"128KB"` | When relaying: per-circuit data cap. The default is sized for hole-punch coordination only. **Raising it lets your relay carry small package transfers** for symmetric-NAT'd peers that cannot hole-punch — at the cost of your bandwidth. Do this on a relay you run for your own (e.g. PSK) swarm; leave it at the default on a public relay unless you intend to donate bandwidth. |
 | `relay_limits.duration` | string | `"2m"` | When relaying: per-circuit lifetime. |
+| `relayed_transfer_max_bytes` | int | `0` | Max package size (bytes) this node will fetch over a **relayed** connection when no direct/hole-punched path exists — e.g. when both peers are behind symmetric NATs that DCUtR cannot punch. `0` (default) disables relayed transfers: a relay-only peer is skipped and the download falls back to the mirror, so relays only ever coordinate punches, never carry bytes. The effective cap is `min(this, the relay's buffer_size)`. Keep it small — this is for the long tail of small packages, and the bytes are carried by whoever runs the relay. See [`docs/design/relay-data-fallback.md`](design/relay-data-fallback.md). |
 
 **Example:**
 ```toml
@@ -101,6 +102,9 @@ enable_hole_punching = true  # upgrade a relayed connection to a direct one
 relay_service = "auto"       # relay for others only when publicly reachable
 # relay_peers = ["/ip4/203.0.113.10/udp/4001/quic-v1/p2p/12D3KooW..."]  # required for PSK swarms
 # force_reachability = "auto"  # "private" on a known-NAT'd node; "public" on a relay/seed
+# relayed_transfer_max_bytes = 0   # >0 (e.g. 262144) lets two symmetric-NAT'd peers
+                                   # exchange small packages over a relay; raise the
+                                   # relay's relay_limits.buffer_size to match
 
 # Bootstrap peers (libp2p public nodes)
 bootstrap_peers = [
