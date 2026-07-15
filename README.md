@@ -641,6 +641,7 @@ journalctl -u debswarm -f
 - [Security Hardening](docs/security-hardening.md) - Production security recommendations
 - [Technical Comparison](docs/comparison.md) - debswarm vs apt-p2p, DebTorrent, apt-cacher-ng
 - [Bootstrap Node Setup](docs/bootstrap-node.md) - Running a dedicated seeder/bootstrap node
+- [Relay Node Setup (DigitalOcean / AWS)](docs/relay-node.md) - Public relay so NAT'd peers can reach each other
 - [Cache Pre-warming](docs/cache-prewarming.md) - Pre-populate cache for your network
 - [Popular Packages](docs/popular-packages.md) - Pre-warm cache with commonly used packages
 - [debmirror Integration](docs/debmirror-integration.md) - Use local mirror with debswarm P2P
