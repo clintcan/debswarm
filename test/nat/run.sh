@@ -55,6 +55,8 @@ stat_field() { docker exec "$1" curl -s 127.0.0.1:9978/stats 2>/dev/null | grep 
 peer_id() { docker exec "$1" debswarm identity show 2>/dev/null | grep -oE '12D3KooW[A-Za-z0-9]+' | head -1; }
 # Did the relay accept a reservation from this peer id? (relay-side proof.)
 relay_reserved_for() { docker logs nat-relay 2>&1 | grep -F "reserving relay slot" | grep -qF "$1"; }
+# How many DCUtR hole punches has this peer attempted? (success + failure labels summed.)
+holepunch_attempts() { docker exec "$1" curl -s 127.0.0.1:9978/metrics 2>/dev/null | awk '/^debswarm_holepunch_total/{s+=$2} END{printf "%d", s}'; }
 
 step "0. Build debswarm (linux/amd64) and the topology"
 ( cd ../.. && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o test/nat/debswarm ./cmd/debswarm ) \
@@ -145,49 +147,61 @@ fi
 [ "$CB" = "1" ] && ok "peer-b obtained a usable /p2p-circuit address" \
                || bad "peer-b got a slot but NO /p2p-circuit address formed — reservation is not usable"
 
-step "4. TIER 2 — full cross-NAT transfer (best-effort)"
+step "4. TIER 2 — cross-NAT discovery + DCUtR hole-punch attempt (asserted)"
+# peer-b caches hello, then announces it to the DHT (its provider record carries the
+# circuit address). With the mirror stopped, peer-a must find peer-b ACROSS the two
+# NATs and attempt a hole punch — exercising the whole Phase-1 path end to end
+# (reservation → circuit addr → DHT discovery → DCUtR), all of which was dead before.
 docker exec nat-peer-a apt-get update -qq >/dev/null 2>&1 || true
 docker exec nat-peer-b apt-get update -qq >/dev/null 2>&1 || true
 docker exec nat-peer-b apt-get install -y --download-only hello >/dev/null 2>&1 \
   && note "peer-b cached hello (cache_count=$(stat_field nat-peer-b cache_count))" \
-  || note "peer-b could not cache hello"
-sleep 15
+  || bad "peer-b could not cache hello — Tier 2 cannot proceed"
+
+# Let peer-b announce to the DHT and the provider record propagate before removing
+# the mirror, so peer-a's only route to the package is genuinely peer-b.
+sleep 25
 docker compose stop repo >/dev/null 2>&1
-note "mirror stopped — peer-b is now the only source of hello"
+note "mirror stopped — peer-b is the only source of hello"
 
-docker exec nat-peer-a apt-get clean 2>/dev/null
-GOT=0
-docker exec nat-peer-a timeout 120 apt-get install -y --download-only --reinstall hello >/dev/null 2>&1 && GOT=1
-P2P_BYTES=$(stat_field nat-peer-a bytes_from_p2p)
-HP_OK=$(metric nat-peer-a 'debswarm_holepunch_total{result="success"}')
-HP_FAIL=$(metric nat-peer-a 'debswarm_holepunch_total{result="failure"}')
-FOUND=$(docker logs nat-peer-a 2>&1 | grep -c 'Found P2P providers')
-note "peer-a: got=$GOT bytes_from_p2p=$P2P_BYTES holepunch_success=$HP_OK holepunch_fail=$HP_FAIL found_provider_events=$FOUND"
+# Drive discovery + the punch by fetching on peer-a with no mirror. Poll (re-triggering
+# the fetch) until peer-a BOTH discovers peer-b as a provider AND attempts a hole punch.
+# Generous budget: DHT propagation across NATs is not instant. These two are asserted.
+GOT=0; FOUND=0; HP=0; P2P_BYTES=0
+for _ in $(seq 1 6); do
+  docker exec nat-peer-a apt-get clean 2>/dev/null
+  docker exec nat-peer-a timeout 40 apt-get install -y --download-only --reinstall hello >/dev/null 2>&1 && GOT=1
+  FOUND=$(docker logs nat-peer-a 2>&1 | grep -c 'Found P2P providers')
+  HP=$(holepunch_attempts nat-peer-a)
+  P2P_BYTES=$(stat_field nat-peer-a bytes_from_p2p)
+  [ "${FOUND:-0}" -ge 1 ] && [ "${HP:-0}" -ge 1 ] && break
+  sleep 8
+done
+note "peer-a: got=$GOT bytes_from_p2p=$P2P_BYTES holepunch_attempts=$HP found_provider_events=$FOUND"
 
+# ASSERTED: the cross-NAT path must reach discovery and a hole-punch attempt. Both were
+# structurally impossible before Phase 1 (no reservation → no circuit addr → nothing to
+# discover or dial → DCUtR never fires).
+[ "${FOUND:-0}" -ge 1 ] \
+  && ok "peer-a discovered peer-b as a provider ACROSS the two NATs (DHT + circuit addr)" \
+  || bad "peer-a never discovered peer-b — cross-NAT DHT discovery is broken"
+[ "${HP:-0}" -ge 1 ] \
+  && ok "DCUtR hole punch was ATTEMPTED (the path that was entirely dead before Phase 1 now fires)" \
+  || bad "no hole-punch attempt recorded — DCUtR did not fire"
+
+# The transfer itself only completes over a HOLE-PUNCHABLE NAT; report, don't assert.
 if [ "$GOT" = "1" ] && [ "${P2P_BYTES:-0}" -gt 0 ]; then
-  ok "FULL cross-NAT P2P transfer succeeded (peer-a got the package from peer-b, mirror down)"
-  [ "${HP_OK%.*}" -ge 1 ] 2>/dev/null && ok "hole punch succeeded (direct connection, not relayed data)" \
-    || note "bytes flowed peer-to-peer"
+  ok "BONUS: full cross-NAT P2P transfer completed (this gateway was hole-punchable)"
 else
-  # Discovery + a hole-punch ATTEMPT firing is itself proof the Phase-1 path is wired
-  # end to end (all of it was dead before). The transfer only completes if the punch
-  # SUCCEEDS, which needs a hole-punchable NAT.
-  [ "${FOUND:-0}" -ge 1 ] \
-    && ok "peer-a discovered peer-b as a provider ACROSS the two NATs (DHT + circuit addr)" \
-    || note "peer-a did not discover peer-b as a provider"
-  [ "${HP_FAIL%.*}" -ge 1 ] 2>/dev/null \
-    && ok "DCUtR hole punch was ATTEMPTED (the path that was entirely dead before Phase 1 now fires)" \
-    || note "no hole-punch attempt recorded"
-  note "Tier 2 transfer NOT completed here: the hole punch could not traverse the gateways."
-  note "The rig's iptables MASQUERADE gateways are address-dependent (symmetric-ish) NATs, which"
-  note "DCUtR cannot punch: peer-a's dial to peer-b's public ip:port is refused because the NAT"
-  note "mapping is bound to the relay, not to peer-a. debswarm relays coordinate the punch but never"
-  note "carry package bytes, so a failed punch falls back to the mirror (here: stopped). This is a"
-  note "property of symmetric NAT + hole punching, NOT a debswarm bug; a completed transfer needs at"
-  note "least one hole-punchable (endpoint-independent / full-cone) NAT."
+  note "Full transfer NOT completed here (expected on this rig): the gateways are plain iptables"
+  note "MASQUERADE = address-dependent (symmetric) NATs, which DCUtR cannot punch — peer-a's dial to"
+  note "peer-b's public ip:port is refused because the mapping is bound to the relay, not to peer-a."
+  note "debswarm relays coordinate the punch but never carry bytes, so a failed punch falls back to"
+  note "the mirror (stopped). This is symmetric NAT + hole punching, NOT a debswarm bug; a completed"
+  note "transfer needs a hole-punchable (endpoint-independent / full-cone) gateway."
 fi
 
 step "RESULT"
-[ "$FAILED" -eq 0 ] && echo "🎉 CROSS-NAT P2P VERIFIED (Tier 1: relay reservations by NAT'd peers)" \
+[ "$FAILED" -eq 0 ] && echo "🎉 CROSS-NAT P2P VERIFIED (usable relay reservations + cross-NAT discovery + DCUtR hole-punch attempt)" \
                     || echo "💥 CROSS-NAT P2P TEST FAILED"
 exit $FAILED
