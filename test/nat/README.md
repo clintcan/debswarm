@@ -14,7 +14,7 @@ gateway stands between each peer and the public network.
 ```
   peer-a ──[lan-a]── nat-a ──┐                     ┌── nat-b ──[lan-b]── peer-b
          (192.168.10.0/24)   ├──[ public ]─────────┤     (192.168.20.0/24)
-                             │  203.0.113.0/24     │
+                             │  11.11.11.0/24      │
                          relay (circuit-relay service + DHT bootstrap)
                          repo  (the "mirror": a tiny flat apt repo)
 ```
@@ -22,11 +22,24 @@ gateway stands between each peer and the public network.
 - `peer-a` and `peer-b` are on separate bridges Docker keeps isolated, and neither
   is attached to `public`, so each can reach the relay/repo **only** through its
   own NAT gateway (masqueraded). They cannot reach each other directly.
-- The public subnet is **203.0.113.0/24 (TEST-NET-3)**, not a private range, on
-  purpose: debswarm's SSRF filter drops RFC1918 addresses from DHT records, and a
-  relayed peer's address is `/ip4/<relay>/…/p2p-circuit/…`, so a relay on a private
-  IP would have its circuit addresses filtered — failing the test against a
-  *correct* implementation.
+- The public subnet **`11.11.11.0/24`** must clear **two** independent address
+  filters, or a NAT'd peer never advertises a usable relay address and Tier 2 fails
+  against a *correct* implementation:
+  1. **debswarm's SSRF filter** (`internal/security`) drops RFC1918/loopback/
+     link-local from DHT provider records — so the relay can't sit on a private IP,
+     or a relayed peer's `/ip4/<relay>/…/p2p-circuit/…` address is discarded.
+  2. **libp2p autorelay's `cleanupAddressSet`** keeps only `manet.IsPublicAddr()`
+     relay addresses when building a peer's `/p2p-circuit` addrs. `manet` treats the
+     RFC 5737 **documentation ranges** (`192.0.2/24`, `198.51.100/24`,
+     **`203.0.113/24`** — the old choice here) as *unroutable*, i.e. **not** public.
+     A relay on any of those yields an **empty** circuit-addr set: the reservation is
+     granted but no circuit address is ever advertised, so two NAT'd peers can never
+     find each other — a silent, environment-independent failure.
+  `11.11.11.0/24` is in neither `manet.Private4` nor `manet.Unroutable4` (so
+  `IsPublicAddr` is true) **and** is not RFC1918 (so debswarm's filter passes it).
+  It only ever routes inside the Docker networks, so borrowing otherwise-real DoD
+  space is self-contained. **Do not "fix" this back to a TEST-NET range** — that is
+  the very trap that makes Tier 2 fail.
 
 ## Running
 

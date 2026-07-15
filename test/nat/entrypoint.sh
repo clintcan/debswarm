@@ -3,8 +3,8 @@
 set -eu
 
 ROLE="${1:-peer}"
-REPO_IP=203.0.113.5
-RELAY_IP=203.0.113.10
+REPO_IP=11.11.11.5
+RELAY_IP=11.11.11.10
 
 case "$ROLE" in
 
@@ -43,7 +43,7 @@ relay_service = "on"
 enable_autorelay = false        # a public node needs no reservation of its own
 force_reachability = "public"   # this node IS public; skip AutoNAT's guessing
 proxy_bind = "0.0.0.0"
-proxy_allowed_cidrs = ["203.0.113.0/24"]
+proxy_allowed_cidrs = ["11.11.11.0/24"]
 
 [privacy]
 enable_mdns = false        # force the DHT + relay path, not a LAN shortcut

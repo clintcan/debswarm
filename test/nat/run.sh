@@ -61,7 +61,11 @@ step "0. Build debswarm (linux/amd64) and the topology"
   || { echo "go build failed"; exit 1; }
 ok "binary built"
 
-cleanup
+# Always start from a clean slate — even under KEEP. KEEP must only skip the
+# POST-run teardown (the EXIT trap), NOT this pre-run reset: reusing a prior run's
+# `shared` volume hands the peers a stale relay.id, so they dial the wrong relay
+# peer-id and every reservation fails with a peer-id mismatch.
+docker compose down -v --remove-orphans >/dev/null 2>&1 || true
 if [ "$BASELINE" = "1" ]; then
   echo "  ⚠  BASELINE MODE: enable_autorelay=false — Tier 1 MUST fail"
   export AUTORELAY=false
@@ -79,7 +83,7 @@ else
 fi
 MIRROR_OK=0
 for _ in $(seq 1 20); do
-  docker exec nat-peer-a curl -s --max-time 5 -o /dev/null http://203.0.113.5/Packages && { MIRROR_OK=1; break; }
+  docker exec nat-peer-a curl -s --max-time 5 -o /dev/null http://11.11.11.5/Packages && { MIRROR_OK=1; break; }
   sleep 2
 done
 [ "$MIRROR_OK" = "1" ] && ok "peer-a reaches the mirror through its NAT gateway (masqueraded)" \
@@ -96,20 +100,30 @@ RS=$(metric nat-relay 'debswarm_relay_service_active')
 PA=$(peer_id nat-peer-a); PB=$(peer_id nat-peer-b)
 note "peer-a=$PA  peer-b=$PB"
 
-step "3. TIER 1 — do the NAT'd peers obtain relay reservations? (the mechanism that was missing)"
-echo "  waiting up to 90s for the relay to accept reservations from the peers..."
-GOTA=0; GOTB=0
+# Did the peer actually obtain a /p2p-circuit address? (PEER-side proof.)
+# A relay-side grant alone is NOT enough: the reservation is only usable if the
+# circuit addr enters the peer's OWN advertised set, which is what lets another
+# NAT'd peer discover and dial it. If the relay's address is one libp2p's autorelay
+# treats as unroutable (manet.IsPublicAddr==false — e.g. a documentation range),
+# the grant succeeds but the circuit-addr set is empty and this counter stays 0.
+peer_circuit_ok() { [ "$(metric "$1" 'debswarm_relay_reservations_obtained_total' | cut -d. -f1)" -ge 1 ] 2>/dev/null; }
+
+step "3. TIER 1 — do the NAT'd peers obtain USABLE relay reservations? (the mechanism that was missing)"
+echo "  waiting up to 90s for the relay to grant a slot AND a /p2p-circuit addr to appear on each peer..."
+GOTA=0; GOTB=0; CA=0; CB=0
 for _ in $(seq 1 45); do
   relay_reserved_for "$PA" && GOTA=1
   relay_reserved_for "$PB" && GOTB=1
-  [ "$GOTA" = 1 ] && [ "$GOTB" = 1 ] && break
+  peer_circuit_ok nat-peer-a && CA=1
+  peer_circuit_ok nat-peer-b && CB=1
+  [ "$GOTA" = 1 ] && [ "$GOTB" = 1 ] && [ "$CA" = 1 ] && [ "$CB" = 1 ] && break
   sleep 2
 done
 
 if [ "$BASELINE" = "1" ]; then
   step "RESULT (baseline: AutoRelay disabled)"
-  if [ "$GOTA" = "1" ] || [ "$GOTB" = "1" ]; then
-    echo "💥 BASELINE UNEXPECTEDLY PASSED — the relay saw a reservation with AutoRelay OFF."
+  if [ "$GOTA" = "1" ] || [ "$GOTB" = "1" ] || [ "$CA" = "1" ] || [ "$CB" = "1" ]; then
+    echo "💥 BASELINE UNEXPECTEDLY PASSED — a reservation/circuit addr appeared with AutoRelay OFF."
     echo "   The test does not actually depend on the fix; a green normal run would prove nothing."
     exit 1
   fi
@@ -118,13 +132,18 @@ if [ "$BASELINE" = "1" ]; then
   exit 0
 fi
 
-[ "$GOTA" = "1" ] && ok "relay accepted a reservation from peer-a (it now has a /p2p-circuit path)" \
-                  || bad "relay never accepted a reservation from peer-a — cross-NAT relay is not working"
-[ "$GOTB" = "1" ] && ok "relay accepted a reservation from peer-b" \
-                  || bad "relay never accepted a reservation from peer-b"
-# AutoRelay client-side confirmation (best-effort; the relay-side log above is the assertion).
-docker logs nat-peer-a 2>&1 | grep -q 'adding new relay' && ok "peer-a's AutoRelay added the relay" \
-  || note "peer-a AutoRelay 'adding new relay' not seen (relay-side reservation is the proof)"
+# Relay-side: the relay granted a slot.
+[ "$GOTA" = "1" ] && ok "relay granted a reservation slot to peer-a" \
+                  || bad "relay never granted a reservation to peer-a — cross-NAT relay is not working"
+[ "$GOTB" = "1" ] && ok "relay granted a reservation slot to peer-b" \
+                  || bad "relay never granted a reservation to peer-b"
+# Peer-side: the /p2p-circuit address actually entered each peer's advertised set.
+# THIS is the assertion that matters — a granted slot with no circuit addr is a
+# reservation nobody can use.
+[ "$CA" = "1" ] && ok "peer-a obtained a usable /p2p-circuit address (now reachable through the relay)" \
+               || bad "peer-a got a slot but NO /p2p-circuit address formed — reservation is not usable"
+[ "$CB" = "1" ] && ok "peer-b obtained a usable /p2p-circuit address" \
+               || bad "peer-b got a slot but NO /p2p-circuit address formed — reservation is not usable"
 
 step "4. TIER 2 — full cross-NAT transfer (best-effort)"
 docker exec nat-peer-a apt-get update -qq >/dev/null 2>&1 || true

@@ -8,17 +8,25 @@
 #
 #   peer-a ──[lan-a]── nat-a ──┐                     ┌── nat-b ──[lan-b]── peer-b
 #          (192.168.10.0/24)   ├──[ public ]─────────┤     (192.168.20.0/24)
-#                              │  203.0.113.0/24     │
+#                              │  11.11.11.0/24      │
 #                          relay (relay service + DHT bootstrap)
 #                          repo  (the "mirror")
 #
-# NOTE ON THE PUBLIC SUBNET: it is deliberately 203.0.113.0/24 (TEST-NET-3), not
-# a Docker default like 172.x. debswarm's own SSRF protection filters RFC1918
-# addresses out of DHT provider records — and a relayed peer's address is
-# /ip4/<relay-ip>/.../p2p-circuit/..., so a relay on a private IP would have every
-# one of its circuit addresses discarded and the test would fail *even against a
-# correct implementation*. TEST-NET-3 is public-but-unroutable, which is exactly
-# what we need.
+# NOTE ON THE PUBLIC SUBNET: it must satisfy TWO independent filters, or a NAT'd
+# peer never advertises a usable relay address and Tier 2 fails against a *correct*
+# implementation:
+#   1. debswarm's own SSRF filter (internal/security) drops RFC1918/loopback/
+#      link-local from DHT provider records — so the relay cannot sit on 10./172.16-31/
+#      192.168./127./169.254.
+#   2. libp2p autorelay's cleanupAddressSet keeps only manet.IsPublicAddr() relay
+#      addresses when building a peer's /p2p-circuit addrs. manet treats the RFC 5737
+#      documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24) AND 198.18/15,
+#      192.88.99/24, etc. as *unroutable* — NOT public — so a relay on any of those
+#      yields an EMPTY circuit-addr set: the reservation succeeds but no circuit
+#      address is ever advertised, so two NAT'd peers can never find each other.
+# 11.11.11.0/24 is in neither manet.Private4 nor manet.Unroutable4 (verified: it is
+# manet.IsPublicAddr==true) and is not RFC1918, so it passes both. It is a Docker-
+# internal network, so using otherwise-real DoD space here is self-contained.
 
 volumes:
   # Carries the relay's peer ID to the peers. They cannot be configured with a
@@ -29,7 +37,7 @@ networks:
   public:
     ipam:
       config:
-        - subnet: 203.0.113.0/24
+        - subnet: 11.11.11.0/24
   # NOTE: these are deliberately NOT `internal: true`. On Docker Desktop, an
   # internal network's host-side rules drop any transit frame whose L3
   # destination is outside the subnet *before* it reaches a container-based NAT
@@ -56,7 +64,7 @@ services:
     container_name: nat-repo
     networks:
       public:
-        ipv4_address: 203.0.113.5
+        ipv4_address: 11.11.11.5
 
   # Publicly reachable debswarm: runs the circuit-relay service and is the DHT
   # bootstrap node for the swarm.
@@ -67,7 +75,7 @@ services:
     container_name: nat-relay
     networks:
       public:
-        ipv4_address: 203.0.113.10
+        ipv4_address: 11.11.11.10
     volumes:
       - shared:/shared
     command: ["relay"]
@@ -85,7 +93,7 @@ services:
       LAN_SUBNET: 192.168.10.0/24
     networks:
       public:
-        ipv4_address: 203.0.113.20
+        ipv4_address: 11.11.11.20
       lan-a:
         ipv4_address: 192.168.10.2   # .1 is Docker's own bridge gateway
     command: ["gateway"]
@@ -102,7 +110,7 @@ services:
       LAN_SUBNET: 192.168.20.0/24
     networks:
       public:
-        ipv4_address: 203.0.113.21
+        ipv4_address: 11.11.11.21
       lan-b:
         ipv4_address: 192.168.20.2   # .1 is Docker's own bridge gateway
     command: ["gateway"]
