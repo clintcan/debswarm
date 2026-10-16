@@ -1,3 +1,11 @@
+debswarm (1.40.1-1) stable; urgency=low
+
+  * Fleet metrics now report real values: avoided WAN downloads and bytes,
+    coordination decisions by action, fleet peers and in-flight downloads.
+    The daemon now refreshes all gauges every 30 seconds.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 17 Oct 2026 12:00:00 +0000
+
 debswarm (1.40.0-1) stable; urgency=medium
 
   * HTTPS repositories work through the proxy again. Every CONNECT request was
