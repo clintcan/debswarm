@@ -1,3 +1,23 @@
+debswarm (1.40.0-1) stable; urgency=medium
+
+  * HTTPS repositories work through the proxy again. Every CONNECT request was
+    answered with a 301, so once debswarm was installed every https:// APT
+    source failed, including debswarm's own repository. debswarm's repository
+    now always bypasses the proxy, and the redirect targets of pkgs.k8s.io and
+    mirrors.kernel.org are trusted. Upgrading from 1.39.0: stop the debswarm
+    service first (sudo systemctl stop debswarm), then apt-get update and
+    apt-get install debswarm.
+  * announce_packages = false now enables download-only mode: nothing is
+    announced to the DHT or served to peers.
+  * Cross-NAT P2P (Phase 1): AutoRelay reservations, a bounded relay service on
+    publicly reachable nodes, and hole punching between NAT'd peers. Optional
+    relayed transfer of small packages for symmetric-NAT'd peers (off by
+    default).
+  * Dashboard: Recent Downloads is populated and refreshes live, and chart axes
+    are fixed.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 17 Oct 2026 03:30:00 +0000
+
 debswarm (1.39.0-1) stable; urgency=low
 
   * Signed apt repository at https://clintcan.github.io/debswarm/ — debswarm can
