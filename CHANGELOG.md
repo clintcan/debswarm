@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.40.0] - 2026-10-17
+
+### Upgrading from 1.39.0
+An apt-installed 1.39.0 cannot fetch from debswarm's own (HTTPS) repository while the daemon is running — the HTTPS tunneling bug fixed below — so `apt-get upgrade` will not see this release. Stop the daemon for the upgrade; APT then goes direct to the mirrors:
+
+```bash
+sudo systemctl stop debswarm
+sudo apt-get update && sudo apt-get install debswarm
+```
+
+The package restarts the service. From 1.40.0 on, debswarm's own repository always bypasses the proxy, so later upgrades need no workaround. Alternatively, install the `.deb` from the GitHub release.
+
 ### Added
 - **Cross-NAT P2P now actually works (Phase 1).** Two peers each behind their own NAT can now discover each other and transfer packages — previously they could not, because the chain that makes it possible was never completed. debswarm enabled the circuit-relay client transport and hole punching, but nothing ever obtained a relay **reservation**, so no NAT'd peer had a `/p2p-circuit` address, nothing could dial it, and DCUtR hole punching (which only fires over an existing relayed connection) never triggered — `EnableHolePunching()` was effectively dead code. This release adds the missing pieces:
   - **AutoRelay** obtains circuit-v2 reservations, either from statically configured `relay_peers` or by discovering relays through the DHT, giving a NAT'd node a reachable circuit address.
