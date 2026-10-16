@@ -1269,6 +1269,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 	if expectedHash != "" && s.fleet != nil {
 		fleetResult, fleetErr := s.fleet.WantPackage(ctx, expectedHash, expectedSize)
 		if fleetErr == nil {
+			s.metrics.FleetCoordination.WithLabel(fleetResult.Action.String()).Inc()
 			switch fleetResult.Action {
 			case fleet.ActionFetchLAN:
 				// A peer already has this package cached — download from LAN
@@ -1280,10 +1281,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 						zap.Int("size", len(data)),
 						zap.String("provider", fleetResult.Provider.String()[:min(12, len(fleetResult.Provider.String()))]))
 
-					atomic.AddInt64(&s.requestsP2P, 1)
-					atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
-					s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
-					s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
+					s.recordFleetLANDownload(len(data))
 
 					return &packageDownloadResult{
 						data:        data,
@@ -1308,10 +1306,7 @@ func (s *Server) downloadPackage(ctx context.Context, url, expectedHash string, 
 								zap.Int("size", len(data)),
 								zap.String("provider", fleetResult.Provider.String()[:min(12, len(fleetResult.Provider.String()))]))
 
-							atomic.AddInt64(&s.requestsP2P, 1)
-							atomic.AddInt64(&s.bytesFromP2P, int64(len(data)))
-							s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
-							s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(len(data)))
+							s.recordFleetLANDownload(len(data))
 
 							return &packageDownloadResult{
 								data:        data,
@@ -1586,6 +1581,18 @@ func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, 
 		return nil, fmt.Errorf("fleet peer hash mismatch")
 	}
 	return data, nil
+}
+
+// recordFleetLANDownload accounts for a package fetched from a fleet (LAN) peer.
+// It replaced a WAN download this node would otherwise have made, so it also
+// counts toward the fleet's avoided-download metrics.
+func (s *Server) recordFleetLANDownload(size int) {
+	atomic.AddInt64(&s.requestsP2P, 1)
+	atomic.AddInt64(&s.bytesFromP2P, int64(size))
+	s.metrics.DownloadsTotal.WithLabel(downloader.SourceTypePeer).Inc()
+	s.metrics.BytesDownloaded.WithLabel(downloader.SourceTypePeer).Add(int64(size))
+	s.metrics.FleetWANAvoided.Inc()
+	s.metrics.FleetBytesAvoided.Add(int64(size))
 }
 
 // processDownloadSuccess processes a successful parallel download result

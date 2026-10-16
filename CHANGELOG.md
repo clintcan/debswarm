@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Fleet metrics now report what fleet coordination actually does.** `debswarm_fleet_wan_avoided_total`, `debswarm_fleet_bytes_avoided_total` and `debswarm_fleet_coordination` were exported but never incremented, so they read 0 even when every node in an 8-node LAN fetched each package from the WAN only once. LAN fetches now count as avoided WAN downloads, and every coordination decision is counted by action (`fetch_wan`, `wait_peer`, `fetch_lan`).
+- **`debswarm_fleet_peers`, `debswarm_fleet_in_flight` and the scheduler gauges now update.** They were set only in `UpdateMetrics()`, which the daemon never called — its metrics tick refreshed a copied subset of gauges instead — so `debswarm_fleet_peers` read 0 with 7 fleet peers connected. The daemon now calls `UpdateMetrics()` at startup and every 30 seconds.
+
 ## [1.40.0] - 2026-10-17
 
 ### Upgrading from 1.39.0

@@ -54,6 +54,20 @@ const (
 	ActionFetchLAN                   // Fetch from peer that has it
 )
 
+// String returns the action's metrics label: fetch_wan, wait_peer or fetch_lan.
+func (a WantAction) String() string {
+	switch a {
+	case ActionFetchWAN:
+		return "fetch_wan"
+	case ActionWaitPeer:
+		return "wait_peer"
+	case ActionFetchLAN:
+		return "fetch_lan"
+	default:
+		return "unknown"
+	}
+}
+
 // WantResult contains the result of a want query
 type WantResult struct {
 	Action   WantAction
