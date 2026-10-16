@@ -1572,9 +1572,17 @@ func (s *Server) downloadFromFleetPeer(ctx context.Context, providerID peer.ID, 
 	}
 
 	if err := s.verifyAndCache(data, expectedHash, path); err != nil {
+		// Same accounting as the DHT peer path: a tampered copy from a LAN peer
+		// must show up as a verification failure, not only as a blacklist.
+		reqID := requestid.FromContext(ctx)
+		requestid.LoggerFromContext(ctx, s.logger).Warn("Fleet peer hash mismatch, blacklisting peer",
+			zap.String("peer", providerID.String()),
+			zap.String("hash", expectedHash[:min(16, len(expectedHash))]+"..."))
+		s.metrics.VerificationFailures.Inc()
 		s.scorer.Blacklist(providerID, "fleet hash mismatch", 24*time.Hour)
 		s.metrics.PeersBlacklisted.Inc()
-		s.audit.Log(audit.NewPeerBlacklistedEvent(providerID.String(), "fleet hash mismatch"))
+		s.audit.Log(audit.NewVerificationFailedEvent(expectedHash, path, providerID.String()).WithRequestID(reqID))
+		s.audit.Log(audit.NewPeerBlacklistedEvent(providerID.String(), "fleet hash mismatch").WithRequestID(reqID))
 		return nil, fmt.Errorf("fleet peer hash mismatch")
 	}
 	return data, nil
