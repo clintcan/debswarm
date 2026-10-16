@@ -646,3 +646,17 @@ func TestGetMaxWaitTime(t *testing.T) {
 		t.Errorf("expected 3m, got %v", c.GetMaxWaitTime())
 	}
 }
+
+func TestWantActionString(t *testing.T) {
+	tests := map[WantAction]string{
+		ActionFetchWAN: "fetch_wan",
+		ActionWaitPeer: "wait_peer",
+		ActionFetchLAN: "fetch_lan",
+		WantAction(99): "unknown",
+	}
+	for action, want := range tests {
+		if got := action.String(); got != want {
+			t.Errorf("WantAction(%d).String() = %q, want %q", action, got, want)
+		}
+	}
+}

@@ -541,7 +541,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	proxyServer.SetDashboard(dash)
 
 	// Start periodic tasks
-	go runPeriodicTasks(ctx, proxyServer, pkgCache, p2pNode, m, logger, cfg.DHT.AnnounceIntervalDuration())
+	go runPeriodicTasks(ctx, proxyServer, logger, cfg.DHT.AnnounceIntervalDuration())
 
 	// Start proxy server in goroutine
 	errChan := make(chan error, 1)
@@ -620,12 +620,12 @@ func (a *providerFinderAdapter) ID() peer.ID {
 func runPeriodicTasks(
 	ctx context.Context,
 	proxyServer *proxy.Server,
-	pkgCache *cache.Cache,
-	p2pNode *p2p.Node,
-	m *metrics.Metrics,
 	logger *zap.Logger,
 	announceInterval time.Duration,
 ) {
+	// Populate state-derived gauges immediately rather than after the first tick.
+	proxyServer.UpdateMetrics()
+
 	announceTicker := time.NewTicker(announceInterval)
 	metricsTicker := time.NewTicker(30 * time.Second)
 	cleanupTicker := time.NewTicker(time.Hour)
@@ -645,12 +645,10 @@ func runPeriodicTasks(
 			}
 
 		case <-metricsTicker.C:
-			// Update metrics
-			m.CacheSize.Set(float64(pkgCache.Size()))
-			m.CacheCount.Set(float64(pkgCache.Count()))
-			m.MetadataCacheSize.Set(float64(pkgCache.MetadataSize()))
-			m.ConnectedPeers.Set(float64(p2pNode.ConnectedPeers()))
-			m.RoutingTableSize.Set(float64(p2pNode.RoutingTableSize()))
+			// UpdateMetrics refreshes every state-derived gauge (cache, peers,
+			// scheduler, fleet). Duplicating a subset here left the fleet and
+			// scheduler gauges permanently at zero.
+			proxyServer.UpdateMetrics()
 
 		case <-cleanupTicker.C:
 			// Purge failed/abandoned download state rows and orphaned partial
