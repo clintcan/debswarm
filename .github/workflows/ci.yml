@@ -285,6 +285,10 @@ jobs:
           # instead of failing every apt operation against a dead proxy.
           test -x /usr/lib/debswarm/apt-proxy-detect
           /usr/lib/debswarm/apt-proxy-detect | grep -qx 'http://127.0.0.1:9977'
+          # debswarm's own repository bypasses the proxy so a broken daemon can
+          # always be upgraded.
+          /usr/lib/debswarm/apt-proxy-detect https://clintcan.github.io/debswarm/dists/stable/InRelease | grep -qx 'DIRECT'
+          /usr/lib/debswarm/apt-proxy-detect http://deb.debian.org/debian/dists/stable/InRelease | grep -qx 'http://127.0.0.1:9977'
           sudo systemctl stop debswarm
           /usr/lib/debswarm/apt-proxy-detect | grep -qx 'DIRECT'
           sudo apt-get update -qq   # must succeed, going DIRECT

@@ -270,6 +270,10 @@ func (p *Protocol) StartProgressBroadcaster(ctx context.Context, interval time.D
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// A download-only node never announces its fetches (see Config.DownloadOnly)
+			if p.coordinator.config.DownloadOnly {
+				continue
+			}
 			// Collect progress data under the lock
 			var messages []Message
 			p.coordinator.mu.RLock()

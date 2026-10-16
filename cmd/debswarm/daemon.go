@@ -426,6 +426,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			MaxWaitTime:     cfg.Fleet.MaxWaitTimeDuration(),
 			AllowConcurrent: cfg.Fleet.AllowConcurrent,
 			RefreshInterval: cfg.Fleet.RefreshIntervalDuration(),
+			DownloadOnly:    !cfg.Privacy.AnnouncePackages,
 		}, p2pNode, pkgCache, logger)
 		defer func() { _ = fleetCoord.Close() }()
 
@@ -517,6 +518,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		AllowedHosts:               cfg.Proxy.EffectiveAllowedHosts(),
 		HTTPSUpstreamHosts:         cfg.Proxy.EffectiveHTTPSUpstreamHosts(),
 		MetadataServeStale:         cfg.Cache.ServesStaleMetadata(),
+		DownloadOnly:               !cfg.Privacy.AnnouncePackages,
 		VerifyMode:                 verifyMode,
 		Keyring:                    keyring,
 		VerifyExemptHosts:          cfg.Security.VerifyExemptHosts,
@@ -524,6 +526,9 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	proxyServer := proxy.NewServer(proxyCfg, pkgCache, idx, p2pNode, fetcher, logger)
 	proxyServer.SetP2PNode(p2pNode)
+	if proxyCfg.DownloadOnly {
+		logger.Info("Download-only mode (announce_packages = false): packages are not announced to the DHT or served to peers")
+	}
 
 	// Initialize dashboard
 	dashCfg := &dashboard.Config{

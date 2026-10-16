@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/binary"
+	"math"
 	"sync"
 	"time"
 
@@ -18,6 +19,13 @@ type Config struct {
 	AllowConcurrent int           // Max concurrent WAN fetchers
 	RefreshInterval time.Duration // Progress broadcast interval
 	StaleTimeout    time.Duration // Reap a peer's in-flight entry after this long with no progress
+
+	// DownloadOnly makes this node a pure consumer (privacy.announce_packages =
+	// false): it never serves packages, so it must never be chosen as anyone's
+	// provider. It never answers HavePackage or Fetching, never broadcasts its own
+	// fetch progress, and always loses fetcher elections (maximum nonce), so peers
+	// never wait on a download they could not then retrieve from it.
+	DownloadOnly bool
 }
 
 // defaultStaleTimeout bounds how long a peer may be recorded as fetching a
@@ -156,6 +164,11 @@ func New(cfg *Config, peers PeerProvider, cache CacheChecker, logger *zap.Logger
 		cancel:       cancel,
 	}
 	c.nonceFn = c.generateNonce
+	if cfg.DownloadOnly {
+		// Elections pick the strictly lowest nonce, so the maximum never wins
+		// against a sharing peer.
+		c.nonceFn = func() uint32 { return math.MaxUint32 }
+	}
 
 	// Start message handler
 	c.wg.Add(1)
@@ -450,7 +463,7 @@ func (c *Coordinator) NotifyFetching(hash string, size int64) {
 		zap.String("hash", hash[:min(16, len(hash))]+"..."),
 		zap.Int64("size", size))
 
-	if c.sender != nil {
+	if c.sender != nil && !c.config.DownloadOnly {
 		msg := &Message{
 			Type:  MsgFetching,
 			Hash:  hash,
@@ -497,7 +510,7 @@ func (c *Coordinator) NotifyComplete(hash string) {
 	}
 	c.mu.Unlock()
 
-	if c.sender != nil {
+	if c.sender != nil && !c.config.DownloadOnly {
 		msg := &Message{
 			Type: MsgFetched,
 			Hash: hash,
@@ -531,7 +544,7 @@ func (c *Coordinator) NotifyFailed(hash string, fetchErr error) {
 	}
 	c.mu.Unlock()
 
-	if c.sender != nil {
+	if c.sender != nil && !c.config.DownloadOnly {
 		msg := &Message{
 			Type: MsgFetchFailed,
 			Hash: hash,
@@ -649,8 +662,9 @@ func (c *Coordinator) handleMessage(pm PeerMessage) {
 }
 
 func (c *Coordinator) handleWantPackage(from peer.ID, msg Message) {
-	// If we have the package, respond with HavePackage
-	if c.cache.Has(msg.Hash) {
+	// If we have the package, respond with HavePackage. A download-only node
+	// skips this and the Fetching reply below: it would refuse the transfer.
+	if !c.config.DownloadOnly && c.cache.Has(msg.Hash) {
 		c.logger.Debug("Responding to WantPackage with HavePackage",
 			zap.String("peer", from.String()[:min(12, len(from.String()))]),
 			zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))
@@ -682,7 +696,7 @@ func (c *Coordinator) handleWantPackage(from peer.ID, msg Message) {
 	}
 	c.mu.RUnlock()
 
-	if isSelfFetching {
+	if isSelfFetching && !c.config.DownloadOnly {
 		c.logger.Debug("Responding to WantPackage with Fetching",
 			zap.String("peer", from.String()[:min(12, len(from.String()))]),
 			zap.String("hash", msg.Hash[:min(16, len(msg.Hash))]+"..."))

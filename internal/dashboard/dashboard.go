@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -122,8 +123,8 @@ func New(cfg *Config, statsProvider StatsProvider, peersProvider PeersProvider) 
 		startTime:     time.Now(),
 		version:       cfg.Version,
 		peerID:        cfg.PeerID,
-		maxUploadRate: cfg.MaxUploadRate,
-		maxDownRate:   cfg.MaxDownloadRate,
+		maxUploadRate: displayRate(cfg.MaxUploadRate),
+		maxDownRate:   displayRate(cfg.MaxDownloadRate),
 		recentDLs:     make([]RecentDownload, 0, 50),
 		maxRecent:     50,
 	}
@@ -213,24 +214,8 @@ func (d *Dashboard) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		stats = &Stats{}
 	}
 
-	// Add dashboard-specific fields
-	stats.Uptime = formatDuration(time.Since(d.startTime))
+	d.populate(stats)
 	stats.StartTime = d.startTime.Format("2006-01-02 15:04:05")
-	stats.PeerID = d.peerID
-	stats.Version = d.version
-	stats.MaxUploadRate = d.maxUploadRate
-	stats.MaxDownloadRate = d.maxDownRate
-
-	// Add recent downloads
-	d.recentMu.RLock()
-	stats.RecentDownloads = make([]RecentDownload, len(d.recentDLs))
-	copy(stats.RecentDownloads, d.recentDLs)
-	d.recentMu.RUnlock()
-
-	// Add peers
-	if d.getPeers != nil {
-		stats.Peers = d.getPeers()
-	}
 
 	// Format byte values
 	stats.BytesFromP2PStr = formatBytes(stats.BytesFromP2P)
@@ -258,15 +243,45 @@ func (d *Dashboard) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 		stats = &Stats{}
 	}
 
-	stats.Uptime = formatDuration(time.Since(d.startTime))
-	stats.PeerID = d.peerID
-	stats.Version = d.version
+	d.populate(stats)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(stats); err != nil {
 		http.Error(w, "Failed to encode stats", http.StatusInternalServerError)
 		return
 	}
+}
+
+// populate adds the dashboard-owned fields to stats. The HTML page and the JSON
+// API share it so the page's live polling can refresh the recent-downloads and
+// peers tables, not just the counters.
+func (d *Dashboard) populate(stats *Stats) {
+	stats.Uptime = formatDuration(time.Since(d.startTime))
+	stats.PeerID = d.peerID
+	stats.Version = d.version
+	stats.MaxUploadRate = d.maxUploadRate
+	stats.MaxDownloadRate = d.maxDownRate
+
+	d.recentMu.RLock()
+	stats.RecentDownloads = make([]RecentDownload, len(d.recentDLs))
+	copy(stats.RecentDownloads, d.recentDLs)
+	d.recentMu.RUnlock()
+
+	stats.Peers = []PeerInfo{}
+	if d.getPeers != nil {
+		if p := d.getPeers(); p != nil {
+			stats.Peers = p
+		}
+	}
+}
+
+// displayRate maps a configured rate limit to its display form: "0" (the config
+// value for no limit) shows as unlimited, like an unset one.
+func displayRate(rate string) string {
+	if strings.TrimSpace(rate) == "0" {
+		return ""
+	}
+	return rate
 }
 
 func (d *Dashboard) handleAPIPeers(w http.ResponseWriter, r *http.Request) {
@@ -434,6 +449,7 @@ const dashboardHTML = `<!DOCTYPE html>
         .source-peer { color: #3fb950; }
         .source-mirror { color: #d29922; }
         .source-cache { color: #58a6ff; }
+        .source-mixed { color: #a371f7; }
         .empty-state {
             text-align: center;
             padding: 24px;
@@ -596,6 +612,7 @@ const dashboardHTML = `<!DOCTYPE html>
 
         <div class="card">
             <h2>Recent Downloads</h2>
+            <div id="recent-downloads">
             {{if .RecentDownloads}}
             <table>
                 <thead>
@@ -622,10 +639,12 @@ const dashboardHTML = `<!DOCTYPE html>
             {{else}}
             <div class="empty-state">No recent downloads</div>
             {{end}}
+            </div>
         </div>
 
         <div class="card">
             <h2>Connected Peers</h2>
+            <div id="peer-table">
             {{if .Peers}}
             <table>
                 <thead>
@@ -656,6 +675,7 @@ const dashboardHTML = `<!DOCTYPE html>
             {{else}}
             <div class="empty-state">No connected peers</div>
             {{end}}
+            </div>
         </div>
     </div>
     <script nonce="{{.Nonce}}">
@@ -663,10 +683,12 @@ const dashboardHTML = `<!DOCTYPE html>
         var MAX=60, INTERVAL=5000;
         var history=[], basePath=location.pathname.replace(/\/+$/,'');
 
+        // Switch units at 1000 (not 1024) of the smaller one, so axes read
+        // 1.0 MB/s rather than 1000.0 KB/s.
         function formatBps(b){
-            if(b<1024)return b.toFixed(0)+' B/s';
-            if(b<1048576)return(b/1024).toFixed(1)+' KB/s';
-            if(b<1073741824)return(b/1048576).toFixed(1)+' MB/s';
+            if(b<1000)return b.toFixed(0)+' B/s';
+            if(b<1000*1024)return(b/1024).toFixed(1)+' KB/s';
+            if(b<1000*1048576)return(b/1048576).toFixed(1)+' MB/s';
             return(b/1073741824).toFixed(1)+' GB/s';
         }
         function formatBytes(b){
@@ -674,6 +696,20 @@ const dashboardHTML = `<!DOCTYPE html>
             if(b<1048576)return(b/1024).toFixed(1)+' KB';
             if(b<1073741824)return(b/1048576).toFixed(1)+' MB';
             return(b/1073741824).toFixed(1)+' GB';
+        }
+
+        // niceStep rounds a raw tick step up to 1/2/2.5/5 x 10^n. With unit
+        // (e.g. 1024 for bytes) the rounding happens in the unit the label will
+        // be shown in, so byte axes read 250 KB/s rather than 244.1 KB/s.
+        function niceStep(raw,minStep,unit){
+            if(!(raw>0))return minStep||1;
+            var scale=1;
+            if(unit)while(raw/scale>=unit)scale*=unit;
+            var r=raw/scale, p=Math.pow(10,Math.floor(Math.log10(r))), f=r/p;
+            var n=f<=1?1:f<=2?2:f<=2.5?2.5:f<=5?5:10, step=n*p;
+            // 1000 of a unit reads better as 1 of the next (1 MB/s, not 1000 KB/s).
+            if(unit&&step>=1000)return Math.max(scale*unit,minStep);
+            return Math.max(step*scale,minStep);
         }
 
         function drawChart(id,datasets,opts){
@@ -686,18 +722,40 @@ const dashboardHTML = `<!DOCTYPE html>
             var ctx=canvas.getContext('2d');
             ctx.scale(dpr,dpr);
             var W=rect.width, H=rect.height;
-            var pad={top:10,right:10,bottom:24,left:50};
-            var cW=W-pad.left-pad.right, cH=H-pad.top-pad.bottom;
 
-            // Find global max
-            var maxVal=opts.maxY||0;
+            // Y scale. A fixed ceiling (maxY, e.g. 100%) is used as-is; integer
+            // series (peer counts) get whole-number ticks; anything else gets a
+            // "nice" tick step (1/2/2.5/5 x 10^n, at least minStep) covering the
+            // peak plus 10% headroom, so labels never repeat — even when the
+            // series is all zeros.
+            var peak=0;
             for(var d=0;d<datasets.length;d++){
                 for(var i=0;i<datasets[d].data.length;i++){
-                    if(datasets[d].data[i]>maxVal)maxVal=datasets[d].data[i];
+                    if(datasets[d].data[i]>peak)peak=datasets[d].data[i];
                 }
             }
-            if(maxVal===0)maxVal=1;
-            maxVal=maxVal*1.1; // 10% headroom
+            var maxVal, gridLines=4;
+            if(opts.maxY){
+                maxVal=Math.max(opts.maxY,peak);
+            }else if(opts.integer){
+                maxVal=Math.max(1,Math.ceil(peak));
+                gridLines=Math.min(4,maxVal);
+                maxVal=Math.ceil(maxVal/gridLines)*gridLines;
+            }else{
+                maxVal=niceStep(peak*1.1/gridLines,opts.minStep||0,opts.unit)*gridLines;
+            }
+
+            // Size the left margin to the widest Y label so none is clipped.
+            ctx.font='10px monospace';
+            var labels=[], labelW=0;
+            for(var g=0;g<=gridLines;g++){
+                var v=maxVal*(g/gridLines);
+                var txt=opts.formatY?opts.formatY(v):v.toFixed(1);
+                labels.push(txt);
+                labelW=Math.max(labelW,ctx.measureText(txt).width);
+            }
+            var pad={top:10,right:10,bottom:24,left:Math.ceil(labelW)+10};
+            var cW=W-pad.left-pad.right, cH=H-pad.top-pad.bottom;
 
             // Background
             ctx.fillStyle='#161b22';
@@ -706,7 +764,6 @@ const dashboardHTML = `<!DOCTYPE html>
             // Grid lines
             ctx.strokeStyle='#21262d';
             ctx.lineWidth=1;
-            var gridLines=4;
             for(var g=0;g<=gridLines;g++){
                 var gy=pad.top+cH-(g/gridLines)*cH;
                 ctx.beginPath();
@@ -714,26 +771,22 @@ const dashboardHTML = `<!DOCTYPE html>
                 ctx.lineTo(pad.left+cW,gy);
                 ctx.stroke();
                 // Y label
-                var lbl=maxVal*(g/gridLines);
                 ctx.fillStyle='#484f58';
-                ctx.font='10px monospace';
                 ctx.textAlign='right';
-                ctx.fillText(opts.formatY?opts.formatY(lbl):lbl.toFixed(1),pad.left-4,gy+3);
+                ctx.fillText(labels[g],pad.left-4,gy+3);
             }
 
-            // X time labels
+            // X time labels: the outer two are anchored inside the plot so
+            // they are not cut off at the canvas edges.
             var n=datasets[0].data.length;
             if(n>1){
                 ctx.fillStyle='#484f58';
-                ctx.font='10px monospace';
-                ctx.textAlign='center';
-                var steps=[0,Math.floor(n/2),n-1];
+                var steps=[0,Math.floor(n/2),n-1], aligns=['left','center','right'];
                 for(var s=0;s<steps.length;s++){
                     var si=steps[s];
                     if(si>=history.length)continue;
-                    var t=history[si].time;
-                    var x=pad.left+(si/(n-1))*cW;
-                    ctx.fillText(t,x,H-2);
+                    ctx.textAlign=aligns[s];
+                    ctx.fillText(history[si].time,pad.left+(si/(n-1))*cW,H-2);
                 }
             }
 
@@ -789,6 +842,46 @@ const dashboardHTML = `<!DOCTYPE html>
             el=document.getElementById('stat-cache-size');if(el)el.textContent=formatBytes(s.cache_size_bytes)+(s.cache_max_size?' / '+s.cache_max_size:'');
         }
 
+        // renderTable rebuilds a table from API rows using textContent only, so
+        // no server-supplied string is ever parsed as HTML.
+        function cell(tr,text,cls,title){
+            var td=document.createElement('td');
+            td.textContent=text;
+            if(cls)td.className=cls;
+            if(title)td.title=title;
+            tr.appendChild(td);
+        }
+        function cssToken(v){return String(v||'').replace(/[^a-z0-9-]/gi,'');}
+        function renderTable(id,headers,rows,emptyText,fillRow){
+            var box=document.getElementById(id);
+            if(!box)return;
+            box.textContent='';
+            if(!rows||rows.length===0){
+                var empty=document.createElement('div');
+                empty.className='empty-state';
+                empty.textContent=emptyText;
+                box.appendChild(empty);
+                return;
+            }
+            var table=document.createElement('table'), thead=document.createElement('thead'), hr=document.createElement('tr');
+            for(var h=0;h<headers.length;h++){var th=document.createElement('th');th.textContent=headers[h];hr.appendChild(th);}
+            thead.appendChild(hr);table.appendChild(thead);
+            var tbody=document.createElement('tbody');
+            for(var r=0;r<rows.length;r++){var tr=document.createElement('tr');fillRow(tr,rows[r]);tbody.appendChild(tr);}
+            table.appendChild(tbody);box.appendChild(table);
+        }
+        function updateTables(s){
+            renderTable('recent-downloads',['Time','Package','Size','Source','Duration'],s.recent_downloads,'No recent downloads',function(tr,d){
+                cell(tr,d.time);cell(tr,d.filename);cell(tr,d.size);
+                cell(tr,d.source,'source-'+cssToken(d.source));cell(tr,d.duration);
+            });
+            renderTable('peer-table',['Peer ID','Score','Latency','Throughput','Downloaded','Uploaded','Last Seen'],s.peers,'No connected peers',function(tr,p){
+                if(p.blacklisted)tr.className='blacklisted';
+                cell(tr,p.short_id,'',p.id);cell(tr,Number(p.score).toFixed(1),'score-'+cssToken(p.category));
+                cell(tr,p.latency);cell(tr,p.throughput);cell(tr,p.downloaded);cell(tr,p.uploaded);cell(tr,p.last_seen);
+            });
+        }
+
         function updateCharts(){
             if(history.length<1)return;
             // Derive rates from counter diffs
@@ -807,16 +900,16 @@ const dashboardHTML = `<!DOCTYPE html>
             drawChart('chart-throughput',[
                 {data:p2pRate,color:'#3fb950'},
                 {data:mirRate,color:'#d29922'}
-            ],{formatY:formatBps});
+            ],{formatY:formatBps,minStep:1,unit:1024});
             drawChart('chart-requests',[
                 {data:reqRate,color:'#58a6ff'}
-            ],{formatY:function(v){return v.toFixed(1)+'/s';}});
+            ],{minStep:0.1,formatY:function(v){return v.toFixed(v<1?2:1)+'/s';}});
             drawChart('chart-p2p-ratio',[
                 {data:p2pPct,color:'#3fb950'}
             ],{maxY:100,formatY:function(v){return v.toFixed(0)+'%';}});
             drawChart('chart-peers',[
                 {data:peers,color:'#58a6ff'}
-            ],{fill:false,formatY:function(v){return v.toFixed(0);}});
+            ],{fill:false,integer:true,formatY:function(v){return v.toFixed(0);}});
         }
 
         function poll(){
@@ -827,6 +920,7 @@ const dashboardHTML = `<!DOCTYPE html>
                 history.push({time:ts,stats:s});
                 if(history.length>MAX)history.shift();
                 updateDOM(s);
+                updateTables(s);
                 updateCharts();
             }).catch(function(){});
         }
