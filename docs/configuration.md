@@ -270,8 +270,10 @@ Always allowed (no configuration needed):
 **Trusted by default** (when `trust_known_repos = true`, the default):
 - Launchpad PPAs: `ppa.launchpad.net`, `ppa.launchpadcontent.net`, `launchpadlibrarian.net`
 - `download.docker.com`, `apt.postgresql.org`, `deb.nodesource.com`
-- `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org`
-- `pkgs.k8s.io` (Kubernetes — flat-layout repository)
+- `packages.microsoft.com`, `apt.releases.hashicorp.com`, `mirrors.kernel.org` (and `mirrors.edge.kernel.org`, where it redirects)
+- `pkgs.k8s.io` (Kubernetes — flat-layout repository) and `prod-cdn.packages.k8s.io`, where it redirects
+
+A repository that redirects to another host (HTTP 301/302/307) works over plain `http://` as long as the first host is allowed: debswarm follows the redirect itself, refusing only private/internal targets. Over `https://` the redirect happens inside the encrypted tunnel, so APT follows it and opens a second tunnel — the redirect target must then be allowed too. If an `https://` source fails with `403` after a redirect, add the target host to `allowed_hosts`.
 
 #### HTTPS-only repositories
 
@@ -571,7 +573,7 @@ Settings for network privacy and access control.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `enable_mdns` | boolean | `true` | Enable mDNS for local network peer discovery. |
-| `announce_packages` | boolean | `true` | Announce cached packages to the DHT (allow uploads to other peers). |
+| `announce_packages` | boolean | `true` | Share cached packages: announce them to the DHT and serve them to peers, including LAN fleet peers. `false` = download-only mode: the node still downloads from peers and mirrors but never announces or uploads. |
 | `psk_path` | string | `""` | Path to Pre-Shared Key file for private swarm. |
 | `psk` | string | `""` | Inline Pre-Shared Key (hex format). Mutually exclusive with `psk_path`. |
 | `peer_allowlist` | string[] | `[]` | List of allowed peer IDs. Empty = allow all peers. |

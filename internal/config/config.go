@@ -72,7 +72,9 @@ var DefaultTrustedRepos = []string{
 	"packages.microsoft.com",     // Microsoft (VS Code, .NET, etc.)
 	"apt.releases.hashicorp.com", // HashiCorp
 	"mirrors.kernel.org",         // kernel.org Debian/Ubuntu mirror
+	"mirrors.edge.kernel.org",    // kernel.org: mirrors.kernel.org redirects here
 	"pkgs.k8s.io",                // Kubernetes (flat-layout repository)
+	"prod-cdn.packages.k8s.io",   // Kubernetes CDN: pkgs.k8s.io redirects here
 }
 
 // DefaultHTTPSUpstreamHosts is a curated set of known HTTPS-only public APT

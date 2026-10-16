@@ -400,10 +400,11 @@ If a chunked download is interrupted (daemon restart, network failure), it autom
 
 ### Peer Scoring
 Peers are scored based on weighted factors:
-- **Latency (30%)** - Lower is better
-- **Throughput (30%)** - Higher is better
-- **Reliability (25%)** - Success rate
+- **Latency (25%)** - Lower is better
+- **Throughput (25%)** - Higher is better
+- **Reliability (20%)** - Success rate
 - **Freshness (15%)** - Recently active peers preferred
+- **Proximity (15%)** - LAN (mDNS) peers preferred
 
 ### Adaptive Timeouts
 Timeouts start at sensible defaults and adjust based on observed network conditions:

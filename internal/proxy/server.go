@@ -117,6 +117,7 @@ type Server struct {
 	// Security configuration
 	allowedHosts       []string     // Additional allowed repository hosts
 	httpsUpstreamHosts []string     // Hosts to fetch over HTTPS even when APT requests HTTP
+	downloadOnly       bool         // Never announce to the DHT or serve content to peers
 	metadataServeStale bool         // serve cached metadata when the mirror is unreachable
 	allowedClientNets  []*net.IPNet // inbound client allowlist for LAN server mode (empty = loopback only)
 
@@ -197,6 +198,11 @@ type Config struct {
 	// request, so apt-get update keeps working offline. APT still verifies the
 	// signature and Valid-Until of whatever is served.
 	MetadataServeStale bool
+
+	// DownloadOnly disables sharing (privacy.announce_packages = false): cached
+	// packages are never announced to the DHT and never served to peers. The
+	// node still downloads from peers and the mirror as usual.
+	DownloadOnly bool
 
 	// VerifyMode controls daemon-side upstream signature verification: "" or "off"
 	// (disabled, unchanged behavior), "warn" (verify + observe, serve unchanged),
@@ -288,6 +294,7 @@ func NewServer(
 		httpsUpstreamHosts: cfg.HTTPSUpstreamHosts,
 		metadataServeStale: cfg.MetadataServeStale,
 		allowedClientNets:  cfg.AllowedClientCIDRs,
+		downloadOnly:       cfg.DownloadOnly,
 	}
 
 	// Upstream GPG verification setup (default off preserves existing behavior).
@@ -350,14 +357,17 @@ func NewServer(
 			zap.Int("allowedCIDRs", len(cfg.AllowedClientCIDRs)))
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handleRequest)
-
 	s.server = &http.Server{
 		Addr: cfg.Addr,
 		// gateClient enforces the inbound client allowlist (loopback always
 		// allowed). It is a no-op when the proxy is bound to loopback.
-		Handler: s.gateClient(mux),
+		//
+		// handleRequest is used directly rather than through an http.ServeMux:
+		// a ServeMux answers every CONNECT request (authority-form, empty path)
+		// with a 301 to "/" before any handler runs, which silently broke HTTPS
+		// tunneling, and it 301-redirects non-canonical paths ("//") that some
+		// mirror URLs contain. A proxy has a single route, so a mux adds nothing.
+		Handler: s.gateClient(http.HandlerFunc(s.handleRequest)),
 		// ReadHeaderTimeout (not a blanket ReadTimeout) guards against slow-loris
 		// header sends. A full ReadTimeout is a deadline on the whole request
 		// lifecycle of a connection; on a keep-alive/pipelined connection — which
@@ -1042,6 +1052,7 @@ func (s *Server) isHTTPSUpstreamHost(host string) bool {
 }
 
 func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, url string) {
+	start := time.Now()
 	ctx := r.Context()
 	log := requestid.LoggerFromContext(ctx, s.logger)
 	reqID := requestid.FromContext(ctx)
@@ -1113,6 +1124,7 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 			log.Debug("Cache hit", zap.String("hash", expectedHash[:16]+"..."))
 			atomic.AddInt64(&s.cacheHits, 1)
 			s.metrics.CacheHits.Inc()
+			s.recordDownload(path, expectedSize, "cache", time.Since(start))
 
 			// Audit log cache hit
 			s.audit.Log(audit.NewCacheHitEvent(expectedHash, path, expectedSize).WithRequestID(reqID))
@@ -1163,7 +1175,23 @@ func (s *Server) handlePackageRequest(w http.ResponseWriter, r *http.Request, ur
 
 	// Serve the result
 	downloadResult := result.(*packageDownloadResult)
+	if !shared {
+		// Coalesced waiters share one download; record it once.
+		size := downloadResult.size
+		if !downloadResult.serveFromCache {
+			size = int64(len(downloadResult.data))
+		}
+		s.recordDownload(path, size, downloadResult.source, time.Since(start))
+	}
 	s.servePackageResult(w, downloadResult)
+}
+
+// recordDownload adds a served package to the dashboard's recent-downloads list.
+func (s *Server) recordDownload(path string, size int64, source string, elapsed time.Duration) {
+	if s.dashboard == nil {
+		return
+	}
+	s.dashboard.RecordDownload(filepath.Base(path), size, source, elapsed)
 }
 
 // warmIndexFromCacheOnce loads every cached Packages index into the in-memory
@@ -1717,7 +1745,7 @@ func (s *Server) verifyAndCache(data []byte, hash, path string) error {
 }
 
 func (s *Server) announceAsync(hash string) {
-	if s.p2pNode == nil {
+	if s.p2pNode == nil || s.downloadOnly {
 		return
 	}
 	// Non-blocking send to bounded channel
@@ -2451,7 +2479,11 @@ func (s *Server) SetP2PNode(node *p2p.Node) {
 	s.scorer = node.Scorer()
 	s.timeouts = node.Timeouts()
 
-	// Set up content getter for serving to peers
+	// Set up content getter for serving to peers. A download-only node leaves it
+	// unset, so the transfer handlers answer every peer request with "not found".
+	if s.downloadOnly {
+		return
+	}
 	node.SetContentGetter(func(sha256Hash string) (io.ReadCloser, int64, error) {
 		reader, pkg, err := s.cache.Get(sha256Hash)
 		if err != nil {
@@ -2468,7 +2500,7 @@ func (s *Server) LoadIndex(url string) error {
 
 // ReannouncePackages announces all cached packages to the DHT
 func (s *Server) ReannouncePackages(ctx context.Context) error {
-	if s.p2pNode == nil {
+	if s.p2pNode == nil || s.downloadOnly {
 		return nil
 	}
 

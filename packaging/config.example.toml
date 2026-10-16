@@ -130,8 +130,9 @@ bootstrap_peers = [
 # Trusted by default:
 #   Launchpad PPAs (ppa.launchpad.net, ppa.launchpadcontent.net, launchpadlibrarian.net),
 #   download.docker.com, apt.postgresql.org, deb.nodesource.com,
-#   packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org,
-#   pkgs.k8s.io (Kubernetes, flat layout)
+#   packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org
+#   (+ mirrors.edge.kernel.org, its redirect target),
+#   pkgs.k8s.io (Kubernetes, flat layout; + prod-cdn.packages.k8s.io, its CDN)
 # Regardless of this setting, private/internal hosts are always blocked (SSRF
 # protection) and every download is still checked against the repository index's SHA256.
 trust_known_repos = true

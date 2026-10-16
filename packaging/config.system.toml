@@ -32,7 +32,7 @@ bootstrap_peers = [
 # Trust a curated set of common third-party repositories by default (Launchpad
 # PPAs, download.docker.com, apt.postgresql.org, deb.nodesource.com,
 # packages.microsoft.com, apt.releases.hashicorp.com, mirrors.kernel.org,
-# pkgs.k8s.io), in addition to Debian, Ubuntu, and Linux Mint. Set to false for
+# pkgs.k8s.io, and the hosts those two redirect to), in addition to Debian, Ubuntu, and Linux Mint. Set to false for
 # a strict, mirrors-only posture. Private/internal hosts are always blocked
 # (SSRF protection) and every download is SHA256-checked against the repository
 # index regardless of this setting.

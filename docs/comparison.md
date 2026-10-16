@@ -284,10 +284,11 @@ debswarm scores peers based on:
 
 | Factor | Weight | Measurement |
 |--------|--------|-------------|
-| Latency | 30% | RTT to peer |
-| Throughput | 30% | Historical transfer speed |
-| Reliability | 25% | Success/failure ratio |
+| Latency | 25% | RTT to peer |
+| Throughput | 25% | Historical transfer speed |
+| Reliability | 20% | Success/failure ratio |
 | Freshness | 15% | Time since last interaction |
+| Proximity | 15% | LAN (mDNS) peer vs. remote |
 
 This ensures optimal peer selection and automatic avoidance of slow/unreliable peers.
 
