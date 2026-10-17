@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Removing debswarm no longer breaks APT.** `/etc/apt/apt.conf.d/90debswarm.conf` was a conffile, so `apt remove debswarm` kept it while deleting the `/usr/lib/debswarm/apt-proxy-detect` script it points at, and every later `apt-get update` failed with `ProxyAutoDetect command '/usr/lib/debswarm/apt-proxy-detect' can not be executed!` until the file was deleted by hand (only `apt purge` removed it). The file is now managed by the package: written on install and upgrade, deleted on remove.
+- **`make install` and the manual install steps install `apt-proxy-detect`.** They copied `90debswarm.conf` but not the script it runs, which broke APT the same way right after a source install.
+
+### Changed
+- **Local APT settings move to `/etc/apt/apt.conf.d/91debswarm-direct.conf`.** This conffile holds `DIRECT` rules for third-party repositories and is kept across upgrades. Edits made to `90debswarm.conf` in 1.40.1 or earlier move there on upgrade (dpkg prints "Preserving user changes"), with its old proxy lines commented out. To stop routing APT through debswarm without uninstalling it, set `Proxy-Auto-Detect ""` in that file; deleting `90debswarm.conf` no longer lasts past an upgrade.
+- If you already removed 1.40.1 or earlier without purging, fix APT with `sudo rm /etc/apt/apt.conf.d/90debswarm.conf`, or install this release.
+
 ## [1.40.1] - 2026-10-17
 
 ### Fixed

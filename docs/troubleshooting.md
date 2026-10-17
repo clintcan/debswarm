@@ -246,8 +246,8 @@ This allows the traffic through debswarm (with logging/metrics) while maintainin
 **Solution 2**: Configure APT to bypass the proxy using `"DIRECT"`:
 
 ```bash
-# Edit the debswarm APT configuration
-sudo nano /etc/apt/apt.conf.d/90debswarm
+# Edit the debswarm APT configuration for local settings
+sudo nano /etc/apt/apt.conf.d/91debswarm-direct.conf
 ```
 
 Add bypass rules for your third-party repositories:

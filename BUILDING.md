@@ -180,7 +180,9 @@ After installation, the package provides:
 | Path | Description |
 |------|-------------|
 | `/usr/bin/debswarm` | Main binary |
-| `/etc/apt/apt.conf.d/90debswarm.conf` | APT proxy configuration |
+| `/etc/apt/apt.conf.d/90debswarm.conf` | APT proxy configuration (managed by the package; deleted on remove) |
+| `/etc/apt/apt.conf.d/91debswarm-direct.conf` | Local APT settings such as `DIRECT` rules (conffile, kept on upgrade) |
+| `/usr/lib/debswarm/apt-proxy-detect` | Tells APT whether the proxy is reachable |
 | `/etc/debswarm/config.toml` | Daemon configuration |
 | `/lib/systemd/system/debswarm.service` | systemd service |
 | `/usr/share/doc/debswarm/` | Documentation |

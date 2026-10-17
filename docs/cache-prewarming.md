@@ -28,8 +28,8 @@ curl http://localhost:9978/stats
 Verify APT is using the proxy:
 
 ```bash
-cat /etc/apt/apt.conf.d/90debswarm.conf
-# Should show: Acquire::http::Proxy "http://127.0.0.1:9977";
+apt-config dump | grep -i proxy-auto-detect
+# Should show: Acquire::http::Proxy-Auto-Detect "/usr/lib/debswarm/apt-proxy-detect";
 ```
 
 ## Method 1: Cache Installed Packages

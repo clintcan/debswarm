@@ -7,9 +7,10 @@
 #
 # The probe is a TCP connect with a 1s cap — the same liveness pattern
 # apt-cacher-ng and squid-deb-proxy use. If the debswarm daemon is stopped,
-# crashed, mid-upgrade, or removed without purging this file, APT falls back
-# to talking to mirrors directly instead of failing every operation against a
-# dead proxy.
+# crashed, or mid-upgrade, APT falls back to talking to mirrors directly
+# instead of failing every operation against a dead proxy. (Removing the
+# package deletes this script, so the package also deletes 90debswarm.conf
+# on remove: APT fails outright if the detect script is missing.)
 #
 # If you change [network] proxy_port in /etc/debswarm/config.toml, update the
 # port here and in 90debswarm.conf's comments accordingly.

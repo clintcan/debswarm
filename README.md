@@ -109,7 +109,8 @@ make build
 # Install
 sudo cp build/debswarm /usr/bin/
 sudo cp packaging/debswarm.service /etc/systemd/system/
-sudo cp packaging/90debswarm.conf /etc/apt/apt.conf.d/
+sudo install -D -m 755 packaging/apt-proxy-detect /usr/lib/debswarm/apt-proxy-detect
+sudo cp packaging/90debswarm.conf packaging/91debswarm-direct.conf /etc/apt/apt.conf.d/
 
 # Start
 sudo systemctl enable --now debswarm
@@ -117,13 +118,11 @@ sudo systemctl enable --now debswarm
 # Use APT normally
 sudo apt update
 sudo apt install vim
-
-# For HTTPS repositories (v1.20+), add HTTPS proxy config:
-echo 'Acquire::https::Proxy "http://127.0.0.1:9977";' | \
-  sudo tee -a /etc/apt/apt.conf.d/90debswarm
 ```
 
-> **Note:** the HTTPS line above sets up a CONNECT tunnel, which is opaque — those packages are **not** cached or P2P-shared. To get caching and P2P for an HTTPS-only repo (e.g. `pkgs.k8s.io`), point its `sources.list` entry at `http://` and list its host in `[proxy] https_upstream_hosts`; debswarm then makes its own HTTPS connection to the mirror. See [HTTPS-only repositories](docs/configuration.md#https-only-repositories).
+`90debswarm.conf` routes both `http://` and `https://` sources through debswarm. Put your own APT settings, such as `DIRECT` rules for third-party repositories, in `91debswarm-direct.conf`. To uninstall, delete `90debswarm.conf` together with `apt-proxy-detect`: APT fails every command if the file points at a missing script.
+
+> **Note:** `https://` sources go through a CONNECT tunnel, which is opaque — those packages are **not** cached or P2P-shared. To get caching and P2P for an HTTPS-only repo (e.g. `pkgs.k8s.io`), point its `sources.list` entry at `http://` and list its host in `[proxy] https_upstream_hosts`; debswarm then makes its own HTTPS connection to the mirror. See [HTTPS-only repositories](docs/configuration.md#https-only-repositories).
 
 ### Run with Docker
 
@@ -606,17 +605,19 @@ This triggers the release workflow which builds:
 
 **APT not using proxy:**
 ```bash
-# Check config exists
-cat /etc/apt/apt.conf.d/90debswarm.conf
+# Check APT is set to ask debswarm
+apt-config dump | grep -i proxy
+# Should show:
+# Acquire::http::Proxy-Auto-Detect "/usr/lib/debswarm/apt-proxy-detect";
+# Acquire::https::Proxy-Auto-Detect "/usr/lib/debswarm/apt-proxy-detect";
+# An empty Proxy-Auto-Detect "" means it was turned off in 91debswarm-direct.conf.
 
-# Should show (for HTTP):
-# Acquire::http::Proxy "http://127.0.0.1:9977";
-
-# For HTTPS repositories (v1.20+), also add:
-# Acquire::https::Proxy "http://127.0.0.1:9977";
+# Ask the detect script what APT will get
+/usr/lib/debswarm/apt-proxy-detect
+# http://127.0.0.1:9977 while the daemon is up; DIRECT means it is not reachable
 #
-# Note: this tunnels HTTPS opaquely (no caching/P2P). For caching and P2P on an
-# HTTPS-only repo, use http:// in sources.list + [proxy] https_upstream_hosts.
+# Note: https:// sources are tunneled opaquely (no caching/P2P). For caching and
+# P2P on an HTTPS-only repo, use http:// in sources.list + [proxy] https_upstream_hosts.
 ```
 
 **No peers found:**

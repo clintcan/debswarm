@@ -229,7 +229,7 @@ allowed_hosts = [
 Alternatively, you can bypass the proxy entirely for these hosts in APT:
 
 ```
-// Add to /etc/apt/apt.conf.d/90debswarm
+// Add to /etc/apt/apt.conf.d/91debswarm-direct.conf
 Acquire::http::Proxy::download.docker.com "DIRECT";
 Acquire::https::Proxy::download.docker.com "DIRECT";
 ```

@@ -2,13 +2,22 @@
 set -e
 
 case "$1" in
+    remove|purge|abort-install)
+        # 90debswarm.conf points APT at /usr/lib/debswarm/apt-proxy-detect,
+        # which a remove deletes. Left behind, it makes every apt command fail
+        # with "ProxyAutoDetect command ... can not be executed", so it goes on
+        # remove, not only on purge. It is not a conffile; postinst rewrites it.
+        rm -f /etc/apt/apt.conf.d/90debswarm.conf
+        ;;
+esac
+
+case "$1" in
     purge)
         # Remove configuration
         rm -rf /etc/debswarm
         # Remove cache (optional - user data)
         rm -rf /var/cache/debswarm
         rm -rf /var/lib/debswarm
-        rm -rf /etc/apt/apt.conf.d/90debswarm.conf
         ;;
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
         ;;
