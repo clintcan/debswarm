@@ -8,6 +8,7 @@ case "$1" in
         # Remove cache (optional - user data)
         rm -rf /var/cache/debswarm
         rm -rf /var/lib/debswarm
+        rm -rf /etc/apt/apt.conf.d/90debswarm.conf
         ;;
     remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
         ;;
