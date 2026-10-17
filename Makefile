@@ -49,7 +49,11 @@ clean:
 install: build
 	@echo "Installing debswarm..."
 	sudo install -m 755 build/debswarm /usr/local/bin/debswarm
+	sudo install -D -m 755 packaging/apt-proxy-detect /usr/lib/debswarm/apt-proxy-detect
 	sudo install -m 644 packaging/90debswarm.conf /etc/apt/apt.conf.d/90debswarm.conf
+	@if [ ! -f /etc/apt/apt.conf.d/91debswarm-direct.conf ]; then \
+		sudo install -m 644 packaging/91debswarm-direct.conf /etc/apt/apt.conf.d/91debswarm-direct.conf; \
+	fi
 	sudo install -m 644 packaging/debswarm.service /etc/systemd/system/debswarm.service
 	sudo mkdir -p /etc/debswarm
 	@if [ ! -f /etc/debswarm/config.toml ]; then \
@@ -67,6 +71,7 @@ uninstall:
 	-sudo systemctl disable debswarm
 	sudo rm -f /usr/local/bin/debswarm
 	sudo rm -f /etc/apt/apt.conf.d/90debswarm.conf
+	sudo rm -f /usr/lib/debswarm/apt-proxy-detect
 	sudo rm -f /etc/systemd/system/debswarm.service
 	sudo systemctl daemon-reload
 	@echo "Uninstalled. Config and cache preserved in /etc/debswarm and /var/cache/debswarm"

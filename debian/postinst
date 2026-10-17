@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+APT_CONF=/etc/apt/apt.conf.d/90debswarm.conf
+APT_DIRECT=/etc/apt/apt.conf.d/91debswarm-direct.conf
+
 case "$1" in
     configure)
         # Create system user and group if they don't exist
@@ -26,5 +29,21 @@ case "$1" in
 esac
 
 #DEBHELPER#
+
+case "$1" in
+    configure)
+        # Up to 1.40.1, 90debswarm.conf was a conffile. The maintscript above
+        # moved a locally edited copy to 91debswarm-direct.conf so the edits
+        # survive; its proxy lines are now in the managed 90debswarm.conf, and
+        # left in the conffile they would break APT once debswarm is removed.
+        if [ -n "$2" ] && dpkg --compare-versions "$2" lt 1.40.2~ && [ -f "$APT_DIRECT" ]; then
+            sed -i 's|^\([[:space:]]*Acquire::https\{0,1\}::Proxy-Auto-Detect[[:space:]]*"/usr/lib/debswarm/apt-proxy-detect";\)|// Now set in 90debswarm.conf: \1|' "$APT_DIRECT"
+        fi
+
+        # Written after the debhelper section: its mv_conffile step would treat
+        # an existing 90debswarm.conf as the user's edited copy and move it.
+        install -m 0644 /usr/share/debswarm/90debswarm.conf "$APT_CONF"
+        ;;
+esac
 
 exit 0
