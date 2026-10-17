@@ -1,17 +1,17 @@
 Package: debswarm
-Version: 1.40.1-1
+Version: 1.40.2-1
 Architecture: arm64
 Maintainer: debswarm developers <debswarm@example.com>
-Installed-Size: 34241
+Installed-Size: 34247
 Depends: ca-certificates
 Homepage: https://github.com/debswarm/debswarm
 Priority: optional
 Section: net
-Filename: pool/main/d/debswarm/debswarm_1.40.1-1_arm64.deb
-Size: 10809462
-SHA256: 7f6445c95de90a23f8beb9fe6d34f354e9aa6f285f7f3e3a4d0a0a97b3a4b5c4
-SHA1: 163e2cc20da09ffef431827f3ed85cfdd450e5d0
-MD5sum: 3817f985a7e4777f970bda184db78fa8
+Filename: pool/main/d/debswarm/debswarm_1.40.2-1_arm64.deb
+Size: 10810824
+SHA256: 6d57314cb6fd6990b9dd17442d72c62ae3d67206b2f35eb6611a3ec296c51f52
+SHA1: bb7eeff0d680b00fe6a9627432f5e7d2da6c0012
+MD5sum: 55c053a62f2b38d26e4216453068d5f3
 Description: Peer-to-peer package distribution for APT
  debswarm accelerates APT package downloads by fetching packages from
  nearby peers, without changing how apt verifies them.
