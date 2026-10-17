@@ -1,3 +1,16 @@
+debswarm (1.40.2-1) stable; urgency=medium
+
+  * Removing debswarm no longer breaks APT. 90debswarm.conf is now written
+    on install and deleted on remove, instead of being a conffile that a
+    plain remove left pointing at the deleted apt-proxy-detect script.
+  * Local APT settings (DIRECT rules for third-party repositories, or
+    turning the proxy off) move to the 91debswarm-direct.conf conffile.
+    Edits made to 90debswarm.conf are carried over on upgrade.
+  * If an earlier version was removed without purging, fix APT with
+    sudo rm /etc/apt/apt.conf.d/90debswarm.conf, or install this release.
+
+ -- debswarm developers <clintcan@users.noreply.github.com>  Sat, 17 Oct 2026 18:00:00 +0000
+
 debswarm (1.40.1-1) stable; urgency=low
 
   * Fleet metrics now report real values: avoided WAN downloads and bytes,
