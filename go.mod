@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/ProtonMail/go-crypto v1.4.1
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/klauspost/compress v1.19.0
+	github.com/klauspost/compress v1.19.1
 	github.com/libp2p/go-libp2p v0.48.0
 	github.com/libp2p/go-libp2p-kad-dht v0.41.0
 	github.com/multiformats/go-multiaddr v0.16.1
