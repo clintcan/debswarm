@@ -409,7 +409,7 @@ func New(ctx context.Context, cfg *Config, logger *zap.Logger) (*Node, error) {
 		zap.Bool("quicPreferred", cfg.PreferQUIC))
 
 	// Create DHT
-	kadDHT, err := dht.New(ctx, h,
+	kadDHT, err := dht.New(h,
 		dht.Mode(dht.ModeAutoServer),
 		dht.ProtocolPrefix("/debswarm"),
 	)
